@@ -1,0 +1,32 @@
+#config.yaml 
+stt:
+  name: whisper
+  recording_time: 5
+  silence_break: 1
+  model_size: base
+  sensibility: 800
+assistant:
+  wake_word: 
+   - bobi
+   - bobby
+   - bobbie
+   - bobi
+   - vovi
+   - vobi
+   - bovi
+   - Bobi
+   - Boby
+   - Bobbie
+
+comands:
+  - dinero
+  - me puedes dar un abrazo
+  - sorpresa
+  - vuela
+  - luchamos
+  - es cierto que te vas de viaje
+  - baila
+prompt: Eres un asistente amigable diseñado para ayudar con tareas relacionadas con el robot YAREN.
+        Responde de forma clara y útil a las solicitudes, y proporciona ayuda técnica cuando sea necesario.
+        Responde en maximo 50 palabras
+  
