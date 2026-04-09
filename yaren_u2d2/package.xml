@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>yaren_u2d2</name>
+  <version>0.1.0</version>
+  <description>Interfaz de hardware y GUI de control para el robot Yaren</description>
+  <maintainer email="iesusdavila@gmail.com">iesus_robot</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>controller_interface</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>dynamixel_sdk</depend>
+  
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <hardware_interface plugin="${prefix}/yaren_hardware_plugin.xml"/>
+  </export>
+</package>

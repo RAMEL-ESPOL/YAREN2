@@ -1,0 +1,732 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<robot name="yaren_description">
+
+  <material name="MediumYellow">
+    <color rgba="0.9 0.7 0.0 1.0"/>
+  </material>
+
+  <material name="Black">
+    <color rgba="0.1 0.1 0.1 1.0"/>
+  </material>
+  
+  <link name="world"/>
+
+  <joint name="base_joint" type="fixed">
+      <parent link="world"/>
+      <child link="base_link"/>
+      <origin rpy="0 0 0.0" xyz="0.0 0.0 0.064"/>
+  </joint>
+
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.0111941484552959 -0.0368458795873965 0.215654266051241" rpy="0 0 0" />
+      <mass value="1.36786443462294" />
+      <inertia
+        ixx="0.00319634955740371" ixy="-1.60882455550443E-08" ixz="1.653324392476E-08"
+        iyy="0.00601731472918889" iyz="4.74472482698139E-06"  izz="0.00319515652843736" />
+    </inertial>
+    <visual>
+      <origin xyz="0.01 0.2105 0.0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://yaren_description/meshes/base_link.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin xyz="0.01 0.2105 0.0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://yaren_description/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0.07 0.17 0.0" rpy="0 0 0"/>
+    <parent link="link_4"/>
+    <child link="camera_link"/>
+  </joint>
+
+  <link name="camera_link">
+  </link>
+
+  <link name="link_1">
+    <inertial>
+      <origin xyz="-0.0005406 0.03067 1.1225E-05" rpy="0 0 0" /> 
+      <mass
+        value="0.2613" />
+      <inertia
+        ixx="0.00014283" ixy="-8.1832E-07" ixz="-7.2665E-08"
+        iyy="0.0002383"  iyz="2.7932E-08"  izz="0.00019886" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_1.STL" />
+      </geometry>
+      <material name="MediumYellow"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_1" type="revolute">
+    <origin xyz="0.0 0.0 0.020523" rpy="1.5708 0 1.5708" />
+    <parent link="base_link" />
+    <child link="link_1" />
+    <axis xyz="0 1 0" />
+    <limit
+      lower="-0.7853"
+      upper="0.7853"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_2">
+    <inertial>
+      <origin
+        xyz="-0.000190222232464078 0.0708879423019347 0.000625518405545505"
+        rpy="0 0 0" />
+      <mass
+        value="0.752173682094854" />
+      <inertia
+        ixx="0.00132133401185399"
+        ixy="2.62707187219377E-06"
+        ixz="-3.81385205187914E-07"
+        iyy="0.00295410852126555"
+        iyz="3.20008645844586E-06"
+        izz="0.00376203398380604" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_2.STL" />
+      </geometry>
+      <material name="MediumYellow"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_2"
+    type="revolute">
+    <origin
+      xyz="0 0.0715 0"
+      rpy="0 1.5708 0" />
+    <parent
+      link="link_1" />
+    <child
+      link="link_2" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-0.5235"
+      upper="0.5235"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_3">
+    <inertial>
+      <origin
+        xyz="0.000495971669348293 -0.0119998498234008 0.0204959038479089"
+        rpy="0 0 0" />
+      <mass
+        value="0.0569176449626117" />
+      <inertia
+        ixx="1.43924905181448E-05"
+        ixy="5.82487770418226E-10"
+        ixz="3.44003420258986E-07"
+        iyy="1.02302750414368E-05"
+        iyz="-7.69908311920794E-10"
+        izz="1.43925070402999E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_3.STL" />
+      </geometry>
+      <material name="MediumYellow"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_3.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_3" type="revolute">
+    <origin
+      xyz="0 0.1145 -0.012"
+      rpy="-1.5708 0 0" />
+    <parent
+      link="link_2" />
+    <child
+      link="link_3" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.5235"
+      upper="0.5235"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_4">
+    <inertial>
+      <origin
+        xyz="0.0257730881315095 0.110638538546991 -2.15593630046793E-05"
+        rpy="0 0 0" />
+      <mass
+        value="0.654995275916393" />
+      <inertia
+        ixx="0.00271318373791796"
+        ixy="-0.000252216333937308"
+        ixz="3.36179957582485E-08"
+        iyy="0.00217737319159254"
+        iyz="-8.29088092668815E-08"
+        izz="0.00164342941943313" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_4.STL" />
+      </geometry>
+      <material name="MediumYellow"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_4.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_4" type="revolute">
+    <origin
+      xyz="0 -0.024 0.02"
+      rpy="1.5708 0 1.5708" />
+    <parent
+      link="link_3" />
+    <child
+      link="link_4" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-0.2617"
+      upper="0.7853"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_5">
+    <inertial>
+      <origin
+        xyz="-0.0259375957022937 -0.00908743775212059 0.000103197554779999"
+        rpy="0 0 0" />
+      <mass
+        value="0.0584361592248743" />
+      <inertia
+        ixx="4.61729756791954E-05"
+        ixy="7.84451983246522E-06"
+        ixz="3.48634553727113E-08"
+        iyy="4.22765133678202E-05"
+        iyz="4.9258866345132E-08"
+        izz="4.20873707387468E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_5.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_5.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_5" type="revolute">
+    <origin
+      xyz="0.10575 0.09925 0"
+      rpy="3.1416 0 3.1416" />
+    <parent
+      link="link_2" />
+    <child
+      link="link_5" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-0.7853"
+      upper="1.5708"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_6">
+    <inertial>
+      <origin
+        xyz="0.00049597 -0.012 0.0009664"
+        rpy="0 0 0" />
+      <mass
+        value="0.056918" />
+      <inertia
+        ixx="1.4392E-05"
+        ixy="5.8249E-10"
+        ixz="3.44E-07"
+        iyy="1.023E-05"
+        iyz="-7.6991E-10"
+        izz="1.4393E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_6.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_6.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_6" type="revolute">
+    <origin
+      xyz="-0.031746 -0.0195 0"
+      rpy="0 0 -1.5708" />
+    <parent
+      link="link_5" />
+    <child
+      link="link_6" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="1.0472"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_7">
+    <inertial>
+      <origin
+        xyz="0.054314 -0.00044243 0.0001739"
+        rpy="0 0 0" />
+      <mass
+        value="0.11298" />
+      <inertia
+        ixx="3.5352E-05"
+        ixy="1.8584E-06"
+        ixz="-1.6775E-07"
+        iyy="6.1931E-05"
+        iyz="7.6246E-08"
+        izz="6.332E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_7.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_7.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_7" type="revolute">
+    <origin
+      xyz="0.019 -0.024 0.00047052"
+      rpy="1.5708 0 0" />
+    <parent
+      link="link_6" />
+    <child
+      link="link_7" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-0.7853"
+      upper="0.7853"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_8">
+    <inertial>
+      <origin
+        xyz="-0.0406501147947644 -0.00104645226824338 -0.00681375552158017"
+        rpy="0 0 0" />
+      <mass
+        value="0.0489075786054985" />
+      <inertia
+        ixx="1.84365898866349E-05"
+        ixy="-2.71874728346205E-06"
+        ixz="3.04771644692066E-06"
+        iyy="3.91073424807853E-05"
+        iyz="1.74082743559878E-07"
+        izz="4.33443091972181E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_8.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_8.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_8" type="revolute">
+    <origin
+      xyz="0.09125 0 0"
+      rpy="1.5708 0 -2.9337" />
+    <parent
+      link="link_7" />
+    <child
+      link="link_8" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0.1745"
+      upper="1.5708"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_9">
+    <inertial>
+      <origin
+        xyz="-0.0259376058181659 -0.00908742969104881 0.000103191384414891"
+        rpy="0 0 0" />
+      <mass
+        value="0.0584361879389782" />
+      <inertia
+        ixx="4.61729927569023E-05"
+        ixy="7.8445262778698E-06"
+        ixz="3.48491072940375E-08"
+        iyy="4.22765448632234E-05"
+        iyz="4.92631426665094E-08"
+        izz="4.20874015682008E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_9.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_9.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_9" type="revolute">
+    <origin
+      xyz="-0.105754230884312 0.0992500000000003 0"
+      rpy="0 0 0" />
+    <parent
+      link="link_2" />
+    <child
+      link="link_9" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-0.7853"
+      upper="1.5708"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_10">
+    <inertial>
+      <origin
+        xyz="0.000495971821796476 -0.0119998501814707 -3.36042384202762E-05"
+        rpy="0 0 0" />
+      <mass
+        value="0.0569176449626118" />
+      <inertia
+        ixx="1.43924905181448E-05"
+        ixy="5.82487770418555E-10"
+        ixz="3.44003420258988E-07"
+        iyy="1.02302750414368E-05"
+        iyz="-7.69908311916828E-10"
+        izz="1.43925070402999E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_10.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_10.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_10" type="revolute">
+    <origin
+      xyz="-0.031745769115688 -0.0195 0"
+      rpy="0 0 -1.5707963267949" />
+    <parent
+      link="link_9" />
+    <child
+      link="link_10" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="1.0472"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_11">
+    <inertial>
+      <origin
+        xyz="0.0543141046649694 -0.000442428552246021 0.000173899794023963"
+        rpy="0 0 0" />
+      <mass
+        value="0.112981340262659" />
+      <inertia
+        ixx="3.53515307711419E-05"
+        ixy="1.85838536575219E-06"
+        ixz="-1.6774927411348E-07"
+        iyy="6.19311405547795E-05"
+        iyz="7.62455333737013E-08"
+        izz="6.3319777994899E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_11.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_11.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_11" type="revolute">
+    <origin
+      xyz="0.0190000001524479 -0.0240000007161399 -0.000529483238776968"
+      rpy="-1.5707963267949 0 0" />
+    <parent
+      link="link_10" />
+    <child
+      link="link_11" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-0.7853"
+      upper="0.7853"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <link name="link_12">
+    <inertial>
+      <origin
+        xyz="-0.03802 0.0036356 -0.0065218"
+        rpy="0 0 0" />
+      <mass
+        value="0.040449" />
+      <inertia
+        ixx="1.5216E-05"
+        ixy="2.5355E-06"
+        ixz="2.6893E-06"
+        iyy="3.2043E-05"
+        iyz="-2.2072E-07"
+        izz="3.5871E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_12.STL" />
+      </geometry>
+      <material name="Black"/>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://yaren_description/meshes/Link_12.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_12" type="revolute">
+    <origin
+      xyz="0.09125 0 0"
+      rpy="1.5707963267949 0 -2.91667493011268" />
+    <parent
+      link="link_11" />
+    <child
+      link="link_12" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0.1745"
+      upper="1.5708"
+      effort="300"
+      velocity="3" />
+  </joint>
+
+  <gazebo>
+     <plugin name="control" filename="libgazebo_ros_control.so">
+       <robotNamespace>/</robotNamespace>
+     </plugin>
+  </gazebo>
+  
+  <gazebo reference="link_1">
+    <selfCollide>true</selfCollide>
+  </gazebo>
+
+  <gazebo reference="link_2">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+  <gazebo reference="link_3">
+    <selfCollide>true</selfCollide>
+  </gazebo>
+
+  <gazebo reference="link_4">
+    <selfCollide>true</selfCollide>
+  </gazebo>
+
+  <gazebo reference="link_5">
+    <selfCollide>true</selfCollide>
+  </gazebo>
+
+  <gazebo reference="link_6">
+    <selfCollide>true</selfCollide>
+  </gazebo>
+
+  <gazebo reference="link_7">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+  <gazebo reference="link_8">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+  <gazebo reference="link_9">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+  <gazebo reference="link_10">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+  <gazebo reference="link_11">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+  <gazebo reference="link_12">
+    <selfCollide>true</selfCollide>
+  </gazebo>  
+
+</robot>
+

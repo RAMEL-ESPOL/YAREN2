@@ -1,0 +1,9 @@
+<library path="yaren_hardware_interface">
+  <class name="yaren_hw_interface/YarenSystemPositionOnly"
+         type="yaren_hw_interface::YarenSystemPositionOnly"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Hardware interface para motores Dynamixel en ROS 2.
+    </description>
+  </class>
+</library>

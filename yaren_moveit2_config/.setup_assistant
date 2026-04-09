@@ -1,0 +1,19 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: yaren_description
+    relative_path: urdf/yaren_description_moveit.urdf
+  srdf:
+    relative_path: config/yaren_description_moveit.srdf
+  package_settings:
+    author_name: Iesus Davila
+    author_email: iesusdavila@gmail.com
+    generated_timestamp: 1739995605
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
