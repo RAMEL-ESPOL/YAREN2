@@ -15,7 +15,7 @@ namespace fs = std::filesystem;
 class VideoSynchronizer : public rclcpp::Node {
 public:
     VideoSynchronizer() : Node("face_screen") {
-        std::string pkgDir = ament_index_cpp::get_package_share_directory("yaren_face_screen");
+        std::string pkgDir = ament_index_cpp::get_package_share_directory("yaren_face_display");
 
         // 1. Cargar imágenes base (Asegúrate de que estos nombres existan en /imgs)
         eyesOpenImg = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/7.png", cv::IMREAD_UNCHANGED);
