@@ -38,15 +38,15 @@ class MotorTorqueControlNode(Node):
         self.joint_state_pub = self.create_publisher(JointState, '/joint_states', 10)
 
     def init_motors(self, usb_port, dxl_baud_rate):
-        self.neck = XCseries_motor(usb_port, dxl_baud_rate, [3, 4], self.portHandler, self.packetHandler, None, 20, {3: ['-5', 5], 4: ['-5', 5]}, {3: [100, 0, 0], 4: [100, 0, 0]})
-        self.sh_r = XCseries_motor(usb_port, dxl_baud_rate, [5], self.portHandler, self.packetHandler, None, 20, {5: ['-5', 5]}, {5: [100, 0, 0]})
-        self.fa_r = XCseries_motor(usb_port, dxl_baud_rate, [6, 7], self.portHandler, self.packetHandler, None, 20, {6: ['-5', 5], 7: ['-5', 5]}, {6: [100, 0, 0], 7: [100, 0, 0]})
-        self.el_r = XCseries_motor(usb_port, dxl_baud_rate, [8], self.portHandler, self.packetHandler, None, 20, {8: ['-5', 5]}, {8: [100, 0, 0]})
-        self.sh_l = XCseries_motor(usb_port, dxl_baud_rate, [9], self.portHandler, self.packetHandler, None, 20, {9: ['-5', 5]}, {9: [100, 0, 0]})
-        self.fa_l = XCseries_motor(usb_port, dxl_baud_rate, [10, 11], self.portHandler, self.packetHandler, None, 20, {10: ['-5', 5], 11: ['-5', 5]}, {10: [100, 0, 0], 11: [100, 0, 0]})
-        self.el_l = XCseries_motor(usb_port, dxl_baud_rate, [12], self.portHandler, self.packetHandler, None, 20, {12: ['-5', 5]}, {12: [100, 0, 0]})
-        self.trunk = MX_motor(usb_port, dxl_baud_rate, [1], self.portHandler, self.packetHandler, None, 20, {1: ['-5', 5]}, {1: [100, 0, 0]})
-        self.hip = MX_motor(usb_port, dxl_baud_rate, [2], self.portHandler, self.packetHandler, None, 20, {2: ['-5', 5]}, {2: [100, 0, 0]})
+        self.neck = XCseries_motor(usb_port, dxl_baud_rate, [3, 4], self.portHandler, self.packetHandler, None, 20, {3: [-1, 1], 4: [-1, 1]}, {3: [100, 0, 0], 4: [100, 0, 0]})
+        self.sh_r = XCseries_motor(usb_port, dxl_baud_rate, [5], self.portHandler, self.packetHandler, None, 20, {5: [-1, 1]}, {5: [100, 0, 0]})
+        self.fa_r = XCseries_motor(usb_port, dxl_baud_rate, [6, 7], self.portHandler, self.packetHandler, None, 20, {6: [-1, 1], 7: [-1, 1]}, {6: [100, 0, 0], 7: [100, 0, 0]})
+        self.el_r = XCseries_motor(usb_port, dxl_baud_rate, [8], self.portHandler, self.packetHandler, None, 20, {8: [-1, 1]}, {8: [100, 0, 0]})
+        self.sh_l = XCseries_motor(usb_port, dxl_baud_rate, [9], self.portHandler, self.packetHandler, None, 20, {9: [-1, 1]}, {9: [100, 0, 0]})
+        self.fa_l = XCseries_motor(usb_port, dxl_baud_rate, [10, 11], self.portHandler, self.packetHandler, None, 20, {10: [-1, 1], 11: [-1, 1]}, {10: [100, 0, 0], 11: [100, 0, 0]})
+        self.el_l = XCseries_motor(usb_port, dxl_baud_rate, [12], self.portHandler, self.packetHandler, None, 20, {12: [-1, 1]}, {12: [100, 0, 0]})
+        self.trunk = MX_motor(usb_port, dxl_baud_rate, [1], self.portHandler, self.packetHandler, None, 20, {1: [-1, 1]}, {1: [100, 0, 0]})
+        self.hip = MX_motor(usb_port, dxl_baud_rate, [2], self.portHandler, self.packetHandler, None, 20, {2: [-1, 1]}, {2: [100, 0, 0]})
 
         self.list_motors = [self.neck, self.sh_r, self.fa_r, self.el_r, self.sh_l, self.fa_l, self.el_l, self.trunk, self.hip]
         
@@ -60,7 +60,7 @@ class MotorTorqueControlNode(Node):
             for id in motor.list_ids:
                 dxl_pos, res, err = self.packetHandler.read4ByteTxRx(self.portHandler, id, 132)
                 if res == COMM_SUCCESS:
-                    self.general_joint_position[id-1] = round((dxl_pos - 2048) * 0.088 * 5 / 180, 2)
+                    self.general_joint_position[id-1] = round((dxl_pos - 2048) * 0.088 * 3.14 / 180, 2)
         return self.general_joint_position
 
     def set_positions(self, positions_list):
@@ -78,7 +78,7 @@ class MotorTorqueControlNode(Node):
                     rad = positions_list[dxl_id - 1]
                     
                     # Conversión: Radianes -> Valor Dynamixel (0-4095)
-                    dxl_val = int((rad * 180) / (0.088 * 5) + 2048)
+                    dxl_val = int((rad * 180) / (0.088 * 3.14) + 2048)
                     dxl_val = max(0, min(4095, dxl_val)) # Límite de seguridad
                     
                     # ESCRIBIMOS DIRECTO AL PUERTO (Sin depender de motor_classes.py)

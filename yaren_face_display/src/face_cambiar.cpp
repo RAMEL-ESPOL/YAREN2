@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 class VideoSynchronizer : public rclcpp::Node {
 public:
     VideoSynchronizer() : Node("face_screen") {
-        std::string pkgDir = ament_index_cpp::get_package_share_directory("yaren_face_display");
+        std::string pkgDir = ament_index_cpp::get_package_share_directory("yaren_face_screen");
 
         // 1. Cargar imágenes base (IMPORTANTE: IMREAD_UNCHANGED para soportar transparencia)
         eyesOpenImg = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/7.png", cv::IMREAD_UNCHANGED);
@@ -63,7 +63,7 @@ public:
         faceScreenPublisher = this->create_publisher<sensor_msgs::msg::Image>("/face_screen", 10);
 
         // 1. Crear la ventana con nombre exacto
-    cv::namedWindow("Yaren Face", cv::WND_PROP_FULLSCREEN);
+    cv::namedWindow("Yaren Face", cv::WINDOW_NORMAL);
 
     // 2. Quitar bordes y decoraciones de la ventana (Modo nativo)
     cv::setWindowProperty("Yaren Face", cv::WND_PROP_AUTOSIZE, cv::WINDOW_AUTOSIZE);
