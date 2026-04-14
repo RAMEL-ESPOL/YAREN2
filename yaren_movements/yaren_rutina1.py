@@ -3,12 +3,13 @@ import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+import math
+import time
 
 class YarenMotionControl(Node):
     def __init__(self):
         super().__init__('yaren_motion_control')
         
-        # Publicamos al controlador de trayectoria para suavizar movimientos
         self.publisher = self.create_publisher(
             JointTrajectory, 
             '/joint_trajectory_controller/joint_trajectory', 
@@ -21,20 +22,39 @@ class YarenMotionControl(Node):
         ]
         
         self.get_logger().info("Controlador de Movimiento Yaren Listo.")
-        self.get_logger().info("Selecciona: 1(Base), 2(Der), 3(Izq), 4(Frente), 5(Secuencia),6(Baile)")
+        self.get_logger().info("Selecciona: 1(Base), 2(Der), 3(Izq), 4(Frente), 5(Secuencia), 6(Baile), 7(Personalizado Extremo), 8(Rutina GUI)")
 
     def send_movement(self, positions, seconds):
-        """Envía un punto de trayectoria para que el robot se mueva suavemente."""
         msg = JointTrajectory()
         msg.joint_names = self.joint_names
-        
         point = JointTrajectoryPoint()
         point.positions = positions
-        # El tiempo define qué tan lento o rápido llega (esto quita lo 'robótico')
         point.time_from_start = Duration(sec=int(seconds), nanosec=int((seconds % 1) * 1e9))
-        
         msg.points.append(point)
         self.publisher.publish(msg)
+
+    def from_gui(self, poses_gui, t=1.0):
+        """
+        Convierte poses capturadas desde el GUI al sistema de radianes
+        que usa el hardware interface.
+        
+        - Joints normales:  rad = val * (π/5)
+        - Joint_8, Joint_12 (codos): rad = val * (π/5) + (π - 1.75)
+          porque el hw_interface usa cero físico diferente para los codos.
+        """
+        K = math.pi / 5
+        OFFSET_CODO = math.pi - 1.75  # ≈ 1.3916
+
+        result = []
+        for pos in poses_gui:
+            converted = []
+            for idx, val in enumerate(pos):
+                if idx == 7 or idx == 11:  # joint_8 y joint_12
+                    converted.append(round(val * K + OFFSET_CODO, 4))
+                else:
+                    converted.append(round(val * K, 4))
+            result.append((converted, t))
+        return result
 
     def run_menu(self):
         while rclpy.ok():
@@ -68,8 +88,7 @@ class YarenMotionControl(Node):
                     ]
                     for pos, t in secuencia:
                         self.send_movement(pos, t)
-                        import time
-                        time.sleep(t) # Esperar a que termine cada paso
+                        time.sleep(t)
 
                 elif number == '6':
                     print("Iniciando Rutina Larga...")
@@ -101,14 +120,77 @@ class YarenMotionControl(Node):
                         ([0.04, -0.15, -0.03, 0.0, 0.46, -0.19, 0.34, 0.03, -0.81, -0.15, -0.37, 0.04], 0.5),
                         ([-0.01, -0.08, -0.02, 0.0, 0.05, -0.13, 0.04, -0.17, -0.34, 0.08, 0.04, -0.13], 1.0)
                     ]
-                    
                     for pos, t in rutina_6:
                         self.send_movement(pos, t)
-                        import time
-                        time.sleep(t) # Esperar a que termine cada paso
+                        time.sleep(t)
+
+                elif number == '7':
+                    print("Iniciando Rutina Personalizada (Movimientos Amplios)...")
+                    rutina_7 = [
+                        [0.17, 0.0, -0.0, 0.22, 0.46, -0.23, -1.76, 0.31, -0.55, -0.24, 1.76, 0.34],
+                        [0.24, 0.0, 0.08, 0.12, 1.64, 0.54, 0.5, -0.85, -1.71, 0.69, -0.72, -1.15],
+                        [0.34, 0.0, -0.01, 0.07, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [0.23, 0.0, 0.08, 0.13, 0.21, -0.13, -0.01, -2.49, -4.67, -0.13, 4.99, -2.53],
+                        [0.23, 0.0, 0.08, 0.13, 0.21, -0.13, -0.01, -2.49, -4.67, 1.05, 4.97, -2.53],
+                        [0.23, 0.0, 0.08, 0.13, 0.21, -0.13, -0.01, -2.49, -4.67, 0.07, 4.97, -2.53],
+                        [0.23, 0.0, 0.08, 0.13, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, -0.54, 0.16, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, 0.54, 0.23, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, 0.02, 0.14, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, 0.02, 0.14, 2.53, -0.02, 5.0, -0.39, -2.16, -0.07, -0.06, 0.34],
+                        [0.24, 0.0, 0.02, 0.14, 2.53, -0.06, -3.92, -0.39, -2.16, -0.06, 1.4, 0.34],
+                        [0.24, 0.0, 0.02, 0.15, 2.53, -0.05, 3.93, -0.39, -2.16, -0.17, -1.01, 0.34],
+                        [0.24, 0.0, 0.02, 0.14, 1.67, -0.34, -0.38, -1.46, -1.73, -0.54, 0.03, -1.33],
+                        [-1.21, 0.0, -0.01, 0.12, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [-1.21, 0.0, -0.8, -0.06, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [-1.21, 0.0, -0.8, -0.06, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [-1.21, 0.0, -0.03, 0.64, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [0.34, 0.0, -0.01, 0.07, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [2.12, 0.0, 0.06, -0.02, 0.19, -0.01, 0.01, -2.34, -0.0, -0.27, -0.01, -1.99],
+                        [2.12, 0.0, -0.69, 0.34, 0.19, -0.01, 0.02, -2.34, -0.0, -0.27, -0.01, -1.99],
+                        [2.12, 0.0, -0.28, 0.39, 0.19, -0.01, 0.01, -2.34, -0.0, -0.27, -0.01, -1.99],
+                        [2.12, 0.0, -0.76, 0.43, 0.19, -0.01, 0.01, -2.34, -0.0, -0.27, -0.01, -1.99],
+                        [2.12, 0.0, -0.76, 0.44, 2.31, 0.62, -2.46, -2.51, -0.01, -0.27, -0.01, -1.99],
+                        [2.11, 0.0, -0.76, 0.47, 4.94, 0.34, -4.74, -2.21, -0.05, -0.14, 0.06, -1.99],
+                        [2.1, 0.0, -0.76, 0.49, 4.94, 0.34, -4.74, -0.44, -0.05, -0.15, 0.06, -1.99],
+                        [2.1, 0.0, -0.76, 0.49, 4.93, 0.34, -4.74, -2.3, -0.05, -0.15, 0.06, -1.99],
+                        [0.58, 0.0, -0.76, 0.49, 4.94, 0.36, -4.74, -2.3, -0.05, -0.15, 0.06, -1.99],
+                        [0.58, 0.0, 0.13, 0.14, 4.94, 0.45, -4.75, -2.3, -4.98, 0.34, 4.62, -2.53],
+                        [0.58, 0.0, 0.08, 0.1, 0.09, -0.17, -0.51, -2.3, -0.23, -0.18, 0.04, -2.53]                  ]
+                    for pos, t in self.from_gui(rutina_7, 1.5):
+                        self.send_movement(pos, t)
+                        time.sleep(t)
+
+                elif number == '8':
+                    print("Iniciando Rutina 8 (desde GUI, conversión correcta)...")
+                    poses_gui = [
+                        [0.17, 0.0, -0.0, 0.22, 0.46, -0.23, -1.76, 0.31, -0.55, -0.24, 1.76, 0.34],
+                        [0.24, 0.0, 0.08, 0.12, 1.64, 0.54, 0.5, -0.85, -1.71, 0.69, -0.72, -1.15],
+                        [0.34, 0.0, -0.01, 0.07, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [0.23, 0.0, 0.08, 0.13, 0.21, -0.13, -0.01, -2.49, -4.67, -0.13, 4.99, -2.53],
+                        [0.23, 0.0, 0.08, 0.13, 0.21, -0.13, -0.01, -2.49, -4.67, 1.05, 4.97, -2.53],
+                        [0.23, 0.0, 0.08, 0.13, 0.21, -0.13, -0.01, -2.49, -4.67, 0.07, 4.97, -2.53],
+                        [0.23, 0.0, 0.08, 0.13, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, -0.54, 0.16, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, 0.54, 0.23, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, 0.02, 0.14, 4.85, 0.73, -2.63, -0.42, -4.67, 0.63, 2.28, -0.65],
+                        [0.24, 0.0, 0.02, 0.14, 2.53, -0.02, 5.0, -0.39, -2.16, -0.07, -0.06, 0.34],
+                        [0.24, 0.0, 0.02, 0.14, 2.53, -0.06, -3.92, -0.39, -2.16, -0.06, 1.4, 0.34],
+                        [0.24, 0.0, 0.02, 0.15, 2.53, -0.05, 3.93, -0.39, -2.16, -0.17, -1.01, 0.34],
+                        [0.24, 0.0, 0.02, 0.14, 1.67, -0.34, -0.38, -1.46, -1.73, -0.54, 0.03, -1.33],
+                        [-1.21, 0.0, -0.01, 0.12, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [-1.21, 0.0, -0.8, -0.06, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [-1.21, 0.0, -0.8, -0.06, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [-1.21, 0.0, -0.03, 0.64, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                        [0.34, 0.0, -0.01, 0.07, 0.03, -0.13, -0.37, -1.78, 0.01, -0.25, -0.01, -1.98],
+                    ]
+                    for pos, t in self.from_gui(poses_gui, 1.0):
+                        self.send_movement(pos, t)
+                        time.sleep(t)
 
             except EOFError:
                 break
+
 def main(args=None):
     rclpy.init(args=args)
     node = YarenMotionControl()

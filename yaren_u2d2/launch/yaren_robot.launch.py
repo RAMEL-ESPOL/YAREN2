@@ -52,7 +52,7 @@ def generate_launch_description():
     # 5. Nodo de la Cara (Paquete corregido)
     face_screen_node = Node(
         package='yaren_face_display', # Nombre corregido
-        executable='face_screen',
+        executable='face_cambiar',
         name='face_screen_node',
         output='screen'
     )

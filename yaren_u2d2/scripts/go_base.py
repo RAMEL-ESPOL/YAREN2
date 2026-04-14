@@ -35,31 +35,10 @@ class YarenMotionControl(Node):
         msg.points.append(point)
         self.publisher.publish(msg)
 
-    def run_menu(self):
-        while rclpy.ok():
-            try:
-                number ="6";
-
-                if number == '6':
-                    print("Iniciando Rutina Larga...")
-                    routine = [
-                                ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1),
-                                ([-0.37, 0.0, 0.08, 0.65, 0.81, -0.18, 0.78, -0.33, -1.16, -0.22, 0.22, -1.11], 1.0),
-                                ([-0.39, 0.0, 0.08, 0.65, 0.82, -0.15, 0.78, 0.32, -1.12, -0.21, 0.31, -1.95], 1.0),
-                                ([-0.37, 0.0, 0.08, 0.65, 0.85, -0.17, 0.8, -0.9, -1.12, -0.21, -0.42, 0.1], 1.0),
-                                ([-0.37, 0.0, 0.08, 0.65, 0.79, -0.17, 0.83, 0.26, -0.95, -0.13, 0.3, -1.42], 1.0),
-                            ]
-                    for pos, t in routine:
-                        self.send_movement(pos, t)
-                        import time
-                        time.sleep(t) # Esperar a que termine cada paso
-
-            except EOFError:
-                break
 def main(args=None):
     rclpy.init(args=args)
     node = YarenMotionControl()
-    node.run_menu()
+    node.send_movement([0.03, 0.0, -0.02, -0.02, 0.02, -0.0, 0.01, 0.34, -0.14, -0.04, 0.09, 0.33]  ,2.0)
     node.destroy_node()
     rclpy.shutdown()
 

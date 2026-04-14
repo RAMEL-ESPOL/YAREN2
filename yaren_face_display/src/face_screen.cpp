@@ -47,7 +47,7 @@ public:
     cv::namedWindow("Yaren Face", cv::WINDOW_NORMAL);
 
     // 2. Quitar bordes y decoraciones de la ventana (Modo nativo)
-    cv::setWindowProperty("Yaren Face", cv::WND_PROP_AUTOSIZE, cv::WINDOW_AUTOSIZE);
+    cv::setWindowProperty("Yaren Face", cv::WINDOW_FULLSCREEN, cv::WINDOW_FULLSCREEN);
 
     // 3. Forzar Pantalla Completa
     cv::setWindowProperty("Yaren Face", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
