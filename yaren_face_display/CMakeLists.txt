@@ -20,6 +20,9 @@ include_directories(
 # 3. Crear los ejecutables
 add_executable(face_screen src/face_screen.cpp)
 add_executable(face_cambiar src/face_cambiar.cpp)
+add_executable(face_hablar src/face_hablar.cpp)
+add_executable(face_hablar_cambiar src/face_hablar_cambiar.cpp)
+
 
 # 4. Vincular TODAS las dependencias de ROS 2 a face_screen
 ament_target_dependencies(face_screen 
@@ -31,7 +34,6 @@ ament_target_dependencies(face_screen
   ament_index_cpp
 )
 
-# --- ¡ESTO ES LO QUE FALTABA! ---
 # Vincular las dependencias de ROS 2 a face_cambiar
 ament_target_dependencies(face_cambiar 
   rclcpp
@@ -43,9 +45,31 @@ ament_target_dependencies(face_cambiar
 )
 # --------------------------------
 
+# Vincular las dependencias de ROS 2 a face_hablar
+ament_target_dependencies(face_hablar 
+  rclcpp
+  std_msgs
+  sensor_msgs
+  cv_bridge
+  OpenCV
+  ament_index_cpp
+)
+# Vincular las dependencias de ROS 2 a face_hablar
+ament_target_dependencies(face_hablar_cambiar 
+  rclcpp
+  std_msgs
+  sensor_msgs
+  cv_bridge
+  OpenCV
+  ament_index_cpp
+)
+# --------------------------------
 # 5. Vincular las librerías de OpenCV a ambos
 target_link_libraries(face_screen ${OpenCV_LIBS})
 target_link_libraries(face_cambiar ${OpenCV_LIBS}) # Faltaba esto también
+target_link_libraries(face_hablar ${OpenCV_LIBS}) # Faltaba esto también
+target_link_libraries(face_hablar_cambiar ${OpenCV_LIBS}) # Faltaba esto también
+
 
 # 6. Instalar los archivos de datos
 install(DIRECTORY
@@ -58,6 +82,8 @@ install(DIRECTORY
 install(TARGETS 
   face_screen
   face_cambiar
+  face_hablar
+  face_hablar_cambiar
   DESTINATION lib/${PROJECT_NAME}
 )
 

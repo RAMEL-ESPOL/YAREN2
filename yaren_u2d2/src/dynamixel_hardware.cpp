@@ -82,6 +82,11 @@ public:
 
     for (size_t i = 0; i < joint_names_.size(); ++i)
     {
+      // BYPASS: Ignorar configuración inicial de PID y Torque para joint_2
+      if (joint_names_[i] == "joint_2") {
+        continue; 
+      }
+
       int id = joint_id_map_[joint_names_[i]];
       uint8_t dxl_error = 0;
 
@@ -137,6 +142,13 @@ public:
   {
     for (size_t i = 0; i < joint_names_.size(); ++i)
     {
+      // BYPASS: No leer físicamente el motor que no existe
+      if (joint_names_[i] == "joint_2") {
+        // Mantenemos el joint lógico inalterado copiando su propio comando
+        position_[i] = position_commands_[i];
+        continue;
+      }
+
       int id = joint_id_map_[joint_names_[i]];
       uint32_t dxl_present_position;
       uint8_t dxl_error = 0;
@@ -158,6 +170,11 @@ public:
 
     for (size_t i = 0; i < joint_names_.size(); ++i) 
     {
+      // BYPASS: No enviar comandos de escritura al motor que no existe
+      if (joint_names_[i] == "joint_2") {
+        continue;
+      }
+
       int32_t goal = convertRadiansToTicks(position_commands_[i], joint_names_[i]);
       sync_write.addParam(joint_id_map_[joint_names_[i]], (uint8_t*)&goal);
     }

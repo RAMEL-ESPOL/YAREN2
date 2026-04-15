@@ -10,6 +10,7 @@ from tkinter import scrolledtext, filedialog
 import ast
 import time
 import math
+
 class MotorTorqueControlNode(Node):
     def __init__(self):
         super().__init__('yaren_motor_data')
@@ -90,7 +91,7 @@ class MotorTorqueControlNode(Node):
         except Exception as e:
             self.get_logger().error(f"Error en set_positions: {e}")
 
-# --- GUI (Sin cambios estructurales, solo limpieza visual) ---
+# --- GUI ---
 def run_gui(node):
     root = tk.Tk()
     root.title("Yaren Robot Control - SYNC OK")
@@ -141,16 +142,40 @@ def run_gui(node):
     def run_seq():
         node.execution_running = True
         lines = seq_text.get("1.0", tk.END).strip().split('\n')
+        
         def task():
             for line in lines:
                 if not node.execution_running: break
                 try:
-                    clean = line.split('.', 1)[1].strip() if '.' in line else line.strip()
+                    # Limpiar prefijos numéricos como "1. " de la línea
+                    clean = line.strip()
+                    if '.' in clean:
+                        parts = clean.split('.', 1)
+                        if parts[0].isdigit():
+                            clean = parts[1].strip()
+                            
                     if not clean: continue
-                    node.set_positions(ast.literal_eval(clean))
-                    time.sleep(1.0)
-                except: continue
+                    
+                    # Evaluamos la línea (puede ser lista o tupla)
+                    evaluated_data = ast.literal_eval(clean)
+                    
+                    # Verificamos si tiene formato ([posiciones], tiempo)
+                    if isinstance(evaluated_data, tuple) and len(evaluated_data) == 2:
+                        positions = evaluated_data[0]
+                        t = evaluated_data[1]
+                    else:
+                        # Formato clásico: solo [posiciones]
+                        positions = evaluated_data
+                        t = 1.0 # 1 segundo por defecto
+                        
+                    node.set_positions(positions)
+                    time.sleep(t)
+                    
+                except Exception as e:
+                    node.get_logger().error(f"Error parseando línea: {e}")
+                    continue
             node.execution_running = False
+            
         threading.Thread(target=task, daemon=True).start()
 
     btn_frame = tk.Frame(frame_right)

@@ -61,9 +61,28 @@ public:
     }
 
     ~VideoSynchronizer() {
-        running = false;
-        if (renderThread.joinable()) renderThread.join();
-        cv::destroyAllWindows();
+          running = false;
+        if (renderThread.joinable()) {
+            renderThread.join();
+        }
+        // Estas líneas van DENTRO de las llaves del destructor
+        cv::destroyWindow("Yaren Face"); 
+        cv::destroyAllWindows();        
+    }
+
+    void updateWindow() {
+        std::lock_guard<std::mutex> lock(frameMutex);
+        if (!latestFrame.empty()) {
+            cv::imshow("Yaren Face", latestFrame);
+            
+            // Capturar la tecla ESC (código 27)
+            int key = cv::waitKey(1);
+            if (key == 27) { 
+                RCLCPP_INFO(this->get_logger(), "Cerrando ventana de Yaren...");
+                running = false; 
+                rclcpp::shutdown(); 
+            }
+        }
     }
 
 private:

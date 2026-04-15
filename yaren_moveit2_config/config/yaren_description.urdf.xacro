@@ -2,13 +2,10 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="yaren_description">
   <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
 
-  <!-- Importa el URDF desde el paquete yaren_description -->
-  <xacro:include filename="$(find yaren_description)/urdf/yaren_description_moveit.urdf" />
+  <xacro:include filename="$(find yaren_description)/urdf/yaren_description.urdf" />
 
-  <!-- ros2_control (archivo local en este paquete) -->
   <xacro:include filename="yaren_description_moveit.ros2_control.xacro" />
 
-  <!-- Instancia la macro tal como está definida en el archivo anterior -->
   <yaren_description_moveit_ros2_control
       name="FakeSystem"
       initial_positions_file="$(arg initial_positions_file)"/>
