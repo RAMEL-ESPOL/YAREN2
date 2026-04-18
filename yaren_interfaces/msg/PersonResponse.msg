@@ -1,0 +1,2 @@
+string text
+builtin_interfaces/Time timestamp

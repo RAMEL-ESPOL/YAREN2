@@ -14,7 +14,13 @@ find_package(ament_index_cpp REQUIRED)
 include_directories(
   include
   src
+  /opt/ros/humble/include           # <--- AGREGA ESTA LÍNEA MANUALMENTE
   ${OpenCV_INCLUDE_DIRS}
+  ${cv_bridge_INCLUDE_DIRS}  # <--- ASEGÚRATE DE QUE ESTO ESTÉ AQUÍ
+)
+include_directories(
+  include
+  /opt/ros/humble/include/cv_bridge  # <--- RUTA FORZADA
 )
 
 # 3. Crear los ejecutables

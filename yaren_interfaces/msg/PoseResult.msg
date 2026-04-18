@@ -1,0 +1,3 @@
+int16 challenge 
+bool detected_poses
+builtin_interfaces/Time timestamp

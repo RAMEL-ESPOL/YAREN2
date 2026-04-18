@@ -85,8 +85,8 @@
     <child link="link_1" />
     <axis xyz="0 1 0" />
     <limit
-      lower="-0.7853"
-      upper="0.7853"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -127,22 +127,13 @@
     </collision>
   </link>
 
-  <joint name="joint_2"
-    type="revolute">
-    <origin
-      xyz="0 0.0715 0"
-      rpy="0 1.5708 0" />
-    <parent
-      link="link_1" />
-    <child
-      link="link_2" />
-    <axis
-      xyz="0 0 -1" />
-    <limit
-      lower="-0.5235"
-      upper="0.5235"
-      effort="300"
-      velocity="3" />
+  <joint name="joint_2" type="revolute">
+    <origin xyz="0 0.0715 0" rpy="0 1.5708 0" />
+    <parent link="link_1" />
+    <child link="link_2" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0.0" upper="0.0" effort="300" velocity="0" /> 
+    <dynamics damping="10.0" friction="10.0"/>
   </joint>
 
   <link name="link_3">
@@ -192,8 +183,8 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="-0.5235"
-      upper="0.5235"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -245,8 +236,8 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="-0.2617"
-      upper="0.7853"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -298,8 +289,8 @@
     <axis
       xyz="-1 0 0" />
     <limit
-      lower="-0.7853"
-      upper="1.5708"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -351,8 +342,8 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0.000"
-      upper="1.0472"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -404,8 +395,8 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-0.7853"
-      upper="0.7853"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -457,8 +448,8 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="0.1745"
-      upper="1.5708"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -508,10 +499,10 @@
     <child
       link="link_9" />
     <axis
-      xyz="1 0 0" />
+      xyz="-1 0 0" />
     <limit
-      lower="-0.7853"
-      upper="1.5708"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -564,8 +555,8 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="1.0472"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -617,8 +608,8 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-0.7853"
-      upper="0.7853"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -670,8 +661,8 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="0.1745"
-      upper="1.5708"
+      lower="-3.1416"
+      upper="3.1416"
       effort="300"
       velocity="3" />
   </joint>
@@ -681,110 +672,64 @@
       <plugin>gz_ros2_control/GazeboSimSystem</plugin>
     </hardware>
 
-    <!-- Transmisiones para cada articulación -->
     <joint name="joint_1">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">1</param>
-      <param name="min">-0.7853</param>
-      <param name="max">0.7853</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">1</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+    
     <joint name="joint_2">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">2</param>
-      <param name="min">-0.5235</param>
-      <param name="max">0.5235</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">2</param><param name="min">0.0</param><param name="max">0.0</param>
     </joint>
+
     <joint name="joint_3">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">3</param>
-      <param name="min">-0.5235</param>
-      <param name="max">0.5235</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">3</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+    
     <joint name="joint_4">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">4</param>
-      <param name="min">-0.2617</param>
-      <param name="max">0.7853</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">4</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_5">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">5</param>
-      <param name="min">-0.7853</param>
-      <param name="max">1.5708</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">5</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_6">
-      <command_interface name="position"/>
-      <state_interface name="position">
-        <param name="initial_value">0.1</param>
-      </state_interface>
-      <state_interface name="velocity"/> 
-      <param name="id">6</param>
-      <param name="min">0</param>
-      <param name="max">1.0472</param>
+      <command_interface name="position"/><state_interface name="position"><param name="initial_value">0.1</param></state_interface><state_interface name="velocity"/> 
+      <param name="id">6</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_7">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">7</param>
-      <param name="min">-0.7853</param>
-      <param name="max">0.7853</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">7</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_8">
-      <command_interface name="position"/>
-      <state_interface name="position">
-        <param name="initial_value">0.30</param>
-      </state_interface>
-      <state_interface name="velocity"/> 
-      <param name="id">8</param>
-      <param name="min">0.1745</param>
-      <param name="max">1.5708</param>
+      <command_interface name="position"/><state_interface name="position"><param name="initial_value">0.30</param></state_interface><state_interface name="velocity"/> 
+      <param name="id">8</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_9">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">9</param>
-      <param name="min">-0.7853</param>
-      <param name="max">1.5708</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">9</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_10">
-      <command_interface name="position"/>
-      <state_interface name="position">
-        <param name="initial_value">0.1</param>
-      </state_interface>
-      <state_interface name="velocity"/> 
-      <param name="id">10</param>
-      <param name="min">0</param>
-      <param name="max">1.0472</param>
+      <command_interface name="position"/><state_interface name="position"><param name="initial_value">0.1</param></state_interface><state_interface name="velocity"/> 
+      <param name="id">10</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_11">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/> 
-      <param name="id">11</param>
-      <param name="min">-0.7853</param>
-      <param name="max">0.7853</param>
+      <command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/> 
+      <param name="id">11</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
+
     <joint name="joint_12">
-      <command_interface name="position"/>
-      <state_interface name="position">
-        <param name="initial_value">0.30</param>
-      </state_interface>
-      <state_interface name="velocity"/> 
-      <param name="id">12</param>
-      <param name="min">0.1745</param>
-      <param name="max">1.5708</param>
+      <command_interface name="position"/><state_interface name="position"><param name="initial_value">0.30</param></state_interface><state_interface name="velocity"/> 
+      <param name="id">12</param><param name="min">-3.1416</param><param name="max">3.1416</param>
     </joint>
   </ros2_control>
 

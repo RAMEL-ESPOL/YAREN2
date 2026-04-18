@@ -1,0 +1,8 @@
+string input_text
+---
+# Result part
+bool completed
+---
+# Feedback part
+string current_chunk
+bool is_last_chunk
