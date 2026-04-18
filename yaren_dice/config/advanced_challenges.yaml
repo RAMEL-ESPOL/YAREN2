@@ -1,0 +1,41 @@
+advanced_challenges:
+  - id: 1
+    sequence_length: 4
+    poses: [1, 2, 4, 5]  # Brazo derecho arriba, Brazo izquierdo arriba, Brazo derecho adelante, Brazo izquierdo adelante
+    text: "¡Nivel avanzado! Secuencia de cuatro movimientos. Brazo derecho arriba, brazo izquierdo arriba, brazo derecho adelante y brazo izquierdo adelante"
+  - id: 2
+    sequence_length: 5
+    poses: [3, 7, 8, 9, 6]  # Ambos brazos arriba, X con brazos, Tocando nariz muñeca derecha, Tocando nariz muñeca izquierda, Ambos brazos adelante
+    text: "¡Desafío máximo! Cinco movimientos seguidos. Ambos brazos arriba, forma una X, toca nariz con muñeca derecha, con muñeca izquierda y ambos brazos adelante"
+  - id: 3
+    sequence_length: 4
+    poses: [2, 8, 4, 7]  # Brazo izquierdo arriba, Tocando nariz muñeca derecha, Brazo derecho adelante, X con brazos
+    text: "Secuencia avanzada de cuatro. Brazo izquierdo arriba, toca nariz con muñeca derecha, brazo derecho adelante y forma una X"
+  - id: 4
+    sequence_length: 5
+    poses: [1, 5, 9, 3, 6]  # Brazo derecho arriba, Brazo izquierdo adelante, Tocando nariz muñeca izquierda, Ambos brazos arriba, Ambos brazos adelante
+    text: "¡Cinco movimientos épicos! Brazo derecho arriba, izquierdo adelante, toca nariz con muñeca izquierda, ambos brazos arriba y adelante"
+  - id: 5
+    sequence_length: 4
+    poses: [7, 1, 9, 5]  # X con brazos, Brazo derecho arriba, Tocando nariz muñeca izquierda, Brazo izquierdo adelante
+    text: "Cuatro movimientos complejos. Forma una X, brazo derecho arriba, toca nariz con muñeca izquierda y brazo izquierdo adelante"
+  - id: 6
+    sequence_length: 5
+    poses: [4, 2, 8, 6, 7]  # Brazo derecho adelante, Brazo izquierdo arriba, Tocando nariz muñeca derecha, Ambos brazos adelante, X con brazos
+    text: "¡El desafío definitivo! Brazo derecho adelante, izquierdo arriba, toca nariz con muñeca derecha, ambos brazos adelante y forma una X"
+  - id: 7
+    sequence_length: 4
+    poses: [3, 9, 4, 8]  # Ambos brazos arriba, Tocando nariz muñeca izquierda, Brazo derecho adelante, Tocando nariz muñeca derecha
+    text: "Cuatro movimientos maestros. Ambos brazos arriba, toca nariz con muñeca izquierda, brazo derecho adelante y nariz con muñeca derecha"
+  - id: 8
+    sequence_length: 5
+    poses: [2, 7, 5, 9, 3]  # Brazo izquierdo arriba, X con brazos, Brazo izquierdo adelante, Tocando nariz muñeca izquierda, Ambos brazos arriba
+    text: "¡Secuencia de campeón! Brazo izquierdo arriba, forma X, brazo izquierdo adelante, toca nariz con muñeca izquierda y ambos brazos arriba"
+  - id: 9
+    sequence_length: 4
+    poses: [6, 8, 2, 7]  # Ambos brazos adelante, Tocando nariz muñeca derecha, Brazo izquierdo arriba, X con brazos
+    text: "Cuatro movimientos de élite. Ambos brazos adelante, toca nariz con muñeca derecha, brazo izquierdo arriba y forma una X"
+  - id: 10
+    sequence_length: 5
+    poses: [1, 7, 9, 4, 3]  # Brazo derecho arriba, X con brazos, Tocando nariz muñeca izquierda, Brazo derecho adelante, Ambos brazos arriba
+    text: "¡La secuencia legendaria! Brazo derecho arriba, forma X, toca nariz con muñeca izquierda, brazo derecho adelante y ambos brazos arriba"

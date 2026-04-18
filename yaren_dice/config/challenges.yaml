@@ -1,0 +1,139 @@
+challenges:
+  - id: 1
+    pose: "Brazo derecho arriba"
+    text: 
+      - "  Yaren quiere ver tu brazo derecho apuntando a las nubes vamos tu puedes alza tu brazo derecho"
+      - "  Puedes levantar el brazo derecho como si alcanzaras una estrella"
+      - "  Brazo derecho arriba demuestrale a Yaren que eres rápido como un rayo"
+  - id: 2
+    pose: "Brazo izquierdo arriba"
+    text: 
+      - "  Ahora es el turno del brazo izquierdo haz que se eleve como un cohete"
+      - "  Levanta el brazo izquierdo y saluda como un astronauta"
+      - "  Puedes hacerlo estira el brazo izquierdo hacia el cielo como si fueras un superhéroe"
+  - id: 3
+    pose: "Ambos brazos arriba"
+    text: 
+      - "  Ahora Yaren dice que alces ambos brazos vamos tú puedes"
+      - "  Vamos a ver si estás atento Yaren dice que levantes tus brazos"
+      - "  Alza tus brazos como alas de águila vamos tu puedes alza tus brazos"
+  - id: 4
+    pose: "Brazo derecho hacia delante"
+    text: 
+      - "  Estira tu brazo derecho como si fueses un ninja"
+      - "  Puedes empujar el aire con tu brazo derecho como si empujaras una nube"
+      - "  Imagina que alcanzas un tesoro lejano estira ese brazo derecho y atrápalo"
+  - id: 5
+    pose: "Brazo izquierdo hacia delante"
+    text: 
+      - "  Coloca tu brazo izquierdo hacia adelante como si quisieras empujar algo invisible"
+      - "  El brazo izquierdo quiere ser el protagonista extiéndelo con estilo"
+      - "  Imagina que estás empujando una puerta gigante con tu brazo izquierdo"
+  - id: 6
+    pose: "Ambos brazos hacia delante"
+    text: 
+      - "  Alerta de intrusos camina con los brazos tiesos hacia adelante pero sin hablar"
+      - "  Estira ambos brazos como si abrazaras un globo gigante"
+      - "  A por el récord mantén los brazos rectos hacia el frente como un tren veloz"
+  - id: 7
+    pose: "Símbolo X con los brazos"
+    text: 
+      - "  Cruz de guerrero forma una X con los brazos y protege tu tesoro secreto"
+      - "  Vamos a realizar un escudo con los brazos en forma de X como si fueras un superhéroe"
+      - "  Sabes cómo se hace la X de los piratas cruza los brazos y di 'tierra a la vista'"
+  - id: 8
+    pose: "Tocando nariz con muneca derecha"
+    text: 
+      - "  Toca tu nariz con la muñeca derecha como si buscaras pistas secretas"
+      - "  Puedes hacer que tu muñeca derecha y tu nariz sean mejores amigos"
+      - "  Reto ninja toca la nariz con la muñeca derecha sin hacer ruido"
+  - id: 9
+    pose: "Tocando nariz con muneca izquierda"
+    text: 
+      - "  Ahora el lado izquierdo quiere participar puedes tocar tu nariz con la muñeca izquierda sin reírte"
+      - "  Muéstrale a tu nariz que la muñeca izquierda también es divertida puedes tocarla"
+      - "  Serás un robot Toca la nariz con la mano izquierda y di 'soy Yaren, el robot'"
+  - id: 10
+    pose: "Tocando ojo izquierdo con muneca izquierda"
+    text: 
+      - "  Cuidado con el ojo izquierdo tócalo suavemente con la muñeca izquierda como si pusieras un parche de pirata"
+      - "  Cierra el ojo derecho y tocalo con la muñeca izquierda como un pirata buscando un tesoro"
+      - "  Toca tu ojo izquierdo con la muñeca izquierda antes de que Yaren cuente hasta 3"
+  - id: 11
+    pose: "Tocando ojo izquierdo con muneca derecha"
+    text: 
+      - "  Manos cruzadas usa la muñeca derecha para tocar el ojo izquierdo, como un mago haciendo un truco"
+      - "  Lograrás tocar el ojo izquierdo con la muñeca derecha sin enredarte"
+      - "  Equilibrio total toca tu ojo izquierdo con la muñeca derecha y mantén el equilibrio como un equilibrista"
+  - id: 12
+    pose: "Tocando ojo derecho con muneca derecha"
+    text: 
+      - "  Toca tu ojo derecho con la muñeca derecha, pero con mucho cuidado, por favor"
+      - "  Imagina que tu ojo derecho es un botón mágico tócalo con tu muñeca derecha para activarlo"
+      - "  Puedes hacerlo con un ojo cerrado toca el ojo derecho con tu muñeca derecha y haz como que duermes"
+  - id: 13
+    pose: "Tocando ojo derecho con muneca izquierda"
+    text: 
+      - "  Usa tu muñeca izquierda para tocar el ojo derecho, como si desactivaras una bomba de cosquillas"
+      - "  Podrás tocar el ojo derecho con la muñeca izquierda sin hacerte daño"
+      - "  Toca tu ojo derecho con la muñeca izquierda serás más ágil que un delfin"
+  - id: 14
+    pose: "Tocando oreja derecha con mano derecha"
+    text: 
+      - "  Yaren dice Agarra tu oreja derecha con tu mano derecha como si escucharas un secreto del espacio"
+      - "  Puedes tocar tu oreja derecha con tu mano derecha y hacer la pose de un teléfono antiguo"
+      - "  Oreja derecha al rescate tócala rapido con tu mano derecho antes de que Yaren diga pilas"
+  - id: 15
+    pose: "Tocando oreja derecha con mano izquierda"
+    text: 
+      - "  Toca la oreja derecha con la mano izquierda, como un detective descubriendo un misterio"
+      - "  Tu mano izquierda y tu oreja derecha son enemigos o amigos Haz que se den la paz"
+      - "  Toca la oreja derecha con la mano izquierda sin perder el balance"
+  - id: 16
+    pose: "Tocando oreja derecha con ambas manos"
+    text: 
+      - "  Cubre tu oreja con ambas manos como si fuera un paraguas contra una lluvia de hamburguesas"
+      - "  Tapa tu oreja derecha con las dos manos antes que se moje con la lluvia"
+      - "  Acaricia tu oreja derecha con ambas manos como si fuera un conejito tímido"
+  - id: 17
+    pose: "Tocando oreja izquierda con mano izquierda"
+    text: 
+      - "  Oreja izquierda, acción Tócala con tu mano izquierda como si ajustaras una antena alienígena"
+      - "  Puedes tocar tu mano izquierda y hacer la pose de un teléfono antiguo en tu oreja izquierda"
+      - "  Levanta la mano izquierda, toca tu oreja y di en secreto: Conexión galactica establecida"
+  - id: 18
+    pose: "Tocando oreja izquierda con mano derecha"
+    text: 
+      - "  Toca tu oreja izquierda con la mano derecha, como si desbloquearas un poder secreto de superheroe"
+      - "  Puedes tocar la oreja izquierda con la mano derecha sin hacerte nudos en los dedos tú puedes"
+      - "  Imagina que eres un superheroe toca tu oreja izquierda con la mano derecha como si activaras un superpoder"
+  - id: 19
+    pose: "Tocando oreja izquierda con ambas manos"
+    text: 
+      - "  Tapa tu oreja izquierda con ambas manos como si un dinosaurio rugiera pero sin asustarte"
+      - "  Abraza tu oreja izquierda con las dos manos, como si guardaras un diamante invisible"
+      - "  Hay un silencio universal cúbrete la oreja izquierda con ambas manos y susurra amigos estoy listo para escuchar"
+  - id: 20
+    pose: "Tocando hombro izquierdo con mano derecha"
+    text: 
+      - "  Cruza tu mano derecha para tocar el hombro izquierdo sin que el guardián de la pizza lo note"
+      - "  Tu mano derecha y tu hombro izquierdo son equipo chócalos como compañeros de aventuras"
+      - "  Toca el hombro izquierdo con la mano derecha y mantén el equilibrio como un flamenco elegante"
+  - id: 21
+    pose: "Tocando hombro derecho con mano izquierda"
+    text: 
+      - "  Toca tu hombro derecho con la mano izquierda, como si fueras un robot con cables cruzados Cuidado con los cortocircuitos"
+      - "  Puedes tocar el hombro derecho con la mano izquierda"
+      - "  Usa tu mano izquierda para alcanzar el hombro derecho y balancea como si nadaras"
+  - id: 22
+    pose: "Tocando codo izquierdo con mano derecha"
+    text: 
+      - "  Toca tu codo izquierdo con la mano derecha como si buscaras un botón invisible de emergencia"
+      - "  Logras tocar el codo izquierdo con la mano derecha sin parecer un galleta humano tu puedes"
+      - "  Hora del saludo extraterrestre mano derecha al codo izquierdo y di Nanu nanu"
+  - id: 23
+    pose: "Tocando codo derecho con mano izquierda"
+    text: 
+      - "  Toca tu codo derecho con la mano izquierda y mueve las caderas como si resbalaras en hielo"
+      - "  Por favor coloca tu mano izquierda en tu codo derecho y haz la cara de sorpresa"
+      - "  Podrás tocar el codo derecho con la mano izquierda y sacar la lengua Doble desafío"

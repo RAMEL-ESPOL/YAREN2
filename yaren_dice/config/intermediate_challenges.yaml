@@ -1,0 +1,41 @@
+intermediate_challenges:
+  - id: 1
+    sequence_length: 2
+    poses: [1, 2]  # Brazo derecho arriba, Brazo izquierdo arriba
+    text: "Perfecto! Ahora haremos una secuencia de dos movimientos. Primero alza tu brazo derecho, luego alza tu brazo izquierdo"
+  - id: 2
+    sequence_length: 2
+    poses: [3, 8]  # Ambos brazos arriba, Tocando nariz con muñeca derecha
+    text: "Vamos con otra secuencia. Primero alza ambos brazos, luego toca tu nariz con la muñeca derecha"
+  - id: 3
+    sequence_length: 3
+    poses: [4, 5, 7]  # Brazo derecho adelante, Brazo izquierdo adelante, X con brazos
+    text: "¡Secuencia de tres! Estira tu brazo derecho hacia adelante, después el izquierdo y por último forma una X con tus brazos"
+  - id: 4
+    sequence_length: 2
+    poses: [1, 9]  # Brazo derecho arriba, Tocando nariz con muñeca izquierda
+    text: "Nueva secuencia de dos movimientos. Alza tu brazo derecho y luego toca tu nariz con la muñeca izquierda"
+  - id: 5
+    sequence_length: 3
+    poses: [2, 4, 8]  # Brazo izquierdo arriba, Brazo derecho adelante, Tocando nariz con muñeca derecha
+    text: "Secuencia intermedia de tres pasos. Levanta el brazo izquierdo, estira el derecho hacia adelante y toca tu nariz con la muñeca derecha"
+  - id: 6
+    sequence_length: 2
+    poses: [6, 3]  # Ambos brazos adelante, Ambos brazos arriba
+    text: "Dos movimientos seguidos. Estira ambos brazos hacia adelante y después levántalos hacia arriba"
+  - id: 7
+    sequence_length: 3
+    poses: [1, 5, 9]  # Brazo derecho arriba, Brazo izquierdo adelante, Tocando nariz con muñeca izquierda
+    text: "Secuencia de tres movimientos. Brazo derecho arriba, brazo izquierdo hacia adelante y toca la nariz con muñeca izquierda"
+  - id: 8
+    sequence_length: 2
+    poses: [7, 2]  # X con brazos, Brazo izquierdo arriba
+    text: "Combinación de dos poses. Forma una X con los brazos y después levanta solo el brazo izquierdo"
+  - id: 9
+    sequence_length: 3
+    poses: [3, 7, 4]  # Ambos brazos arriba, X con brazos, Brazo derecho adelante
+    text: "Tres movimientos en secuencia. Ambos brazos arriba, forma una X y estira el brazo derecho hacia adelante"
+  - id: 10
+    sequence_length: 2
+    poses: [8, 6]  # Tocando nariz con muñeca derecha, Ambos brazos adelante
+    text: "Secuencia de dos. Toca tu nariz con la muñeca derecha y después estira ambos brazos hacia adelante"
