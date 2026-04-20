@@ -8,7 +8,7 @@ AnimalFilter::AnimalFilter(const std::string& animal_name) {
 }
 
 void AnimalFilter::load_masks(const std::string& animal_name) {
-    std::string base_path = ament_index_cpp::get_package_share_directory("coco_filters") + "/imgs/animals_mask/" + animal_name + "/";
+    std::string base_path = ament_index_cpp::get_package_share_directory("yaren_filters") + "/imgs/animals_mask/" + animal_name + "/";
     
     mask_closed_closed_ = cv::imread(base_path + animal_name + "_closed_closed.png", cv::IMREAD_UNCHANGED);
     mask_open_closed_ = cv::imread(base_path + animal_name + "_open_closed.png", cv::IMREAD_UNCHANGED);

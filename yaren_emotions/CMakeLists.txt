@@ -25,7 +25,10 @@ install(PROGRAMS
   scripts/csi_cam_pub.py
   DESTINATION lib/${PROJECT_NAME}
 )
-
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
 # ========== Instalación común ==========
 install(DIRECTORY
   models scripts utils

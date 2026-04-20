@@ -31,7 +31,7 @@ class EmotionDetectionNode(Node):
         super().__init__('emotion_detection_node')
         
         # Cargar modelo
-        pkg_path = get_package_share_directory('coco_emotions')
+        pkg_path = get_package_share_directory('yaren_emotions')
         model_path = os.path.join(pkg_path, 'models', 'model_mbn_1.h5')
 
         self.model = tf.keras.models.load_model(model_path)
