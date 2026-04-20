@@ -98,7 +98,9 @@ source ~/.bashrc
 iniciar_yaren
 ```
 ### 7. Prender los motores
-```ros2 launch yaren_u2d2 yaren_robot.launch.py```
+```
+ros2 launch yaren_u2d2 yaren_robot.launch.py
+```
 
 ### 8. Prender los filtros de la camara
 ```
@@ -110,13 +112,15 @@ iniciar_yaren
 ```
 ### 9. Prender la deteccion de emociones de la camara
 
- ```   # Para poner la deteccion de emociones:
-    ros2 launch yaren_emotions yaren_emotions.launch.py
+ ```   
+ # Para poner la deteccion de emociones:
+ros2 launch yaren_emotions yaren_emotions.launch.py
 ```
 ### 10. Prender el juego Yaren Dice
 
-  ```  # Para poner el juego Yaren Dice:
-    ros2 launch yaren_dice yaren_dice.launch.py
+  ```  
+# Para poner el juego Yaren Dice:
+ros2 launch yaren_dice yaren_dice.launch.py
 ```
 ### 11. Prender el Yaren ChatBot
 ```

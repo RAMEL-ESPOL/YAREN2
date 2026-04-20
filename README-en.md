@@ -77,9 +77,11 @@ TTS Model: Download a Spanish Piper model (e.g., es_ES-sharvard-medium) from Pip
 
 YAREN uses Groq for fast LLM inference. Get your free API key at Groq Console.
 Add it to your .bashrc:
-```echo 'export GROQ_API_KEY="gsk_YOUR_API_KEY_HERE"' >> ~/.bashrc
+```
+echo 'export GROQ_API_KEY="gsk_YOUR_API_KEY_HERE"' >> ~/.bashrc
 source ~/.bashrc
 ```
+
 ### 5. Build the Workspace
 ```
 cd ~/robotis_ws
@@ -99,32 +101,41 @@ iniciar_yaren
 ```
 
 ### 7.Powering the Motors To initialize communication with the motors via U2D2
-```ros2 launch yaren_u2d2 yaren_robot.launch.py
+```
+ros2 launch yaren_u2d2 yaren_robot.launch.py
 ```
 ### 8. Camera Filters YAREN2 includes augmented reality filters. Choose your preferred mode
-
+```
     Accessory Filters:
-    ```ros2 launch yaren_filters yaren_accesorios.launch.py```
+    ros2 launch yaren_filters yaren_accesorios.launch.py
 
     Animal Filters:
-    ```ros2 launch yaren_filters yaren_animales.launch.py```
-
+    ros2 launch yaren_filters yaren_animales.launch.py
+```
 ### 9.Emotion Detection To enable the robot to recognize user moods through computer vision
 
-   ``` ros2 launch yaren_emotions yaren_emotions.launch.py```
+   ``` 
+   ros2 launch yaren_emotions yaren_emotions.launch.py
+   ```
 
 ### 10. Yaren Dice Game To launch the interactive game mode
 
-    ```ros2 launch yaren_dice yaren_dice.launch.py```
+    ```
+    ros2 launch yaren_dice yaren_dice.launch.py
+    ```
 
 ### 11. Yaren ChatBot The core of the social interaction. Choose between two modes
 
-    With Intelligent Agents (Recommended): Uses advanced logic and decision-making.
-   ``` ros2 launch yaren_chat yaren_chat.launch.py```
+    ```
+With Intelligent Agents (Recommended): Uses advanced logic and decision-making.
+    ros2 launch yaren_chat yaren_chat.launch.py
     
     Without Agents: A more direct and simple chat interface.
-   ``` ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py```
+   ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py
+```
 
 ### 12. Yaren Arm Mimic: 
+```
 Its not working yet :c
+```
 
