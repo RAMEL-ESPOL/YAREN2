@@ -98,11 +98,11 @@ source ~/.bashrc
 iniciar_yaren
 ```
 ### 7. Prender los motores
-```ros2 launch yaren_u2d2 yaren_robot.launch.py
-```
-### 8. Prender los filtros de la camara
+```ros2 launch yaren_u2d2 yaren_robot.launch.py```
 
- ```   # Para poner los filtros de accesorios:
+### 8. Prender los filtros de la camara
+```
+    # Para poner los filtros de accesorios:
     ros2 launch yaren_filters yaren_accesorios.launch.py
 
     # Para poner los filtros de animales:
@@ -127,6 +127,6 @@ iniciar_yaren
     ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py
 ```
 ### 12. Prender el Yaren Arm Mimic: 
-Todavia no vale :(
+```Todavia no vale :(```
 
 
