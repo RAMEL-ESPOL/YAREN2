@@ -1,0 +1,51 @@
+# ============================================================
+# YAREN2 - System Dependencies
+# Install with: sudo apt update && sudo apt install -y $(grep -v '^#' system_dependencies.txt | tr '\n' ' ')
+# ============================================================
+
+# --- Build tools ---
+build-essential
+cmake
+git
+curl
+pkg-config
+python3-pip
+python3-venv
+python3-colcon-cmake
+
+# --- Audio ---
+portaudio19-dev
+python3-pyaudio
+libasound2-dev
+libportaudio2
+libportaudiocpp0
+
+# --- USB / Serial ---
+libusb-1.0-0-dev
+
+# --- Media ---
+ffmpeg
+v4l-utils
+
+# --- ROS 2 Humble (desktop includes almost everything) ---
+ros-humble-desktop
+ros-humble-ros2-control
+ros-humble-ros2-controllers
+ros-humble-moveit
+ros-humble-cv-bridge
+ros-humble-image-transport
+ros-humble-image-transport-plugins
+ros-humble-usb-cam
+ros-humble-tf2-ros
+ros-humble-xacro
+ros-humble-joint-state-publisher
+ros-humble-joint-state-publisher-gui
+ros-humble-controller-manager
+ros-humble-control-msgs
+ros-humble-trajectory-msgs
+ros-humble-dynamixel-sdk
+ros-humble-warehouse-ros
+ros-humble-ros-gz
+ros-humble-gz-ros2-control
+ros-humble-teleop-twist-keyboard
+ros-humble-rviz2

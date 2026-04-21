@@ -31,13 +31,15 @@ class MovementDetectionAgent:
         self.movement_graph = graph.compile()
 
     def _extract_json_from_response(self, text: str) -> dict:
-        """Extrae JSON válido y normaliza el nombre del movimiento"""
+        """Extrae JSON válido y normaliza el nombre del movimiento.
+        REGLA: Si movement_type es 'ninguno', movement_detected DEBE ser False.
+        """
         text = text.strip()
         
         # Intento 1: JSON directo
         try:
             data = json.loads(text)
-            return self._normalize_movement_type(data)
+            return self._normalize_and_validate(data)
         except Exception:
             pass
         
@@ -46,29 +48,36 @@ class MovementDetectionAgent:
         if match:
             try:
                 data = json.loads(match.group())
-                return self._normalize_movement_type(data)
+                return self._normalize_and_validate(data)
             except Exception:
                 pass
         
-        # Intento 3: Fallback manual basado en palabras clave
+        # Intento 3: Fallback manual basado en palabras clave (Solo si detecta movimiento real)
         text_lower = text.lower()
         result = {"movement_detected": False, "movement_type": "ninguno"}
         
+        # Solo buscamos movimientos activos aquí. 
+        # Si no encuentra ninguno activo, devuelve False/Ninguno por defecto.
+        
         if any(kw in text_lower for kw in ["true", "sí", "si", "detectado", "movimiento"]):
-            result["movement_detected"] = True
             
             # Brazos
-            if "derech" in text_lower:
+            if "derech" in text_lower and "brazo" in text_lower:
+                result["movement_detected"] = True
                 result["movement_type"] = "levanta_el_brazo_derecho"
-            elif "izquierd" in text_lower:
+            elif "izquierd" in text_lower and "brazo" in text_lower:
+                result["movement_detected"] = True
                 result["movement_type"] = "levanta_el_brazo_izquierdo"
-            elif "ambos" in text_lower or "dos brazos" in text_lower or "alza" in text_lower:
+            elif ("ambos" in text_lower or "dos brazos" in text_lower or "alza" in text_lower) and "brazo" in text_lower:
+                result["movement_detected"] = True
                 result["movement_type"] = "alza_los_brazos"
-            elif "estira" in text_lower or "extiende" in text_lower:
+            elif ("estira" in text_lower or "extiende" in text_lower) and "brazo" in text_lower:
+                result["movement_detected"] = True
                 result["movement_type"] = "estira_los_brazos"
             
             # Cabeza
             elif "cabeza" in text_lower:
+                result["movement_detected"] = True
                 if "izquierd" in text_lower or "izq" in text_lower:
                     result["movement_type"] = "mira_a_la_izquierda"
                 elif "derech" in text_lower or "der" in text_lower:
@@ -78,6 +87,7 @@ class MovementDetectionAgent:
                     
             # Cuerpo
             elif "cuerpo" in text_lower:
+                result["movement_detected"] = True
                 if "izquierd" in text_lower or "izq" in text_lower:
                     result["movement_type"] = "gira_a_la_izquierda"
                 elif "derech" in text_lower or "der" in text_lower:
@@ -87,16 +97,18 @@ class MovementDetectionAgent:
                     
             # Actitud
             elif "confus" in text_lower or "no entiendo" in text_lower or "loco" in text_lower:
+                result["movement_detected"] = True
                 result["movement_type"] = "hazte_el_loco"
                 
             # Reset
             elif "original" in text_lower or "inicial" in text_lower or "quieto" in text_lower:
+                result["movement_detected"] = True
                 result["movement_type"] = "vuelve_a_la_posicion_original"
                 
-        return self._normalize_movement_type(result)
+        return self._normalize_and_validate(result)
 
-    def _normalize_movement_type(self, data: dict) -> dict:
-        """Asegura que el movement_type sea exactamente uno de los válidos"""
+    def _normalize_and_validate(self, data: dict) -> dict:
+        """Normaliza nombres y aplica la regla: Si es 'ninguno', detected es False"""
         m_type = data.get("movement_type", "ninguno")
         
         # Mapeo de posibles variaciones a los nombres exactos usados en plan_joint_movement
@@ -111,11 +123,18 @@ class MovementDetectionAgent:
             "hazte_el loco": "hazte_el_loco",
             "vuelve a la posicion original": "vuelve_a_la_posicion_original",
             "vuelve_a_la posicion original": "vuelve_a_la_posicion_original",
+            "ninguno": "ninguno"
         }
         
-        # Si existe en el mapa, lo reemplaza. Si no, lo deja igual (esperando que sea correcto)
         if m_type in normalization_map:
             data["movement_type"] = normalization_map[m_type]
+        else:
+            # Si el tipo no es conocido, lo forzamos a ninguno
+            data["movement_type"] = "ninguno"
+
+        # REGLA DE ORO: Si el tipo es ninguno, detected debe ser falso
+        if data["movement_type"] == "ninguno":
+            data["movement_detected"] = False
             
         return data
 
@@ -123,6 +142,14 @@ class MovementDetectionAgent:
         """Detección ultra-rápida con regex si el LLM falla o tarda demasiado"""
         text = user_message.lower()
         
+        # 1. PRIORIDAD: Emociones Tristes/Dolor -> NO MOVER (Empatía)
+        if re.search(r"\b(triste|llorar|dolor|duele|roto|miedo|solo|sola|asustad|pena)\b", text):
+            return {
+                "movement_detected": False,
+                "movement_type": "ninguno",
+                "method": "regex_empathy_block"
+            }
+
         patterns = {
             # Brazos individuales
             r"\b(brazo\s*derech|derech.*brazo|brazo\s*2)\b": "levanta_el_brazo_derecho",
@@ -157,6 +184,7 @@ class MovementDetectionAgent:
                     "method": "regex_fallback"
                 }
         
+        # Si no coincide con ningún patrón de movimiento activo
         return {"movement_detected": False, "movement_type": "ninguno", "method": "regex_fallback"}
 
     def detect_movement_intent(self, state: MovementState):
@@ -165,6 +193,10 @@ class MovementDetectionAgent:
         
         detection_prompt = f"""Analiza si el usuario quiere movimiento físico del robot.
 Mensaje: "{user_message}"
+
+REGLAS IMPORTANTES:
+1. Si el usuario expresa tristeza, dolor, miedo o pérdida (ej: "estoy triste", "me duele", "se rompió"), NO muevas el robot. Responde con movement_detected: false.
+2. Solo detecta movimiento si hay una orden clara o un gesto de interacción activa (saludar, señalar, girar).
 
 TIPOS VÁLIDOS (Usa EXACTAMENTE estos nombres):
 levanta_el_brazo_derecho, levanta_el_brazo_izquierdo, alza_los_brazos, estira_los_brazos,
@@ -185,14 +217,18 @@ Responde SOLO con este JSON: {{"movement_detected": true/false, "movement_type":
             result = self._regex_fallback(user_message)
             result["method"] = "llm_failed_regex_fallback"
 
-        # Seguridad adicional: si el LLM no detectó movimiento, verificar con regex por si acaso
+        # Seguridad adicional: Verificar con regex por si el LLM pasó algo extraño
+        # Pero respetamos la regla de empatía del regex primero
         if not result.get("movement_detected"):
-            regex_result = self._regex_fallback(user_message)
-            if regex_result["movement_detected"]:
-                result = regex_result
-                result["method"] = "llm+regex_fallback"
+            # Si el LLM dijo que no, verificamos si el regex ve algo obvio (como "levanta brazo")
+            # pero ignoramos si el regex dice "no" porque ya estamos en no.
+            regex_check = self._regex_fallback(user_message)
+            if regex_check["movement_detected"]:
+                 # El regex vio una orden clara que el LLM quizás perdió
+                 result = regex_check
+                 result["method"] = "llm_missed_regex_found"
             else:
-                result["method"] = result.get("method", "llm")
+                 result["method"] = result.get("method", "llm")
 
         return {
             "movement_detected": result["movement_detected"],
@@ -253,13 +289,9 @@ Responde SOLO con este JSON: {{"movement_detected": true/false, "movement_type":
             }
         
         # === VALIDACIÓN FINAL ===
-        # Si se detectó movimiento pero no hay joints definidos (ej. tipo desconocido),
-        # forzamos un retorno vacío o un reset seguro para evitar errores en el controlador.
-        if state.get("movement_detected") and not joints_to_move:
-            # Opción A: Loggear advertencia y devolver vacío (el controlador ignorará)
-            # Opción B: Forzar reset a posición original por seguridad
-            # Aquí elegimos devolver vacío pero podrías cambiar a 'vuelve_a_la_posicion_original' si prefieres seguridad.
-            pass 
+        # Si movement_detected es False, aseguramos que joints esté vacío
+        if not state.get("movement_detected"):
+            joints_to_move = {}
 
         return {"joints_to_move": joints_to_move}
 

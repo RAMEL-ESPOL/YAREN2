@@ -2,140 +2,217 @@
 
 YAREN2 is an intelligent social robot platform built on ROS 2 Humble, designed for natural human-robot interaction using voice commands, LLMs (Groq), and expressive movements.
 
+---
+
 ## Prerequisites
 
 - **OS:** Ubuntu 22.04 LTS
-- **ROS Distribution:** ROS 2 Humble Hawksbill
-- **Hardware:** PC or NVIDIA Jetson Orin Nano (recommended for better performance)
+- **ROS 2 Distribution:** ROS 2 Humble Hawksbill
+- **Hardware:** PC with NVIDIA GPU (recommended) or NVIDIA Jetson Orin Nano
 - **Python:** 3.10+
 
-## ️ Installation
+---
 
-### 1. System Dependencies
+## Installation
 
-Install the required system libraries for audio, serial communication, and ROS 2 control:
+### 1. ROS 2 Humble
+
+If you don't have ROS 2 Humble installed, follow the [official installation guide](https://docs.ros.org/en/humble/Installation.html).
+
+Verify your installation:
+```bash
+printenv ROS_DISTRO  # Should output: humble
+```
+
+### 2. Clone the Repository
 
 ```bash
+mkdir -p ~/robotis_ws/src
+cd ~/robotis_ws/src
+git clone https://github.com/tu-usuario/YAREN2.git
+```
+
+### 3. System Dependencies
+
+Now that you have the repo, install all system packages from the included file:
+
+```bash
+cd ~/robotis_ws/src/YAREN2
 sudo apt update
-sudo apt install -y \
-    python3-pip \
-    python3-venv \
-    portaudio19-dev \
-    python3-pyaudio \
-    libusb-1.0-0-dev \
-    git \
-    curl \
-    build-essential \
-    cmake \
-    ros-humble-control-msgs \
-    ros-humble-trajectory-msgs \
-    ros-humble-joint-state-publisher \
-    ros-humble-xacro \
-    ros-humble-gazebo-ros-pkgs \
-    ros-humble-ros2-control \
-    ros-humble-ros2-controllers
+sudo apt install -y $(grep -v '^#' system_dependencies.txt | tr '\n' ' ')
 ```
-### 2. Python Dependencies
 
-It is recommended to use a virtual environment. Navigate to your workspace and install the Python packages:
-```
+> This installs ROS 2 packages, audio libraries, USB/serial tools, ffmpeg, and build tools.
+> Full list available in `system_dependencies.txt`.
+
+### 4. Create the Virtual Environment
+
+> ⚠️ `--system-site-packages` is required so the venv can access ROS 2 system packages.
+
+```bash
 cd ~/robotis_ws
-source venv_yaren/bin/activate # If you already have the env created
+python3 -m venv venv_yaren --system-site-packages
+source venv_yaren/bin/activate
 pip install --upgrade pip
-pip install \
-    langchain \
-    langgraph \
-    langsmith \
-    groq \
-    langchain-groq \
-    vosk \
-    piper-tts \
-    pyaudio \
-    dynamixel-sdk \
-    opencv-python \
-    numpy \
-    onnxruntime \
-    pillow
 ```
-### 3. AI Models (STT & TTS)
 
-You need to download the Voice Recognition (STT) and Text-to-Speech (TTS) models manually.
-Structure:
+### 5. Install Python Dependencies
+
+```bash
+pip install -r src/YAREN2/venv_requirements.txt
+```
+
+### 6. AI Models (STT & TTS)
+
+Download the Voice Recognition and Text-to-Speech models manually and place them here:
+
 ```
 src/YAREN2/yaren_chat/models/
 ├── STT/
-│   └── vosk-model-es-0.42/  <-- Unzip content here (must contain final.mdl)
+│   └── vosk-model-es-0.42/       ← Unzip content here (must contain final.mdl)
 └── TTS/
     ├── es_ES-sharvard-medium.onnx
     └── es_ES-sharvard-medium.onnx.json
-STT Model: Download vosk-model-small-es-0.42
-    and extract it into models/STT/.
-TTS Model: Download a Spanish Piper model (e.g., es_ES-sharvard-medium) from Piper Releases
-    and place the .onnx and .json files in models/TTS/.
 ```
-### 4. Groq API Key
 
-YAREN uses Groq for fast LLM inference. Get your free API key at Groq Console.
-Add it to your .bashrc:
-```
+- **STT:** Download [vosk-model-small-es-0.42](https://alphacephei.com/vosk/models) and extract into `models/STT/`
+- **TTS:** Download a Spanish Piper model from [Piper Releases](https://github.com/rhasspy/piper/releases) and place `.onnx` and `.json` files into `models/TTS/`
+
+### 7. Groq API Key
+
+Get your free API key at [Groq Console](https://console.groq.com) and add it to your `.bashrc`:
+
+```bash
 echo 'export GROQ_API_KEY="gsk_YOUR_API_KEY_HERE"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 5. Build the Workspace
-```
+### 8. Build the Workspace
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/robotis_ws/venv_yaren/bin/activate
 cd ~/robotis_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
-### 6. Quick Start with Alias To simplify starting the robot, add the following alias to your ~/.bashrc file. This will source ROS 2, activate the virtual environment, and launch YAREN.
-```
-#1.Open your bash configuration:
+
+---
+
+## Quick Start (Alias)
+
+Add this alias to `~/.bashrc` to source everything in one command:
+
+```bash
 nano ~/.bashrc
-#2.Add these lines at the end of the file:
-alias iniciar_yaren='source /opt/ros/humble/setup.bash && cd ~/robotis_ws && source venv_yaren/bin/activate && source install/setup.bash
-#3.Save and exit (Ctrl+O, Enter, Ctrl+X), then reload:
+```
+
+Add at the end:
+```bash
+alias iniciar_yaren='source /opt/ros/humble/setup.bash && cd ~/robotis_ws && source venv_yaren/bin/activate && source install/setup.bash'
+```
+
+Reload and use:
+```bash
 source ~/.bashrc
-#4.Start YAREN anytime by typing:
 iniciar_yaren
 ```
 
-### 7.Powering the Motors To initialize communication with the motors via U2D2
-```
+---
+
+## Usage
+
+> Always run `iniciar_yaren` before any launch command below.
+
+### Power the Motors
+
+Initialize communication with the motors via U2D2:
+```bash
 ros2 launch yaren_u2d2 yaren_robot.launch.py
 ```
-### 8. Camera Filters YAREN2 includes augmented reality filters. Choose your preferred mode
-```
-    Accessory Filters:
-    ros2 launch yaren_filters yaren_accesorios.launch.py
 
-    Animal Filters:
-    ros2 launch yaren_filters yaren_animales.launch.py
-```
-### 9.Emotion Detection To enable the robot to recognize user moods through computer vision
+### Camera Filters
 
-   ``` 
-   ros2 launch yaren_emotions yaren_emotions.launch.py
-   ```
+```bash
+# Accessory filters
+ros2 launch yaren_filters yaren_accesorios.launch.py
 
-### 10. Yaren Dice Game To launch the interactive game mode
-
-    ```
-    ros2 launch yaren_dice yaren_dice.launch.py
-    ```
-
-### 11. Yaren ChatBot The core of the social interaction. Choose between two modes
-
-    ```
-With Intelligent Agents (Recommended): Uses advanced logic and decision-making.
-    ros2 launch yaren_chat yaren_chat.launch.py
-    
-    Without Agents: A more direct and simple chat interface.
-   ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py
+# Animal filters
+ros2 launch yaren_filters yaren_animales.launch.py
 ```
 
-### 12. Yaren Arm Mimic: 
-```
-Its not working yet :c
+### Emotion Detection
+
+```bash
+ros2 launch yaren_emotions yaren_emotions.launch.py
 ```
 
+### Dice Game
+
+```bash
+ros2 launch yaren_dice yaren_dice.launch.py
+```
+
+### ChatBot
+
+```bash
+# With intelligent agents (recommended)
+ros2 launch yaren_chat yaren_chat.launch.py
+
+# Without agents (simpler/direct mode)
+ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py
+```
+
+### Arm Mimic
+
+> ⚠️ Not working yet — under development.
+
+---
+
+## Project Structure
+
+```
+robotis_ws/
+├── src/
+│   └── YAREN2/
+│       ├── ia_face_software/
+│       ├── usb_cam/
+│       ├── yaren_arm_mimic/
+│       ├── yaren_chat/
+│       ├── yaren_description/
+│       ├── yaren_dice/
+│       ├── yaren_emotions/
+│       ├── yaren_face_display/
+│       ├── yaren_filters/
+│       ├── yaren_gazebo_sim/
+│       ├── yaren_interfaces/
+│       ├── yaren_moveit2_config/
+│       ├── yaren_movements/
+│       ├── yaren_u2d2/
+│       ├── system_dependencies.txt   ← apt packages
+│       ├── venv_requirements.txt     ← pip packages
+│       └── requirements.txt          ← full reference list
+├── venv_yaren/     ← virtual environment (not in git)
+├── build/          ← generated by colcon (not in git)
+├── install/        ← generated by colcon (not in git)
+└── log/            ← generated by colcon (not in git)
+```
+
+---
+
+## .gitignore
+
+Make sure your repo has this at the root of `YAREN2/`:
+
+```
+venv_yaren/
+build/
+install/
+log/
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+```
+
+---

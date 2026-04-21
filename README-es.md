@@ -1,136 +1,218 @@
 # YAREN2 - Plataforma de Robot Social
 
-YAREN2 es una plataforma inteligente de robot social construida sobre **ROS 2 Humble**, diseñada para la interacción natural humano-robot mediante comandos de voz, Modelos de Lenguaje Grande (LLMs vía Groq) y movimientos expresivos.
+YAREN2 es una plataforma de robot social inteligente construida sobre ROS 2 Humble, diseñada para la interacción humano-robot natural mediante comandos de voz, LLMs (Groq) y movimientos expresivos.
 
-## Prerrequisitos
+---
 
-- **Sistema Operativo:** Ubuntu 22.04 LTS
-- **Distribución ROS:** ROS 2 Humble Hawksbill
-- **Hardware:** PC o NVIDIA Jetson Orin Nano (recomendado para mejor rendimiento)
+## Requisitos Previos
+
+- **SO:** Ubuntu 22.04 LTS
+- **Distribución ROS 2:** ROS 2 Humble Hawksbill
+- **Hardware:** PC con GPU NVIDIA (recomendado) o NVIDIA Jetson Orin Nano
 - **Python:** 3.10+
 
-## ️ Instalación
+---
 
-### 1. Dependencias del Sistema
+## Instalación
 
-Instala las librerías necesarias para audio, comunicación serial y control en ROS 2:
+### 1. ROS 2 Humble
+
+Si no tienes ROS 2 Humble instalado, sigue la [guía oficial de instalación](https://docs.ros.org/en/humble/Installation.html).
+
+Verifica tu instalación:
+```bash
+printenv ROS_DISTRO  # Debe mostrar: humble
+```
+
+### 2. Clonar el Repositorio
 
 ```bash
+mkdir -p ~/robotis_ws/src
+cd ~/robotis_ws/src
+git clone https://github.com/tu-usuario/YAREN2.git
+```
+
+### 3. Dependencias del Sistema
+
+Ahora que tienes el repo, instala todos los paquetes del sistema desde el archivo incluido:
+
+```bash
+cd ~/robotis_ws/src/YAREN2
 sudo apt update
-sudo apt install -y \
-    python3-pip \
-    python3-venv \
-    portaudio19-dev \
-    python3-pyaudio \
-    libusb-1.0-0-dev \
-    git \
-    curl \
-    build-essential \
-    cmake \
-    ros-humble-control-msgs \
-    ros-humble-trajectory-msgs \
-    ros-humble-joint-state-publisher \
-    ros-humble-xacro \
-    ros-humble-gazebo-ros-pkgs \
-    ros-humble-ros2-control \
-    ros-humble-ros2-controllers
+sudo apt install -y $(grep -v '^#' system_dependencies.txt | tr '\n' ' ')
 ```
-### 2. Dependencias de Python
 
-Se recomienda utilizar un entorno virtual para evitar conflictos. Navega a tu workspace e instala los paquetes necesarios:
-```
+> Esto instala paquetes de ROS 2, librerías de audio, herramientas USB/serial, ffmpeg y herramientas de compilación.
+> Lista completa disponible en `system_dependencies.txt`.
+
+### 4. Crear el Entorno Virtual
+
+> ⚠️ `--system-site-packages` es obligatorio para que el entorno virtual pueda acceder a los paquetes de ROS 2 instalados en el sistema.
+
+```bash
 cd ~/robotis_ws
-source venv_yaren/bin/activate # If you already have the env created
+python3 -m venv venv_yaren --system-site-packages
+source venv_yaren/bin/activate
 pip install --upgrade pip
-pip install \
-    langchain \
-    langgraph \
-    langsmith \
-    groq \
-    langchain-groq \
-    vosk \
-    piper-tts \
-    pyaudio \
-    dynamixel-sdk \
-    opencv-python \
-    numpy \
-    onnxruntime \
-    pillow
 ```
-### 3. Modelos de IA (STT y TTS)
 
-Debes descargar manualmente los modelos de Reconocimiento de Voz (STT) y Síntesis de Voz (TTS) y colocarlos en la estructura correcta. 
-Estructura de carpetas requerida:
+### 5. Instalar Dependencias Python
+
+```bash
+pip install -r src/YAREN2/venv_requirements.txt
+```
+
+### 6. Modelos de IA (STT y TTS)
+
+Descarga los modelos de reconocimiento de voz y síntesis de texto manualmente y colócalos aquí:
+
 ```
 src/YAREN2/yaren_chat/models/
 ├── STT/
-│   └── vosk-model-es-0.42/  <-- Unzip content here (must contain final.mdl)
+│   └── vosk-model-es-0.42/       ← Descomprime el contenido aquí (debe contener final.mdl)
 └── TTS/
     ├── es_ES-sharvard-medium.onnx
     └── es_ES-sharvard-medium.onnx.json
-STT Model: Download vosk-model-small-es-0.42
-    and extract it into models/STT/.
-TTS Model: Download a Spanish Piper model (e.g., es_ES-sharvard-medium) from Piper Releases
-    and place the .onnx and .json files in models/TTS/.
 ```
-### 4. Clave API de Groq
 
-YAREN usa Groq para inferencia rápida de LLM. Obtén tu clave gratuita en Groq Console.
-Añádela a tu .bashrc:
-```echo 'export GROQ_API_KEY="gsk_YOUR_API_KEY_HERE"' >> ~/.bashrc
+- **STT:** Descarga [vosk-model-small-es-0.42](https://alphacephei.com/vosk/models) y extráelo en `models/STT/`
+- **TTS:** Descarga un modelo Piper en español desde [Piper Releases](https://github.com/rhasspy/piper/releases) y coloca los archivos `.onnx` y `.json` en `models/TTS/`
+
+### 7. API Key de Groq
+
+Obtén tu API key gratuita en [Groq Console](https://console.groq.com) y agrégala a tu `.bashrc`:
+
+```bash
+echo 'export GROQ_API_KEY="gsk_TU_API_KEY_AQUI"' >> ~/.bashrc
 source ~/.bashrc
 ```
-### 5. Compilar el Workspace
-```
+
+### 8. Compilar el Workspace
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/robotis_ws/venv_yaren/bin/activate
 cd ~/robotis_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
-### 6. Inicio Rápido con Alias Para simplificar el inicio del robot, añade el siguiente alias a tu archivo ~/.bashrc. Esto cargará ROS 2, activará el entorno virtual y lanzará YAREN.
-```
-#Abre tu configuración de bash:
+
+---
+
+## Inicio Rápido (Alias)
+
+Agrega este alias a tu `~/.bashrc` para sourcer todo en un solo comando:
+
+```bash
 nano ~/.bashrc
-#2.Añade estas líneas al final del archivo:
-alias iniciar_yaren='sudo chmod 666 /dev/ttyUSB0 && sudo setserial /dev/ttyUSB0 low_latency && source /opt/ros/humble/setup.bash && cd ~/robotis_ws && source venv_yaren/bin/activate && source install/setup.bash'
-#3.Guarda y sal (Ctrl+O, Enter, Ctrl+X), luego recarga:
+```
+
+Agrega al final:
+```bash
+alias iniciar_yaren='source /opt/ros/humble/setup.bash && cd ~/robotis_ws && source venv_yaren/bin/activate && source install/setup.bash'
+```
+
+Recarga y úsalo:
+```bash
 source ~/.bashrc
-#4.Inicia YAREN en cualquier momento escribiendo:
 iniciar_yaren
 ```
-### 7. Prender los motores
-```
+
+---
+
+## Uso
+
+> Siempre ejecuta `iniciar_yaren` antes de cualquier comando de lanzamiento.
+
+### Encender los Motores
+
+Inicializa la comunicación con los motores vía U2D2:
+```bash
 ros2 launch yaren_u2d2 yaren_robot.launch.py
 ```
 
-### 8. Prender los filtros de la camara
-```
-    # Para poner los filtros de accesorios:
-    ros2 launch yaren_filters yaren_accesorios.launch.py
+### Filtros de Cámara
 
-    # Para poner los filtros de animales:
-    ros2 launch yaren_filters yaren_animales.launch.py
-```
-### 9. Prender la deteccion de emociones de la camara
+```bash
+# Filtros de accesorios
+ros2 launch yaren_filters yaren_accesorios.launch.py
 
- ```   
- # Para poner la deteccion de emociones:
+# Filtros de animales
+ros2 launch yaren_filters yaren_animales.launch.py
+```
+
+### Detección de Emociones
+
+```bash
 ros2 launch yaren_emotions yaren_emotions.launch.py
 ```
-### 10. Prender el juego Yaren Dice
 
-  ```  
-# Para poner el juego Yaren Dice:
+### Juego de Dados
+
+```bash
 ros2 launch yaren_dice yaren_dice.launch.py
 ```
-### 11. Prender el Yaren ChatBot
+
+### ChatBot
+
+```bash
+# Con agentes inteligentes (recomendado)
+ros2 launch yaren_chat yaren_chat.launch.py
+
+# Sin agentes (modo directo y simple)
+ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py
 ```
-    # Para poner Yaren ChatBot con agentes inteligentes:
-    ros2 launch yaren_chat yaren_chat.launch.py
 
-    # Para poner Yaren ChatBot sin agentes inteligentes:
-    ros2 launch yaren_chat yaren_chat_sin_agentes.launch.py
+### Brazo Mimético
+
+> ⚠️ Aún no funciona — en desarrollo.
+
+---
+
+## Estructura del Proyecto
+
 ```
-### 12. Prender el Yaren Arm Mimic: 
-```Todavia no vale :(```
+robotis_ws/
+├── src/
+│   └── YAREN2/
+│       ├── ia_face_software/
+│       ├── usb_cam/
+│       ├── yaren_arm_mimic/
+│       ├── yaren_chat/
+│       ├── yaren_description/
+│       ├── yaren_dice/
+│       ├── yaren_emotions/
+│       ├── yaren_face_display/
+│       ├── yaren_filters/
+│       ├── yaren_gazebo_sim/
+│       ├── yaren_interfaces/
+│       ├── yaren_moveit2_config/
+│       ├── yaren_movements/
+│       ├── yaren_u2d2/
+│       ├── system_dependencies.txt   ← paquetes apt
+│       ├── venv_requirements.txt     ← paquetes pip
+│       └── requirements.txt          ← lista completa de referencia
+├── venv_yaren/     ← entorno virtual (no se sube a git)
+├── build/          ← generado por colcon (no se sube a git)
+├── install/        ← generado por colcon (no se sube a git)
+└── log/            ← generado por colcon (no se sube a git)
+```
 
+---
 
+## .gitignore
+
+Asegúrate de tener esto en la raíz de `YAREN2/`:
+
+```
+venv_yaren/
+build/
+install/
+log/
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+```
+
+---
