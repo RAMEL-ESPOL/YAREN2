@@ -29,7 +29,7 @@ printenv ROS_DISTRO  # Debe mostrar: humble
 ```bash
 mkdir -p ~/robotis_ws/src
 cd ~/robotis_ws/src
-git clone https://github.com/tu-usuario/YAREN2.git
+git clone https://github.com/RAMEL-ESPOL/YAREN2.git
 ```
 
 ### 3. Dependencias del Sistema
