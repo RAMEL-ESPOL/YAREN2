@@ -11,6 +11,13 @@ find_package(YAML-CPP REQUIRED)
 
 
 
+# Asegúrate de que esta sección apunte a la carpeta real donde está el .py
+install(PROGRAMS
+  scripts/body_landmarks.py
+  scripts/speaker_node.py
+  scripts/csi_cam_pub.py  # <-- Debe estar aquí
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 # Configuración del ejecutable C++
 add_executable(game_manager src/game_manager.cpp)
@@ -44,20 +51,6 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
 
-install(PROGRAMS
-  scripts/body_landmarks.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(PROGRAMS
-  scripts/speaker_node.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(PROGRAMS
-  scripts/csi_cam_pub.py
-  DESTINATION lib/${PROJECT_NAME}
-)
 
 # ========== Instalación común ==========
 install(DIRECTORY

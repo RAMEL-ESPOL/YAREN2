@@ -13,4 +13,6 @@ float32 right_wrist_y
 float32 left_wrist_x
 float32 left_wrist_y
 
+float32 right_palm_rotation
+float32 left_palm_rotation
 bool is_valid

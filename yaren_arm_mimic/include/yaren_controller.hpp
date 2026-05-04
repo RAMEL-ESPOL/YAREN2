@@ -37,7 +37,8 @@ private:
     std::map<std::string, float> last_right_pos_;
     std::map<std::string, float> last_left_pos_;
     float torso_tilt_;
-
+    std::map<std::string, float> current_right_pos_;
+    std::map<std::string, float> current_left_pos_;
     std::vector<std::string> right_joints_;
     std::vector<std::string> left_joints_;
     std::vector<std::string> all_joints_;

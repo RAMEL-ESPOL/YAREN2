@@ -52,16 +52,16 @@ def generate_launch_description():
     # 5. Nodo de la Cara (Paquete corregido)
     face_screen_node = Node(
         package='yaren_face_display', # Nombre corregido
-        executable='face_hablar_cambiar',
-        name='face_screen_node',
+        executable='face_screen',
+        name='face_screen',
         output='screen'
     )
-    movements_node = Node(
+    """movements_node = Node(
         package='yaren_movements',
         executable='yaren_fullmovement', # Asegúrate de que tenga permisos de ejecución
         name='yaren_movements_node',
         output='screen'
-    )
+    )"""
 
 
     # Creamos el temporizador solo para los spawners
@@ -75,5 +75,5 @@ def generate_launch_description():
         ros2_control_node,
         delayed_spawners,
         face_screen_node,
-        movements_node
+        #movements_node
     ])

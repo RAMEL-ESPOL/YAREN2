@@ -107,35 +107,27 @@ class MovementDetectionAgent:
                 
         return self._normalize_and_validate(result)
 
+    VALID_MOVEMENTS = {
+    "levanta_el_brazo_derecho", "levanta_el_brazo_izquierdo",
+    "alza_los_brazos", "estira_los_brazos", "mueve_la_cabeza",
+    "mira_a_la_izquierda", "mira_a_la_derecha", "gira_el_cuerpo",
+    "gira_a_la_izquierda", "gira_a_la_derecha",
+    "hazte_el_loco", "vuelve_a_la_posicion_original", "ninguno"
+    }
+
     def _normalize_and_validate(self, data: dict) -> dict:
-        """Normaliza nombres y aplica la regla: Si es 'ninguno', detected es False"""
         m_type = data.get("movement_type", "ninguno")
         
-        # Mapeo de posibles variaciones a los nombres exactos usados en plan_joint_movement
-        normalization_map = {
-            "mira a la derecha": "mira_a_la_derecha",
-            "mira_a_la derecha": "mira_a_la_derecha",
-            "gira a la derecha": "gira_a_la_derecha",
-            "gira_a_la derecha": "gira_a_la_derecha",
-            "mira a la izquierda": "mira_a_la_izquierda",
-            "gira a la izquierda": "gira_a_la_izquierda",
-            "hazte el loco": "hazte_el_loco",
-            "hazte_el loco": "hazte_el_loco",
-            "vuelve a la posicion original": "vuelve_a_la_posicion_original",
-            "vuelve_a_la posicion original": "vuelve_a_la_posicion_original",
-            "ninguno": "ninguno"
-        }
+        # Normalizar espacios a guiones bajos
+        m_type = m_type.replace(" ", "_")
         
-        if m_type in normalization_map:
-            data["movement_type"] = normalization_map[m_type]
-        else:
-            # Si el tipo no es conocido, lo forzamos a ninguno
-            data["movement_type"] = "ninguno"
-
-        # REGLA DE ORO: Si el tipo es ninguno, detected debe ser falso
-        if data["movement_type"] == "ninguno":
+        # Si no es válido, forzar a ninguno
+        if m_type not in VALID_MOVEMENTS:
+            m_type = "ninguno"
+        
+        data["movement_type"] = m_type
+        if m_type == "ninguno":
             data["movement_detected"] = False
-            
         return data
 
     def _regex_fallback(self, user_message: str) -> dict:
@@ -151,28 +143,30 @@ class MovementDetectionAgent:
             }
 
         patterns = {
-            # Brazos individuales
-            r"\b(brazo\s*derech|derech.*brazo|brazo\s*2)\b": "levanta_el_brazo_derecho",
-            r"\b(brazo\s*izquierd|izquierd.*brazo|brazo\s*1)\b": "levanta_el_brazo_izquierdo",
+            #  BRAZOS INDIVIDUALES (Prioridad ALTA: van primero para capturar antes que "ambos")
+            r"(?:levanta|sube|alza)\s+(?:el\s+)?brazo\s+(?:derech|1)": "levanta_el_brazo_derecho",
+            r"(?:levanta|sube|alza)\s+(?:el\s+)?brazo\s+(?:izquierd|2)": "levanta_el_brazo_izquierdo",
             
-            # Ambos brazos
-            r"\b(alz|levanta|sube).*brazo.*(\d|ambos|los|dos|izquierd|derech)|brazos.*arriba\b": "alza_los_brazos",
-            r"\b(estira|extiende).*brazo.*(\d|ambos|los|dos|izquierd|derech)|brazos.*estir\b": "estira_los_brazos",
+            #  AMBOS BRAZOS (Solo se activan si detectan PLURAL o palabras de cantidad)
+            r"(?:alz|levanta|sube)\s+(?:los\s+)?brazos": "alza_los_brazos",
+            r"(?:estira|extiende)\s+(?:los\s+)?brazos": "estira_los_brazos",
+            r"(?:ambos|dos)\s+brazos": "alza_los_brazos",
+            r"brazos\s+(?:arriba|alto)": "alza_los_brazos",
             
-            # Cabeza (Nombres exactos normalizados)
-            r"\b(cabeza.*izquierd|izquierd.*cabe|mira.*izq|voltea.*izq)\b": "mira_a_la_izquierda",
-            r"\b(cabeza.*derech|derech.*cabe|mira.*der|voltea.*der)\b": "mira_a_la_derecha",
+            #  CABEZA (Sin \b final para que "izq" coincida con "izquierda")
+            r"(cabeza.*(izquierd|izq)|(izquierd|izq).*cabe|mira.*(izquierd|izq)|voltea.*(izquierd|izq))": "mira_a_la_izquierda",
+            r"(cabeza.*(derech|der)|(derech|der).*cabe|mira.*(derech|der)|voltea.*(derech|der))": "mira_a_la_derecha",
             r"\b(cabeza|mirar|gira.*cabe|volte)\b": "mueve_la_cabeza",
             
-            # Cuerpo (Nombres exactos normalizados)
-            r"\b(cuerpo.*izquierd|izquierd.*cuerpo|gira.*izq|voltea.*izq)\b": "gira_a_la_izquierda",
-            r"\b(cuerpo.*derech|derech.*cuerpo|gira.*der|voltea.*der)\b": "gira_a_la_derecha",
-            r"\b(cuerpo|gira|date\s*la\s*vuelta|volt[eé]ate)\b": "gira_el_cuerpo",
+            # 🔄 CUERPO (Direcciones específicas antes del genérico)
+            r"(cuerpo.*(izquierd|izq)|(izquierd|izq).*cuerpo|gira.*(izquierd|izq)|voltea.*(izquierd|izq))": "gira_a_la_izquierda",
+            r"(cuerpo.*(derech|der)|(derech|der).*cuerpo|gira.*(derech|der)|voltea.*(derech|der))": "gira_a_la_derecha",
+            r"\b(cuerpo|gira\s*(el\s*)?cuerpo|date\s*la\s*vuelta|volt[eé]ate)\b": "gira_el_cuerpo",
             
-            # Actitud
+            #  ACTITUD
             r"\b(confus|no entiendo|qué|eh|loco)\b": "hazte_el_loco",
             
-            # Reset
+            #  RESET
             r"\b(posici[oó]n\s*(original|inicial)|vuelve\s*a\s*(estar\s*)?quieto|regresa)\b": "vuelve_a_la_posicion_original",
         }
         

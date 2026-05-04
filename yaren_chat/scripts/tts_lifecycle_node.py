@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+import sys
+import os
+_node_dir = os.path.dirname(os.path.realpath(__file__))
+if _node_dir not in sys.path:
+    sys.path.insert(0, _node_dir)
 
 import rclpy
 from rclpy.action import ActionClient

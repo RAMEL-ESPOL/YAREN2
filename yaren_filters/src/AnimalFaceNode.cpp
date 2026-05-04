@@ -1,8 +1,7 @@
 #include "AnimalFaceNode.hpp"
-#include <termios.h>
-#include <unistd.h>
+// Se eliminaron <termios.h> y <unistd.h> porque ya no leeremos de la consola
 #include <opencv2/highgui.hpp>
-#include <cv_bridge/cv_bridge.h> // Necesario para la conversion correcta
+#include <cv_bridge/cv_bridge.h>
 
 AnimalFaceNode::AnimalFaceNode() : Node("animal_face_node"), current_filter_("bear") {
     auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
@@ -18,18 +17,17 @@ AnimalFaceNode::AnimalFaceNode() : Node("animal_face_node"), current_filter_("be
     image_pub_ = image_transport::create_publisher(this, "filtered_image", qos.get_rmw_qos_profile());
     
     running_ = true;
-    keyboard_thread_ = std::thread(&AnimalFaceNode::keyboard_listener, this);
-    keyboard_thread_.detach();
+    
+    // NOTA: Se eliminó el hilo del teclado de la terminal. 
+    // Ahora OpenCV manejará las teclas directamente en su ventana.
     
     RCLCPP_INFO(get_logger(), "Nodo de filtros animales inicializado");
-    RCLCPP_INFO(get_logger(), "Teclas: 1-Oso | 2-Gato | 3-Mono");
+    RCLCPP_INFO(get_logger(), "Presiona en la ventana de video: 1-Oso | 2-Gato | 3-Mono");
 }
 
 void AnimalFaceNode::callback(const ImageMsg::ConstSharedPtr& img_msg, 
                             const Landmarks::ConstSharedPtr& landmarks_msg) {
     try {
-        // --- CORRECCIÓN AQUÍ ---
-        // Antes intentabas convertir YUV manualmente. Ahora leemos BGR directo.
         cv::Mat frame;
         try {
             frame = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
@@ -54,10 +52,20 @@ void AnimalFaceNode::callback(const ImageMsg::ConstSharedPtr& img_msg,
             frame = current_filter_.apply_filter(frame, landmarks);
         }
         
-        // --- VISUALIZACIÓN ---
+        // --- VISUALIZACIÓN Y LECTURA DE TECLADO ---
         cv::imshow("Animal Filter", frame);
-        cv::waitKey(1); 
-        // ---------------------
+        
+        // waitKey devuelve el código ASCII de la tecla presionada.
+        // Se le aplica una máscara (& 0xFF) para evitar caracteres raros según el SO.
+        int key = cv::waitKey(1) & 0xFF; 
+        
+        // Si se presionó una tecla válida en tu mapa (ej. '1', '2', '3')
+        if (key != 255 && key_bindings_.find(key) != key_bindings_.end()) {
+            std::lock_guard<std::mutex> lock(filter_mutex_);
+            change_filter(key_bindings_[key]);
+            RCLCPP_INFO(get_logger(), "Filtro cambiado a: %s", key_bindings_[key].c_str());
+        }
+        // ------------------------------------------
 
         auto output_msg = cv_bridge::CvImage(
             img_msg->header, "bgr8", frame).toImageMsg();
@@ -66,35 +74,6 @@ void AnimalFaceNode::callback(const ImageMsg::ConstSharedPtr& img_msg,
     } catch(const std::exception& e) {
         RCLCPP_ERROR(get_logger(), "Error en callback: %s", e.what());
     }
-}
-
-void AnimalFaceNode::keyboard_listener() {
-    struct termios oldt, newt;
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-
-    while(rclcpp::ok() && running_) {
-        fd_set set;
-        struct timeval timeout;
-        FD_ZERO(&set);
-        FD_SET(STDIN_FILENO, &set);
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100000; // 100ms
-
-        int res = select(STDIN_FILENO + 1, &set, NULL, NULL, &timeout);
-        if (res > 0) {
-            int key = getchar();
-            if(key_bindings_.find(key) != key_bindings_.end()) {
-                std::lock_guard<std::mutex> lock(filter_mutex_);
-                change_filter(key_bindings_[key]);
-                RCLCPP_INFO(get_logger(), "Filtro cambiado a: %s", key_bindings_[key].c_str());
-            }
-        }
-    }
-    
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 }
 
 void AnimalFaceNode::change_filter(const std::string& animal) {

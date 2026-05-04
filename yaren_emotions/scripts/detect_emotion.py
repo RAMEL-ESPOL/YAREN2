@@ -10,121 +10,141 @@ import tensorflow as tf
 import cv2
 import mediapipe as mp
 import os
-from ament_index_python.packages import get_package_share_directory 
+import threading
+from ament_index_python.packages import get_package_share_directory
 
-class FacialExpressionModel(object):
-    def __init__(self, model):
-        self.model = model
-        self.EMOTIONS_LIST = ["Angry", "Disgust", "Fear", "Happy",
-                            "Sad", "Surprise", "Neutral"]
-
-    def predict_emotion(self, img):
-        img = np.expand_dims(img, axis=0)
-        img = img / 255.0
-        img = img.astype(np.float32)
-
-        self.preds = self.model.predict(img, verbose=0)
-        return self.EMOTIONS_LIST[np.argmax(self.preds)]
+EMOTIONS_LIST = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
 
 class EmotionDetectionNode(Node):
     def __init__(self):
-        super().__init__('emotion_detection_node')
-        
-        # Cargar modelo
+        super().__init__('detector')
+
+        self.window_name = "YAREN2 - Emotion Detector"
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
         pkg_path = get_package_share_directory('yaren_emotions')
         model_path = os.path.join(pkg_path, 'models', 'model_mbn_1.h5')
-
         self.model = tf.keras.models.load_model(model_path)
-        self.emotion_model = FacialExpressionModel(self.model)
         
-        # Configurar MediaPipe
-        mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True, 
-                                min_detection_confidence=0.5, 
-                                min_tracking_confidence=0.5)
-        
-        self.bridge = CvBridge()
+        dummy = np.zeros((1, 48, 48, 3), dtype=np.float32)
+        self.model(dummy, training=False)
 
-        # Publicador de la emoción (dato numérico)
+        mp_face_mesh = mp.solutions.face_mesh
+        self.face_mesh = mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            refine_landmarks=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
+        self.bridge = CvBridge()
         self.publisher = self.create_publisher(Int16, '/emotion', 10)
-        
-        # Publicador de la imagen visual (opcional pero recomendado)
-        self.vis_publisher = self.create_publisher(Image, '/emotion/image_annotated', 10)
-        
         self.subscription = self.create_subscription(
-            Image,
-            '/image_raw',
-            self.image_callback,
-            10)
-        
-        self.get_logger().info('Emotion Detection Node initialized')
+            Image, '/image_raw', self.image_callback, 10)
+
+        self._lock = threading.Lock()
+        self._latest_frame = None      
+        self._result_label = "..."     
+        self._result_box = None        
+        self._frame_count = 0
+        self._INFER_EVERY = 3
+
+        self._infer_thread = threading.Thread(target=self._infer_loop, daemon=True)
+        self._infer_thread.start()
+
+        self.get_logger().info('Emotion Node: PANTALLA COMPLETA activada ✓')
 
     def image_callback(self, msg):
+        self._frame_count += 1
         try:
-            fr = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-            
-            # Copia para visualización
-            vis_frame = fr.copy()
-            
-            rgb_frame = cv2.cvtColor(fr, cv2.COLOR_BGR2RGB)
+            frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        except Exception as e:
+            self.get_logger().error(f'Error cv_bridge: {e}')
+            return
+
+        frame = cv2.flip(frame, 1)
+        
+        if self._frame_count % self._INFER_EVERY == 0:
+            with self._lock:
+                self._latest_frame = frame.copy()
+
+        # Frame completo para visualización
+        vis = frame.copy()
+        
+        with self._lock:
+            label = self._result_label
+            box = self._result_box
+
+        # Dibujar solo el rectángulo y etiqueta, sin recortar
+        if box is not None:
+            x_min, y_min, x_max, y_max = box
+            cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+            cv2.putText(vis, label, (x_min, max(y_min - 10, 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+
+        # Redimensionar al tamaño real de la pantalla
+        vis = cv2.resize(vis, (800, 480))
+        cv2.imshow(self.window_name, vis)
+        cv2.waitKey(1)
+
+    def _infer_loop(self):
+        while rclpy.ok():
+            frame = None
+            with self._lock:
+                if self._latest_frame is not None:
+                    frame = self._latest_frame
+                    self._latest_frame = None 
+
+            if frame is None:
+                import time; time.sleep(0.01)
+                continue
+
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.face_mesh.process(rgb_frame)
 
             if results.multi_face_landmarks:
+                h, w = frame.shape[:2]
                 for face_landmarks in results.multi_face_landmarks:
-                    h, w, _ = fr.shape
                     x_coords = [lm.x * w for lm in face_landmarks.landmark]
                     y_coords = [lm.y * h for lm in face_landmarks.landmark]
 
-                    x_min, x_max = int(min(x_coords)), int(max(x_coords))
-                    y_min, y_max = int(min(y_coords)), int(max(y_coords))
+                    expand = 40
+                    x_min = max(0, int(min(x_coords)) - expand)
+                    y_min = max(0, int(min(y_coords)) - expand)
+                    x_max = min(w, int(max(x_coords)) + expand)
+                    y_max = min(h, int(max(y_coords)) + expand)
 
-                    expand = 45
-                    x_min = max(0, x_min - expand)
-                    y_min = max(0, y_min - expand)
-                    x_max = min(w, x_max + expand)
-                    y_max = min(h, y_max + expand)
-
+                    # Recorte SOLO para inferencia de IA
                     fc = rgb_frame[y_min:y_max, x_min:x_max]
-                    roi = cv2.resize(fc, (48, 48))
+                    if fc.size == 0: continue
 
-                    if roi.size > 0:
-                        pred = self.emotion_model.predict_emotion(roi)
-                        
-                        # 1. Publicar el dato numérico
-                        self.publisher.publish(Int16(data=self.emotion_model.EMOTIONS_LIST.index(pred)))
-                        
-                        # 2. Dibujar en la imagen
-                        cv2.rectangle(vis_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-                        cv2.putText(vis_frame, pred, (x_min, y_min - 10), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                    roi = cv2.resize(fc, (48, 48)).astype(np.float32) / 255.0
+                    roi = np.expand_dims(roi, axis=0)
 
-            # Publicar la imagen anotada al tópico (para ver en RQT si quieres)
-            out_msg = self.bridge.cv2_to_imgmsg(vis_frame, encoding='bgr8')
-            self.vis_publisher.publish(out_msg)
+                    preds = self.model(roi, training=False)
+                    idx = int(np.argmax(preds))
+                    
+                    with self._lock:
+                        self._result_label = EMOTIONS_LIST[idx]
+                        self._result_box = (x_min, y_min, x_max, y_max)
 
-            # --- AQUI ESTA EL CAMBIO PARA ABRIR VENTANA AUTOMATICA ---
-            cv2.imshow("Emotion Detector", vis_frame)
-            # waitKey(1) es CRITICO. Permite a OpenCV refrescar la ventana. 
-            # Si lo quitas, la ventana se colgará o no aparecerá.
-            cv2.waitKey(1) 
-
-        except Exception as e:
-            self.get_logger().error(f'Error processing image: {str(e)}')
+                    self.publisher.publish(Int16(data=idx))
+            else:
+                with self._lock:
+                    self._result_box = None
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    emotion_detection_node = EmotionDetectionNode()
-    
+    node = EmotionDetectionNode()
     try:
-        rclpy.spin(emotion_detection_node)
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        # Asegurarse de cerrar la ventana al terminar con Ctrl+C
         cv2.destroyAllWindows()
-        emotion_detection_node.destroy_node()
+        node.destroy_node()
         rclpy.shutdown()
 
-if __name__ == '__main__':
+if __name__ == '__main__': 
     main()

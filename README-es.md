@@ -215,4 +215,17 @@ __pycache__/
 .env
 ```
 
+# Busca todos los archivos .py en tu src y dales permiso de ejecución
+find ~/robotis_ws/src/YAREN2 -name "*.py" -exec chmod +x {} +
+
+# Busca todos los modelos 3d en tu src y dales permiso de ejecución al gazebo
+
+export IGN_GAZEBO_RESOURCE_PATH=$IGN_GAZEBO_RESOURCE_PATH:~/robotis_ws/src/YAREN2
 ---
+gst-launch-1.0 v4l2src device=/dev/video0 ! \
+  'video/x-raw,format=RG10,width=1920,height=1080,framerate=30/1' ! \
+  nvvidconv ! \
+  'video/x-raw,format=BGRx' ! \
+  videoconvert ! fakesink -v
+RAMEL2026
+RAMEL2026

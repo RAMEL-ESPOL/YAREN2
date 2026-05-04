@@ -52,7 +52,7 @@ def generate_launch_description():
                 target_action=stt_node,
                 on_start=[
                     TimerAction(
-                        period=1.0,
+                        period=15.0,
                         actions=[llm_node]
                     )
                 ]

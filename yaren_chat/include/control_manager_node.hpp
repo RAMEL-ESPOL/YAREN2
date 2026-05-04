@@ -18,20 +18,32 @@ public:
     LifecycleNodesManager();
 
 private:
+    // ── Suscripciones y clientes ──────────────────────────────────────
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr stt_status_sub_;
     rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr stt_state_client_;
     rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr llm_state_client_;
     rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr tts_state_client_;
-    
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr yaren_ready_publisher_;
+    void publish_yaren_ready();
+    // ── Estado ────────────────────────────────────────────────────────
     bool stt_terminated_;
+    bool lifecycle_busy_ = false;   // ✅ evita transiciones paralelas
     std::mutex state_lock_;
+    std::thread init_thread_;
 
-    void _configure_initial_nodes();
+    // ── Métodos privados ──────────────────────────────────────────────
     void _initial_configuration();
     void stt_status_callback(const std_msgs::msg::Bool::SharedPtr msg);
-    void manage_node_lifecycle();
     void _manage_lifecycle_thread();
-    void change_node_state(const std::string& node_name, uint8_t transition_id);
+
+    // ✅ Espera activa con timeout configurable por nodo
+    bool wait_for_service(
+        rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr client,
+        const std::string& node_name,
+        int timeout_sec);
+
+    // ✅ Transición síncrona — bloquea hasta recibir respuesta
+    bool change_node_state_sync(const std::string& node_name, uint8_t transition_id);
 };
 
-#endif // CONTROL_MANAGER_NODE_HPP_
+#endif  // CONTROL_MANAGER_NODE_HPP_
