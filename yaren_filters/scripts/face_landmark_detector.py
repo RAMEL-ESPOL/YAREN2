@@ -12,7 +12,7 @@ class FaceLandmarkPublisher(Node):
     def __init__(self):
         super().__init__('face_landmark_publisher')
         self.bridge = CvBridge()
-        self.sub = self.create_subscription(Image, 'image_raw', self.image_callback, 10)
+        self.sub = self.create_subscription(Image, '/csi_camera/image_raw', self.image_callback, 10)
         self.pub = self.create_publisher(Landmarks, 'face_landmarks', 10)
         
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(

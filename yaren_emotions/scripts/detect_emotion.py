@@ -41,7 +41,8 @@ class EmotionDetectionNode(Node):
         self.bridge = CvBridge()
         self.publisher = self.create_publisher(Int16, '/emotion', 10)
         self.subscription = self.create_subscription(
-            Image, '/image_raw', self.image_callback, 10)
+    	Image, '/csi_camera/image_raw', self.image_callback, 10)
+
 
         self._lock = threading.Lock()
         self._latest_frame = None      
@@ -63,7 +64,7 @@ class EmotionDetectionNode(Node):
             self.get_logger().error(f'Error cv_bridge: {e}')
             return
 
-        frame = cv2.flip(frame, 1)
+        frame = cv2.flip(frame, -1)
         
         if self._frame_count % self._INFER_EVERY == 0:
             with self._lock:

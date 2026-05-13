@@ -4,9 +4,11 @@
 #include <vector>
 #include <string>
 #include <filesystem>
+#include <deque>
 
 class AnimalFilter {
 public:
+    AnimalFilter() = default;
     AnimalFilter(const std::string& animal_name);
     cv::Mat apply_filter(cv::Mat frame, const std::vector<cv::Point2f>& landmarks);
 
@@ -20,7 +22,7 @@ private:
     cv::Mat mask_open_closed_;
     cv::Mat mask_closed_open_;
     cv::Mat mask_open_open_;
-    
+
     std::deque<float> mouth_open_history_;
     std::deque<float> eyes_open_history_;
 };

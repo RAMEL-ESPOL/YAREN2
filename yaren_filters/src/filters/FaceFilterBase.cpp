@@ -7,12 +7,33 @@ namespace fs = std::filesystem;
 
 std::vector<cv::Mat> FaceFilter::loadAssets(const std::string& path) {
     std::vector<cv::Mat> loaded_assets;
-    for (const auto& entry : fs::directory_iterator(path)) {
-        Mat img = imread(entry.path().string(), IMREAD_UNCHANGED);
-        if (!img.empty() && img.cols > 0 && img.rows > 0) {
-            loaded_assets.push_back(img);
+    std::vector<std::string> files;
+
+    try {
+        namespace fs = std::filesystem;
+        if (fs::exists(path)) {
+            // 1. Recopilar solo las rutas de las imágenes válidas
+            for (const auto& entry : fs::directory_iterator(path)) {
+                if (entry.path().extension() == ".png" || entry.path().extension() == ".jpg") {
+                    files.push_back(entry.path().string());
+                }
+            }
+            
+            // 2. ¡ESTA ES LA CLAVE! Ordenar alfabéticamente igual que en load_thumbs() del menú
+            std::sort(files.begin(), files.end());
+
+            // 3. Cargar las imágenes ya ordenadas
+            for (const auto& file : files) {
+                cv::Mat img = cv::imread(file, cv::IMREAD_UNCHANGED);
+                if (!img.empty()) {
+                    loaded_assets.push_back(img);
+                }
+            }
         }
+    } catch (const std::exception& e) {
+        std::cerr << "Error cargando assets de: " << path << " - " << e.what() << std::endl;
     }
+
     return loaded_assets;
 }
 

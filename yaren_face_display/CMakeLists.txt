@@ -80,6 +80,7 @@ target_link_libraries(face_hablar_cambiar ${OpenCV_LIBS}) # Faltaba esto tambié
 # 6. Instalar los archivos de datos
 install(DIRECTORY
   faces
+  icons
   scripts
   DESTINATION share/${PROJECT_NAME}
 )
