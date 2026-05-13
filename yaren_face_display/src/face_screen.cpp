@@ -1635,9 +1635,9 @@ public:
         radioApp.init(pkgDir, this->get_logger());
         std::srand(std::time(nullptr));
         menuPlaylist = {
-            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro1.mp3",
-            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro2.mp3",
-            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro3.mp3",
+            "/home/jetson/robotis_ws/src/YAREN2/yaren_radio/audios/Intro1.mp3",
+            "/home/jetson/robotis_ws/src/YAREN2/yaren_radio/audios/Intro2.mp3",
+            "/home/jetson/robotis_ws/src/YAREN2/yaren_radio/audios/Intro3.mp3",
         };
         radioApp.onBack = [this]() { 
             showRadio = false; 
@@ -1853,6 +1853,7 @@ private:
         subMenuMap["sub_yaren_filtros"] = { "FILTROS", {105,240,174}, {
             MI("yaren_animales", "ANIMALES", "filtro animal", {105,240,174}, "ros2 launch yaren_filters yaren_animales.launch.py &", "for pid in $(ps aux | grep -E 'yaren_animales|AnimalFaceNode|animal_filter|face_landmark|csi_cam' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "animales"),
             MI("yaren_accesorios", "ACCESORIOS", "filtro accesorios", {60,200,130}, "ros2 launch yaren_filters yaren_accesorios.launch.py &", "for pid in $(ps aux | grep -E 'yaren_accesorios|face_filter|face_landmark|csi_cam' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "accesorios"),
+            MI("yaren_fondo", "FONDOS VIRTUAL", "filtro fondo virtual", {60,200,130}, "ros2 launch yaren_filters yaren_fondo.launch.py &", "for pid in $(ps aux | grep -E 'yaren_fondo|fondo_virtual|csi_cam' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "accesorios"),
         }};
 
         subMenuMap["sub_yaren_p2"] = { "YAREN", {0,229,255}, {
@@ -2345,7 +2346,7 @@ private:
 
         const int btnH = 40, btnY = SY+TH+40, gap = 16, stopW = 300, navW = 150;
         bool hasStop = !activeMode.empty() && !activeStopCmd.empty() && 
-                       activeMode != "yaren_emotions" && activeMode != "yaren_animales" && activeMode != "yaren_accesorios";
+                       activeMode != "yaren_emotions" && activeMode != "yaren_animales" && activeMode != "yaren_accesorios"&& activeMode != "yaren_fondo"&& activeMode != "yaren_radio";
         bool hasBack = (navStack.size() > 1);
         int totalW = navW;
         if (hasBack) totalW += navW + gap;

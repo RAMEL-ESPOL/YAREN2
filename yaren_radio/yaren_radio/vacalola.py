@@ -39,7 +39,7 @@ def play_video():
         player.set_media_player(inner_player) # <--- Enlace crucial
         
         # 3. Cargar el video
-        ruta_video = "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/videos/vidssave.com La Vaca Lola - Canciones de La Granja de Zenón 2 720P.mp4"
+        ruta_video = "/home/jetson/robotis_ws/src/YAREN2/yaren_radio/videos/vidssave.com La Vaca Lola - Canciones de La Granja de Zenón 2 720P.mp4"
         media_list = vlc_instance.media_list_new([ruta_video])
         player.set_media_list(media_list)
         

@@ -10,19 +10,14 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
+# INSTALAR TODOS LOS SCRIPTS EJECUTABLES DE PYTHON
 install(PROGRAMS
   scripts/face_landmark_detector.py
+  scripts/csi_cam_pub.py
+  scripts/fondo_virtual.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(PROGRAMS
-  scripts/csi_cam_pub.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-install(DIRECTORY
-  launch
-  DESTINATION share/${PROJECT_NAME}
-)
 # ========== Configuración para C++ ==========
 find_package(rclcpp REQUIRED)
 find_package(OpenCV REQUIRED)
@@ -61,16 +56,6 @@ target_include_directories(animal_filter_mask PUBLIC
   include/
 )
 
-target_link_libraries(face_filter_node
-  ${rclcpp_LIBRARIES}
-  ${OpenCV_LIBS}
-)
-
-target_link_libraries(animal_filter_mask
-  ${rclcpp_LIBRARIES}
-  ${OpenCV_LIBS}
-)
-
 ament_target_dependencies(face_filter_node
   rclcpp
   sensor_msgs
@@ -95,20 +80,24 @@ ament_target_dependencies(animal_filter_mask
   image_transport
 )
 
+# INSTALAR LOS NODOS EJECUTABLES DE C++
 install(TARGETS
   face_filter_node
+  animal_filter_mask
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(TARGETS
-animal_filter_mask
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-# ========== Instalación común ==========
+# ========== Instalación de Recursos Comunes ==========
+# Aquí nos aseguramos de que "launch", "imgs" y "fondos" estén disponibles
 install(DIRECTORY
-  scripts imgs src include
+  launch
+  imgs
+  fondos
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY include/
+  DESTINATION include
 )
 
 # ========== Exportación de dependencias ==========
@@ -127,7 +116,5 @@ ament_export_dependencies(
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(face_filter_node)
-ament_export_libraries(animal_filter_mask)
 
 ament_package()

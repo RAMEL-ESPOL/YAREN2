@@ -8,11 +8,7 @@ import cv2
 import mediapipe as mp
 from yaren_interfaces.msg import BodyPoints
 from geometry_msgs.msg import Point32
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
-fig = plt.figure()
-ax = fig.add_subplot(111, projection="3d")
 
 LANDMARK_GROUPS = [
     [11, 13, 15], 
@@ -45,8 +41,8 @@ class BodyPointsDetectorNode(Node):
         super().__init__('body_points_detector_node')
         self.bridge = CvBridge()
         self.pose = mp_pose.Pose(
-            min_detection_confidence=0.5, 
-            min_tracking_confidence=0.5,
+            min_detection_confidence=0.2, 
+            min_tracking_confidence=0.2,
             model_complexity=1, 
             smooth_landmarks=True
         )
@@ -81,7 +77,7 @@ class BodyPointsDetectorNode(Node):
                 left_wrist_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_WRIST].visibility
                 
                 # Solo considerar detectado si los brazos tienen buena visibilidad
-                MIN_VISIBILITY = 0.5  # Threshold de confianza
+                MIN_VISIBILITY = 0.1  # Threshold de confianza
                 
                 arms_visible = (
                     right_wrist_conf > MIN_VISIBILITY and

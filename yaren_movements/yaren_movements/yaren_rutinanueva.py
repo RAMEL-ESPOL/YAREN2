@@ -54,8 +54,8 @@ JOINT_NAMES = [
 MAX_STEPS        = 10
 STEP_DURATION    = 2
 COUNTDOWN_SECS   = 3
-STABILITY_FRAMES = 10       # frames necesarios para considerar pose estable
-STABILITY_THRESH = 20.0     # grados de tolerancia (más alto = más tolerante con niños)
+STABILITY_FRAMES = 20       # frames necesarios para considerar pose estable
+STABILITY_THRESH = 30.0     # grados de tolerancia (más alto = más tolerante con niños)
 
 # Constantes — reemplazar las de T-pose
 CALIB_HOMBRO_TARGET = 170.0   # brazos arriba en vez de 90° horizontal
