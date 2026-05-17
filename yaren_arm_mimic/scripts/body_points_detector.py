@@ -7,6 +7,7 @@ from cv_bridge import CvBridge
 import cv2
 import mediapipe as mp
 from yaren_interfaces.msg import BodyPoints
+from geometry_msgs.msg import Point32
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -44,55 +45,104 @@ class BodyPointsDetectorNode(Node):
         super().__init__('body_points_detector_node')
         self.bridge = CvBridge()
         self.pose = mp_pose.Pose(
-            min_detection_confidence=0.5, min_tracking_confidence=0.5,
-            model_complexity=1, smooth_landmarks=True )
+            min_detection_confidence=0.5, 
+            min_tracking_confidence=0.5,
+            model_complexity=1, 
+            smooth_landmarks=True
+        )
         
+        # CORRECCIÓN 1: Suscribirse al topic correcto
         self.subscription = self.create_subscription(
-            Image, 'image_raw', self.image_callback, 10)
+            Image, '/csi_camera/image_raw', self.image_callback, 10)
         self.publisher = self.create_publisher(BodyPoints, 'body_points', 10)
+        
+        self.get_logger().info("BodyPointsDetectorNode iniciado - esperando imágenes de /csi_camera/image_raw")
 
     def image_callback(self, msg):
-        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.pose.process(image)
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.pose.process(image)
 
-        points_msg = BodyPoints()
-        points_msg.is_detected = False
-        
-        if results.pose_landmarks and results.pose_world_landmarks:
-            world_landmarks = results.pose_world_landmarks.landmark
-
-            plot_world_landmarks(ax, results.pose_world_landmarks)
-
-    
-            points_msg.is_detected = True
+            points_msg = BodyPoints()
+            points_msg.is_detected = False
             
-            points_msg.right_shoulder_x = world_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].x
-            points_msg.right_elbow_x = world_landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].x
-            points_msg.right_wrist_x = world_landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].x
-
-            points_msg.left_shoulder_x = world_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].x
-            points_msg.left_elbow_x = world_landmarks[mp_pose.PoseLandmark.LEFT_ELBOW].x
-            points_msg.left_wrist_x = world_landmarks[mp_pose.PoseLandmark.LEFT_WRIST].x
-            
-
-            points_msg.right_shoulder_y = world_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].y
-            points_msg.right_elbow_y = world_landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].y
-            points_msg.right_wrist_y = world_landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].y
-
-            points_msg.left_shoulder_y = world_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].y
-            points_msg.left_elbow_y = world_landmarks[mp_pose.PoseLandmark.LEFT_ELBOW].y
-            points_msg.left_wrist_y = world_landmarks[mp_pose.PoseLandmark.LEFT_WRIST].y
-            
-            points_msg.right_shoulder_z = world_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].z
-            points_msg.right_elbow_z = world_landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].z
-            points_msg.right_wrist_z = world_landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].z
-            
-            points_msg.left_shoulder_z = world_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].z
-            points_msg.left_elbow_z = world_landmarks[mp_pose.PoseLandmark.LEFT_ELBOW].z
-            points_msg.left_wrist_z = world_landmarks[mp_pose.PoseLandmark.LEFT_WRIST].z
-            
-            self.publisher.publish(points_msg)        
+            if results.pose_landmarks and results.pose_world_landmarks:
+                world_landmarks = results.pose_world_landmarks.landmark
+                
+                # Verificar confianza de los landmarks de brazos
+                right_shoulder_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER].visibility
+                right_elbow_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ELBOW].visibility
+                right_wrist_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_WRIST].visibility
+                
+                left_shoulder_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_SHOULDER].visibility
+                left_elbow_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ELBOW].visibility
+                left_wrist_conf = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_WRIST].visibility
+                
+                # Solo considerar detectado si los brazos tienen buena visibilidad
+                MIN_VISIBILITY = 0.5  # Threshold de confianza
+                
+                arms_visible = (
+                    right_wrist_conf > MIN_VISIBILITY and
+                    left_wrist_conf > MIN_VISIBILITY
+                )
+                
+                if not arms_visible:
+                    self.get_logger().debug(
+                        f"Brazos con baja visibilidad - R: {right_wrist_conf:.2f}, L: {left_wrist_conf:.2f}"
+                    )
+                    # No publicar si no se ven los brazos
+                    return
+                
+                # Coordenadas de hombros para referencia
+                points_msg.right_shoulder = Point32(
+                    x=world_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].x,
+                    y=world_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].y,
+                    z=world_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].z
+                )
+                
+                points_msg.right_elbow = Point32(
+                    x=world_landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].x,
+                    y=world_landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].y,
+                    z=world_landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].z
+                )
+                
+                points_msg.right_wrist = Point32(
+                    x=world_landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].x,
+                    y=world_landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].y,
+                    z=world_landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].z
+                )
+                
+                points_msg.left_shoulder = Point32(
+                    x=world_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].x,
+                    y=world_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].y,
+                    z=world_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].z
+                )
+                
+                points_msg.left_elbow = Point32(
+                    x=world_landmarks[mp_pose.PoseLandmark.LEFT_ELBOW].x,
+                    y=world_landmarks[mp_pose.PoseLandmark.LEFT_ELBOW].y,
+                    z=world_landmarks[mp_pose.PoseLandmark.LEFT_ELBOW].z
+                )
+                
+                points_msg.left_wrist = Point32(
+                    x=world_landmarks[mp_pose.PoseLandmark.LEFT_WRIST].x,
+                    y=world_landmarks[mp_pose.PoseLandmark.LEFT_WRIST].y,
+                    z=world_landmarks[mp_pose.PoseLandmark.LEFT_WRIST].z
+                )
+                
+                points_msg.right_palm_rotation = 0.0
+                points_msg.left_palm_rotation = 0.0
+                
+                points_msg.is_detected = True
+                
+                self.publisher.publish(points_msg)
+                self.get_logger().debug(f"Persona detectada con brazos visibles")
+            else:
+                self.get_logger().debug("No se detectó persona en el frame")
+                
+        except Exception as e:
+            self.get_logger().error(f"Error en image_callback: {e}")
 
 def main(args=None):
     rclpy.init(args=args)

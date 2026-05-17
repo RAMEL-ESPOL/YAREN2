@@ -48,7 +48,10 @@ class CSICameraPublisher(Node):
             flip_method=flip_method,
         )
         self.get_logger().info(f'GStreamer pipeline:\n{pipeline}')
-        self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        #CON CAMARA CSI:
+        # self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        # CON CAMARA USB:
+        self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             self.get_logger().error('Unable to open CSI camera!')
             raise RuntimeError('Camera not available')

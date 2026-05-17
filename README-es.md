@@ -229,3 +229,8 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! \
   videoconvert ! fakesink -v
 RAMEL2026
 RAMEL2026
+sudo apt-mark hold nvidia-l4t-kernel nvidia-l4t-kernel-dtbs nvidia-l4t-init nvidia-l4t-bootloader
+sudo apt install vlc
+pip3 install python-vlc # em el venv
+pip3 install pynput  # em el venv
+sudo apt install libsdl2-dev libsdl2-mixer-dev

@@ -24,7 +24,7 @@ class FaceLandmarkPublisher(Node):
     def image_callback(self, msg):
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-            frame = cv2.flip(cv_image, 1)
+            frame = cv2.flip(cv_image, 0)
             results = self.face_mesh.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             
             if results.multi_face_landmarks:

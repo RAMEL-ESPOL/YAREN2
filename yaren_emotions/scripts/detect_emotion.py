@@ -22,6 +22,9 @@ class EmotionDetectionNode(Node):
         self.window_name = "YAREN2 - Emotion Detector"
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        
+        # Configurar evento de clic de ratón
+        cv2.setMouseCallback(self.window_name, self.on_mouse_click)
 
         pkg_path = get_package_share_directory('yaren_emotions')
         model_path = os.path.join(pkg_path, 'models', 'model_mbn_1.h5')
@@ -41,8 +44,7 @@ class EmotionDetectionNode(Node):
         self.bridge = CvBridge()
         self.publisher = self.create_publisher(Int16, '/emotion', 10)
         self.subscription = self.create_subscription(
-    	Image, '/csi_camera/image_raw', self.image_callback, 10)
-
+            Image, '/csi_camera/image_raw', self.image_callback, 10)
 
         self._lock = threading.Lock()
         self._latest_frame = None      
@@ -55,8 +57,32 @@ class EmotionDetectionNode(Node):
         self._infer_thread.start()
 
         self.get_logger().info('Emotion Node: PANTALLA COMPLETA activada ✓')
+        self.get_logger().info('Haz click izquierdo en la ventana para CERRAR.')
 
+   # --- CAMBIO AQUÍ: Forzar el cierre de la ventana y matar procesos ---
+    def on_mouse_click(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN: 
+            self.get_logger().info('Clic detectado. Cerrando ventana y matando procesos de cámara/emociones...')
+            
+            # 1. Destruir la ventana de OpenCV inmediatamente
+            cv2.destroyAllWindows()
+            for i in range(5):  # Asegurar que OpenCV libere la ventana en Linux
+                cv2.waitKey(1)
+                
+            # 2. Matar el proceso de la cámara (csi_cam) y cualquier proceso de yaren_emotions
+            kill_cmd = "for pid in $(ps aux | grep -E 'csi_cam|yaren_emotions' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done"
+            os.system(kill_cmd)
+            
+            # 3. Apagar ROS (si el proceso actual sobrevive al kill_cmd)
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
+            
     def image_callback(self, msg):
+        if not rclpy.ok():
+            return
+
         self._frame_count += 1
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
@@ -70,24 +96,24 @@ class EmotionDetectionNode(Node):
             with self._lock:
                 self._latest_frame = frame.copy()
 
-        # Frame completo para visualización
         vis = frame.copy()
         
         with self._lock:
             label = self._result_label
             box = self._result_box
 
-        # Dibujar solo el rectángulo y etiqueta, sin recortar
         if box is not None:
             x_min, y_min, x_max, y_max = box
             cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
             cv2.putText(vis, label, (x_min, max(y_min - 10, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
 
-        # Redimensionar al tamaño real de la pantalla
         vis = cv2.resize(vis, (800, 480))
-        cv2.imshow(self.window_name, vis)
-        cv2.waitKey(1)
+        
+        # Solo intentar renderizar si ROS sigue activo (evita errores si se hace click a mitad del callback)
+        if rclpy.ok():
+            cv2.imshow(self.window_name, vis)
+            cv2.waitKey(1)
 
     def _infer_loop(self):
         while rclpy.ok():
@@ -116,12 +142,13 @@ class EmotionDetectionNode(Node):
                     x_max = min(w, int(max(x_coords)) + expand)
                     y_max = min(h, int(max(y_coords)) + expand)
 
-                    # Recorte SOLO para inferencia de IA
                     fc = rgb_frame[y_min:y_max, x_min:x_max]
                     if fc.size == 0: continue
 
                     roi = cv2.resize(fc, (48, 48)).astype(np.float32) / 255.0
                     roi = np.expand_dims(roi, axis=0)
+
+                    if not rclpy.ok(): break
 
                     preds = self.model(roi, training=False)
                     idx = int(np.argmax(preds))
@@ -140,12 +167,14 @@ def main(args=None):
     node = EmotionDetectionNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        # Limpieza final por seguridad
         cv2.destroyAllWindows()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__': 
     main()
