@@ -35,35 +35,78 @@ struct AlsaDevice {
 // ─────────────────────────────────────────────────────────────────────────────
 //  Parsea la salida de arecord -l / aplay -l
 // ─────────────────────────────────────────────────────────────────────────────
-static std::vector<AlsaDevice> parseAlsaDevices(const std::string& cmd) {
+static std::vector<AlsaDevice> parsePulseDevices(bool isSink) {
     std::vector<AlsaDevice> result;
+    std::string cmd = isSink
+        ? "pactl list sinks 2>/dev/null"
+        : "pactl list sources 2>/dev/null";
+
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) return result;
+
     char buf[512];
+    std::string curName, curDesc;
+
+    auto flush = [&]() {
+        if (curName.empty() || curDesc.empty()) return;
+
+        // Filtros: excluir NVIDIA, HDMI-audio de GPU, monitores (loopback)
+        std::string low = curDesc;
+        std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+        bool isNvidia   = (low.find("nvidia")  != std::string::npos);
+        bool isMonitor  = (low.find(".monitor") != std::string::npos ||
+                           curName.find(".monitor") != std::string::npos);
+        bool isVirtual  = (low.find("null")    != std::string::npos ||
+                           low.find("dummy")   != std::string::npos);
+
+        if (!isNvidia && !isVirtual && !(isMonitor && !isSink)) {
+            AlsaDevice d;
+            d.hwId  = curName;
+            d.label = curDesc;
+            result.push_back(d);
+        }
+        curName.clear(); curDesc.clear();
+    };
+
     while (fgets(buf, sizeof(buf), pipe)) {
         std::string line(buf);
-        if (line.rfind("card ", 0) != 0) continue;
-        int cardN = -1, devN = -1;
-        if (sscanf(buf, "card %d:", &cardN) != 1) continue;
-        auto devPos = line.find(", device ");
-        if (devPos == std::string::npos) continue;
-        if (sscanf(line.c_str() + devPos, ", device %d:", &devN) != 1) continue;
-        auto colonPos = line.find(": ");
-        std::string labelRaw = (colonPos != std::string::npos)
-            ? line.substr(colonPos + 2, devPos - colonPos - 2)
-            : line;
-        while (!labelRaw.empty() && (labelRaw.back() == '\n' || labelRaw.back() == ' '))
-            labelRaw.pop_back();
+        // quitar \n
+        while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
 
-        AlsaDevice d;
-        d.hwId  = "plughw:" + std::to_string(cardN) + "," + std::to_string(devN);
-        d.label = d.hwId + "  " + labelRaw;
-        result.push_back(d);
+        // trim izquierdo
+        size_t s = line.find_first_not_of(" \t");
+        std::string trimmed = (s != std::string::npos) ? line.substr(s) : "";
+
+        if (trimmed.rfind("Name:", 0) == 0) {
+            flush();
+            curName = trimmed.substr(5);
+            s = curName.find_first_not_of(" \t");
+            if (s != std::string::npos) curName = curName.substr(s);
+        } else if (trimmed.rfind("Description:", 0) == 0) {
+            curDesc = trimmed.substr(12);
+            s = curDesc.find_first_not_of(" \t");
+            if (s != std::string::npos) curDesc = curDesc.substr(s);
+        }
     }
+    flush();
     pclose(pipe);
     return result;
 }
 
+// Obtiene el sink/source por defecto actual del sistema
+static std::string getPulseDefault(bool isSink) {
+    std::string cmd = isSink
+        ? "pactl get-default-sink 2>/dev/null"
+        : "pactl get-default-source 2>/dev/null";
+    FILE* f = popen(cmd.c_str(), "r");
+    if (!f) return "";
+    char buf[256] = {};
+    fgets(buf, sizeof(buf), f);
+    pclose(f);
+    std::string r(buf);
+    while (!r.empty() && (r.back()=='\n'||r.back()=='\r'||r.back()==' ')) r.pop_back();
+    return r;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 //  Helper: dibuja texto centrado horizontalmente
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,16 +179,29 @@ public:
     bool     hoveredPower    {false};
 
     void refresh() {
-        mics = parseAlsaDevices("arecord -l 2>/dev/null");
-        spks = parseAlsaDevices("aplay  -l 2>/dev/null");
-        if (mics.empty()) mics.push_back({"plughw:0,0", "(sin micrófonos detectados)"});
-        if (spks.empty()) spks.push_back({"plughw:0,0", "(sin altavoces detectados)"});
-        
-        if (selectedMicId.empty()) { selMic = 0; selectedMicId = mics[0].hwId; }
-        if (selectedSpkId.empty()) { selSpk = 0; selectedSpkId = spks[0].hwId; }
+        mics = parsePulseDevices(false);   // sources (micrófonos)
+        spks = parsePulseDevices(true);    // sinks   (parlantes)
 
+        if (mics.empty()) mics.push_back({"", "(sin micrófonos detectados)"});
+        if (spks.empty()) spks.push_back({"", "(sin parlantes detectados)"});
+
+        // Pre-seleccionar el dispositivo actualmente activo en el sistema
+        std::string defSpk = getPulseDefault(true);
+        std::string defMic = getPulseDefault(false);
+
+        selSpk = 0;
+        for (int i = 0; i < (int)spks.size(); ++i)
+            if (spks[i].hwId == defSpk) { selSpk = i; break; }
+        selectedSpkId = spks[selSpk].hwId;
+
+        selMic = 0;
+        for (int i = 0; i < (int)mics.size(); ++i)
+            if (mics[i].hwId == defMic) { selMic = i; break; }
+        selectedMicId = mics[selMic].hwId;
+
+        // Leer fecha/hora actual
         std::time_t t = std::time(nullptr);
-        std::tm* tm = std::localtime(&t);
+        std::tm* tm   = std::localtime(&t);
         editDay  = tm->tm_mday;
         editMon  = tm->tm_mon + 1;
         editYear = tm->tm_year + 1900;
@@ -154,11 +210,9 @@ public:
 
         initialMicId = selectedMicId;
         initialSpkId = selectedSpkId;
-        initDay  = editDay;
-        initMon  = editMon;
+        initDay  = editDay;  initMon  = editMon;
         editYear_init = editYear;
-        initHour = editHour;
-        initMin  = editMin;
+        initHour = editHour; initMin  = editMin;
     }
 
     void render(cv::Mat& frame) {
@@ -236,12 +290,7 @@ public:
         if (btnDayDown.contains({x,y})) { editDay--; clampDate(); return; }
         if (btnMonUp.contains({x,y}))   { editMon = editMon%12+1; return; }
         if (btnMonDown.contains({x,y})) { editMon = (editMon-2+12)%12+1; return; }
-        if (btnYearUp.contains({x,y}))  { editYear++; return; }
-        if (btnYearDown.contains({x,y})){ editYear = std::max(2000, editYear-1); return; }
-        if (btnHourUp.contains({x,y}))  { editHour = (editHour+1)%24; return; }
-        if (btnHourDown.contains({x,y})){ editHour = (editHour+23)%24; return; }
-        if (btnMinUp.contains({x,y}))   { editMin = (editMin+1)%60; return; }
-        if (btnMinDown.contains({x,y})) { editMin = (editMin+59)%60; return; }
+      
 
         if (btnRefresh.contains({x,y})) { refresh(); return; }
 
@@ -383,8 +432,19 @@ private:
             if (sel) cv::circle(frame, {row.x + 10, row.y + row.height/2}, 4, accent, cv::FILLED, cv::LINE_AA);
 
             std::string label = devs[devIdx].label;
-            int maxChars = listW / 7;
-            if ((int)label.size() > maxChars) label = label.substr(0, maxChars-2) + "..";
+            int maxLabelW = listW - 28;  // margen: 20 bullet + 8 derecho
+            int bl2 = 0;
+            // Truncar hasta que quepa
+            if (cv::getTextSize(label, cv::FONT_HERSHEY_PLAIN, 0.88, 1, &bl2).width > maxLabelW) {
+                while (label.size() > 3) {
+                    label.pop_back();
+                    std::string test = label + "..";
+                    if (cv::getTextSize(test, cv::FONT_HERSHEY_PLAIN, 0.88, 1, &bl2).width <= maxLabelW) {
+                        label = test;
+                        break;
+                    }
+                }
+            }
 
             cv::Scalar tc = sel ? cv::Scalar(255,255,255) : hov ? cv::Scalar(180,190,200) : cv::Scalar(100,120,140);
             cv::putText(frame, label, {row.x + 20, row.y + row.height - 7},
@@ -417,21 +477,26 @@ private:
         const int MARGIN = 20;
         cv::Scalar accent(180, 255, 130);
 
-        cv::putText(frame, "FECHA Y HORA", {MARGIN, top + 20}, cv::FONT_HERSHEY_DUPLEX, 0.55, accent, 1, cv::LINE_AA);
-        cv::line(frame, {MARGIN, top+26}, {MARGIN+200, top+26}, cv::Scalar(70,110,50), 1, cv::LINE_AA);
+        cv::putText(frame, "FECHA", {MARGIN, top + 20},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, accent, 1, cv::LINE_AA);
+        cv::line(frame, {MARGIN, top+26}, {MARGIN+120, top+26},
+                cv::Scalar(70,110,50), 1, cv::LINE_AA);
 
+        // Fecha del sistema (solo día y mes)
         std::time_t t_now = std::time(nullptr);
         char sysBuf[64];
-        std::strftime(sysBuf, sizeof(sysBuf), "Sistema: %d/%m/%Y  %H:%M:%S", std::localtime(&t_now));
-        cv::putText(frame, sysBuf, {W - 320, top + 20}, cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(60, 90, 60), 1, cv::LINE_AA);
+        std::strftime(sysBuf, sizeof(sysBuf), "Sistema: %d/%m/%Y", std::localtime(&t_now));
+        cv::putText(frame, sysBuf, {W - 260, top + 20},
+                    cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(60, 90, 60), 1, cv::LINE_AA);
 
-        int* vals[5] = { &editDay, &editMon, &editYear, &editHour, &editMin };
-        const char* labels[5] = { "DAY", "MONTH", "YEAR", "HOUR", "MIN" };
-        cv::Rect* upBtns[5] = { &btnDayUp,  &btnMonUp,  &btnYearUp,  &btnHourUp,  &btnMinUp  };
-        cv::Rect* dnBtns[5] = { &btnDayDown, &btnMonDown, &btnYearDown, &btnHourDown, &btnMinDown };
+        // Solo 2 spinners: DAY y MONTH
+        int*        vals[2]   = { &editDay, &editMon };
+        const char* labels[2] = { "DIA", "MES" };
+        cv::Rect*   upBtns[2] = { &btnDayUp,  &btnMonUp  };
+        cv::Rect*   dnBtns[2] = { &btnDayDown, &btnMonDown };
 
-        int spinCount = 5;
-        int spinW     = 110; 
+        int spinCount = 2;
+        int spinW     = 160;
         int spinH     = panelH - 44;
         int gap       = (W - MARGIN*2 - spinW*spinCount) / (spinCount + 1);
         int spinTop   = top + 34;
@@ -442,49 +507,64 @@ private:
             cv::rectangle(frame, spinRect, cv::Scalar(10, 18, 32), cv::FILLED);
             cv::rectangle(frame, spinRect, cv::Scalar(50, 80, 50), 1, cv::LINE_AA);
 
-            int btnSz   = 24;
-            int marginL = 10;
+            int btnSz  = 28;
+            int marginL = 12;
             int arrowX  = sx + marginL;
             cv::Rect up{arrowX, spinTop + spinH/2 - btnSz - 2, btnSz, btnSz};
-            cv::Rect dn{arrowX, spinTop + spinH/2 + 2, btnSz, btnSz};
-            
+            cv::Rect dn{arrowX, spinTop + spinH/2 + 2,         btnSz, btnSz};
+
             *upBtns[s] = up;
             *dnBtns[s] = dn;
 
             bool hovU = up.contains(hoveredRect.tl());
-            cv::rectangle(frame, up, hovU ? cv::Scalar(45, 90, 45) : cv::Scalar(18, 30, 18), cv::FILLED);
-            cv::rectangle(frame, up, cv::Scalar(60, 120, 60), 1, cv::LINE_AA);
-            drawArrow(frame, {up.x + btnSz/2, up.y + btnSz/2}, true, hovU ? cv::Scalar(255, 255, 255) : accent, 5);
+            cv::rectangle(frame, up, hovU ? cv::Scalar(45,90,45) : cv::Scalar(18,30,18), cv::FILLED);
+            cv::rectangle(frame, up, cv::Scalar(60,120,60), 1, cv::LINE_AA);
+            drawArrow(frame, {up.x+btnSz/2, up.y+btnSz/2}, true,
+                    hovU ? cv::Scalar(255,255,255) : accent, 6);
 
             bool hovD = dn.contains(hoveredRect.tl());
-            cv::rectangle(frame, dn, hovD ? cv::Scalar(45, 90, 45) : cv::Scalar(18, 30, 18), cv::FILLED);
-            cv::rectangle(frame, dn, cv::Scalar(60, 120, 60), 1, cv::LINE_AA);
-            drawArrow(frame, {dn.x + btnSz/2, dn.y + btnSz/2}, false, hovD ? cv::Scalar(255, 255, 255) : accent, 5);
+            cv::rectangle(frame, dn, hovD ? cv::Scalar(45,90,45) : cv::Scalar(18,30,18), cv::FILLED);
+            cv::rectangle(frame, dn, cv::Scalar(60,120,60), 1, cv::LINE_AA);
+            drawArrow(frame, {dn.x+btnSz/2, dn.y+btnSz/2}, false,
+                    hovD ? cv::Scalar(255,255,255) : accent, 6);
 
-            int contentX = arrowX + btnSz + 5;
+            int contentX = arrowX + btnSz + 8;
             int contentW = sx + spinW - contentX - 5;
-            int lblBl = 0;
-            cv::Size ls = cv::getTextSize(labels[s], cv::FONT_HERSHEY_PLAIN, 0.75, 1, &lblBl);
-            cv::putText(frame, labels[s], {contentX + (contentW - ls.width)/2, spinTop + 16},  
-                        cv::FONT_HERSHEY_PLAIN, 0.75, cv::Scalar(100, 150, 100), 1, cv::LINE_AA);
 
+            // Label (DIA / MES)
+            int lblBl = 0;
+            cv::Size ls = cv::getTextSize(labels[s], cv::FONT_HERSHEY_PLAIN, 0.85, 1, &lblBl);
+            cv::putText(frame, labels[s],
+                        {contentX + (contentW - ls.width)/2, spinTop + 18},
+                        cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(100,150,100), 1, cv::LINE_AA);
+
+            // Valor
             char vbuf[16];
             if (s == 1) {
-                const char* mnames[12] = {"ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"};
+                const char* mnames[12] = {
+                    "ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
+                    "JULIO","AGOSTO","SEPT","OCTUBRE","NOV","DIC"
+                };
                 snprintf(vbuf, sizeof(vbuf), "%s", mnames[(*vals[s]-1)%12]);
-            } else if (s == 2) {
-                snprintf(vbuf, sizeof(vbuf), "%d", *vals[s]);
             } else {
                 snprintf(vbuf, sizeof(vbuf), "%02d", *vals[s]);
             }
 
             int valBl = 0;
-            double valScale = (s == 1 || s == 2) ? 0.7 : 0.85;
+            double valScale = (s == 1) ? 0.65 : 0.85;
             cv::Size vs = cv::getTextSize(vbuf, cv::FONT_HERSHEY_DUPLEX, valScale, 1, &valBl);
-            cv::putText(frame, vbuf, {contentX + (contentW - vs.width)/2, spinTop + spinH/2 + 10},  
-                        cv::FONT_HERSHEY_DUPLEX, valScale, cv::Scalar(220, 255, 200), 1, cv::LINE_AA);
+            cv::putText(frame, vbuf,
+                        {contentX + (contentW - vs.width)/2, spinTop + spinH/2 + 12},
+                        cv::FONT_HERSHEY_DUPLEX, valScale,
+                        cv::Scalar(220,255,200), 1, cv::LINE_AA);
+
+            // Año fijo en gris debajo del valor
+            int yBl = 0;
+            cv::Size ys = cv::getTextSize("2026", cv::FONT_HERSHEY_PLAIN, 0.80, 1, &yBl);
         }
-        cv::line(frame, {MARGIN, top+panelH-2}, {W-MARGIN, top+panelH-2}, cv::Scalar(20,35,55), 1, cv::LINE_AA);
+
+        cv::line(frame, {MARGIN, top+panelH-2}, {W-MARGIN, top+panelH-2},
+                cv::Scalar(20,35,55), 1, cv::LINE_AA);
     }
 
     void renderBottomBar(cv::Mat& frame, int barY) {
@@ -533,24 +613,50 @@ private:
 
     void applyDateTime() {
         clampDate();
+        // Año fijo 2026, hora no se toca
         char buf[128];
-        snprintf(buf, sizeof(buf), "sudo timedatectl set-time '%04d-%02d-%02d %02d:%02d:00' 2>/dev/null",
-                 editYear, editMon, editDay, editHour, editMin);
+        snprintf(buf, sizeof(buf),
+                "sudo timedatectl set-time '%04d-%02d-%02d' 2>/dev/null",
+                2026, editMon, editDay);
         int ret = std::system(buf);
-        if (ret == 0) setFeedback("Fecha y hora aplicadas correctamente");
-        else setFeedback("Error: verifica permisos sudo NOPASSWD para timedatectl");
+        if (ret == 0) setFeedback("Fecha aplicada: " + std::to_string(editDay) + "/" + std::to_string(editMon) + "/2026");
+        else setFeedback("Error: verifica sudo NOPASSWD para timedatectl");
     }
-
     void saveAudioConfig() {
-        {
-            FILE* f = fopen("/tmp/yaren_mic_device.txt", "w");
-            if (f) { fprintf(f, "%s\n", selectedMicId.c_str()); fclose(f); }
+        bool ok = true;
+
+        // ── Aplicar parlante ──────────────────────────────────────────────────
+        if (!selectedSpkId.empty()) {
+            std::string cmd = "pactl set-default-sink '" + selectedSpkId + "' 2>/dev/null";
+            if (std::system(cmd.c_str()) != 0) ok = false;
+
+            // Mover streams existentes al nuevo sink
+            std::system(
+                ("for i in $(pactl list sink-inputs short 2>/dev/null | awk '{print $1}'); "
+                "do pactl move-sink-input $i '" + selectedSpkId + "' 2>/dev/null; done").c_str());
         }
-        {
-            FILE* f = fopen("/tmp/yaren_spk_device.txt", "w");
-            if (f) { fprintf(f, "%s\n", selectedSpkId.c_str()); fclose(f); }
+
+        // ── Aplicar micrófono ─────────────────────────────────────────────────
+        if (!selectedMicId.empty()) {
+            std::string cmd = "pactl set-default-source '" + selectedMicId + "' 2>/dev/null";
+            if (std::system(cmd.c_str()) != 0) ok = false;
+
+            // Mover streams de grabación existentes
+            std::system(
+                ("for i in $(pactl list source-outputs short 2>/dev/null | awk '{print $1}'); "
+                "do pactl move-source-output $i '" + selectedMicId + "' 2>/dev/null; done").c_str());
         }
-        setFeedback("Audio guardado: MIC=" + selectedMicId + "  SPK=" + selectedSpkId);
+
+        // ── Guardar en archivos (para otros nodos de YAREN2) ─────────────────
+        auto writeFile = [](const char* path, const std::string& val) {
+            FILE* f = fopen(path, "w");
+            if (f) { fprintf(f, "%s\n", val.c_str()); fclose(f); }
+        };
+        writeFile("/tmp/yaren_mic_device.txt", selectedMicId);
+        writeFile("/tmp/yaren_spk_device.txt", selectedSpkId);
+
+        if (ok) setFeedback("Audio aplicado correctamente");
+        else    setFeedback("Advertencia: algun dispositivo fallo");
     }
 };
 
@@ -574,10 +680,41 @@ public:
     std::vector<SongInfo> songs;
     RadioState state { RadioState::SELECTING };
     int currentSong { -1 };
-
+    
+    void drawNavArrow(cv::Mat& frame, const cv::Rect& r, bool left, bool hovered) {
+        cv::Scalar color = hovered ? cv::Scalar(255, 100, 255) : cv::Scalar(150, 80, 180);
+        
+        // Fondo del botón
+        cv::rectangle(frame, r, cv::Scalar(20, 15, 40), cv::FILLED);
+        cv::rectangle(frame, r, color, hovered ? 2 : 1, cv::LINE_AA);
+        
+        // Dibujar flecha
+        int cx = r.x + r.width/2;
+        int cy = r.y + r.height/2;
+        int size = 15;
+        
+        std::vector<cv::Point> pts(3);
+        if (left) {
+            pts[0] = {cx + size/2, cy - size};
+            pts[1] = {cx + size/2, cy + size};
+            pts[2] = {cx - size/2, cy};
+        } else {
+            pts[0] = {cx - size/2, cy - size};
+            pts[1] = {cx - size/2, cy + size};
+            pts[2] = {cx + size/2, cy};
+        }
+        cv::fillPoly(frame, pts, color);
+    }
+    void render(cv::Mat& frame) {
+        if (state == RadioState::SELECTING) 
+            renderSelector(frame);
+        else 
+            renderNowPlaying(frame);
+    }
     void init(const std::string& pkg, rclcpp::Logger log) {
         pkgDir = pkg;
         logger_ = log;
+        currentPage = 0;
         // Después de inicializar altFaces y songs:
         RCLCPP_INFO(logger_, "🔄 Ciclo de caras: original → money → open → ready → tongue → ...");
         eyesOpen    = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/7.png",  cv::IMREAD_UNCHANGED);
@@ -664,6 +801,8 @@ public:
             currentMusic = nullptr;
         }
         currentSongIndex = -1;
+        std::system("for pid in $(ps aux | grep -E 'yaren_dance_radio.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");
+        std::system("ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
     }
 
     void reset() {
@@ -717,54 +856,103 @@ public:
             }
             
             RCLCPP_INFO(logger_, "Reproduciendo con SDL2: %s", songs[idx].title.c_str());
+            std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
         } else {
             RCLCPP_WARN(logger_, "SDL2 no inicializado, usando fallback");
             std::string cmd = "mpg123 -q \"" + audioPath + "\" &";
             std::thread([cmd]() { std::system(cmd.c_str()); }).detach();
+            std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
         }
     }
 
     void handleMouse(int ev, int x, int y) {
         mousePos = {x, y, 1, 1};
+        const int ITEMS_PER_PAGE = 4; // ¡Fijamos el límite real aquí!
 
+        // 1. Evaluar Hover (Movimiento del mouse) según el estado
         if (ev == cv::EVENT_MOUSEMOVE) {
-            hovSong = -1;
-            for (int i = 0; i < (int)cardRects.size(); ++i)
-                if (cardRects[i].contains({x,y})) { hovSong = i; break; }
-            hovStop = stopBtn.area() > 0 && stopBtn.contains({x,y});
-            hovBack = backBtn.area() > 0 && backBtn.contains({x,y});
+            if (state == RadioState::SELECTING) {
+                hovSong = -1;
+                for (int i = 0; i < (int)cardRects.size(); ++i) {
+                    if (cardRects[i].contains({x,y})) { 
+                        hovSong = currentPage * ITEMS_PER_PAGE + i; // <-- CORREGIDO PARA HOVER
+                        break; 
+                    }
+                }
+                
+                hovBack = backBtn.area() > 0 && backBtn.contains({x,y});
+                hoveredPrevPage = prevPageBtn.area() > 0 && prevPageBtn.contains({x,y});
+                hoveredNextPage = nextPageBtn.area() > 0 && nextPageBtn.contains({x,y});
+                
+                hovStop = false; 
+            } else if (state == RadioState::PLAYING) {
+                hovStop = stopBtn.area() > 0 && stopBtn.contains({x,y});
+                hovBack = false; 
+                hovSong = -1;
+                hoveredPrevPage = false;
+                hoveredNextPage = false;
+            }
             return;
         }
 
         if (ev != cv::EVENT_LBUTTONDOWN) return;
 
-        if (hovBack) {
-            killAudio();
-            if (onBack) onBack();
-            return;
-        }
-        if (hovStop && state == RadioState::PLAYING) {
-            killAudio();
-            state = RadioState::SELECTING;
-            currentSong = -1;
-            currentSongIndex = -1;
-            return;
-        }
+        // 2. Evaluar Clics estrictamente separados por estado
         if (state == RadioState::SELECTING) {
-            for (int i = 0; i < (int)cardRects.size(); ++i)
-                if (cardRects[i].contains({x,y})) { playSong(i); return; }
-        }
-    }
+            
+            // Navegación de páginas
+            if (hoveredPrevPage && prevPageBtn.area() > 0) {
+                currentPage--;
+                hovSong = -1;
+                return;
+            }
+            if (hoveredNextPage && nextPageBtn.area() > 0) {
+                currentPage++;
+                hovSong = -1;
+                return;
+            }
 
-    void render(cv::Mat& frame) {
-        if (state == RadioState::SELECTING) renderSelector(frame);
-        else renderNowPlaying(frame);
+            // Botón VOLVER al menú principal
+            if (hovBack) {
+                killAudio();
+                currentPage = 0;  
+                if (onBack) onBack();
+                return;
+            }
+            
+            // Selección de tarjeta de canción
+            for (int i = 0; i < (int)cardRects.size(); ++i) {
+                if (cardRects[i].contains({x,y})) {
+                    int actualIndex = currentPage * ITEMS_PER_PAGE + i;  // <-- CORREGIDO PARA CLIC
+                    if (actualIndex < (int)songs.size()) {
+                        playSong(actualIndex); 
+                    }
+                    return; 
+                }
+            }
+            
+        } else if (state == RadioState::PLAYING) {
+            // Botón DETENER canción actual
+            if (hovStop) {
+                killAudio();
+                state = RadioState::SELECTING;  
+                currentSong = -1;
+                currentSongIndex = -1;
+                currentPage = 0;  
+                return;
+            }
+        }
     }
 
 private:
     std::string pkgDir;
     rclcpp::Logger logger_ = rclcpp::get_logger("RadioApp");
-    
+    int currentPage { 0 };
+    cv::Rect prevPageBtn {0,0,0,0};
+    cv::Rect nextPageBtn {0,0,0,0};
+    bool hoveredPrevPage { false };
+    bool hoveredNextPage { false };
+
     //Variables para caras alternativas:
     std::vector<cv::Mat> altFaces;
     size_t currentAltFaceIndex { 0 };
@@ -797,6 +985,7 @@ private:
         int W = frame.cols, H = frame.rows;
         double t = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 
+        // Fondo degradado
         for (int y = 0; y < H; ++y) {
             float r = (float)y / H;
             frame.row(y).setTo(cv::Scalar(6 + r*8, 5 + r*5, 18 + r*12));
@@ -805,27 +994,57 @@ private:
         drawFloatingNotes(frame, t);
         drawCenteredText(frame, "YAREN  RADIO", W, 34, cv::FONT_HERSHEY_DUPLEX, 0.90, cv::Scalar(200, 60, 255), 2);
         cv::line(frame, {W/2-240, 50}, {W/2-20, 50}, cv::Scalar(120, 30, 160), 1, cv::LINE_AA);
-        cv::putText(frame, "", {W/2-15, 54}, cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(200,60,255), 1, cv::LINE_AA);
         cv::line(frame, {W/2+20, 50}, {W/2+240, 50}, cv::Scalar(120, 30, 160), 1, cv::LINE_AA);
         drawCenteredText(frame, "Elige una cancion", W, 68, cv::FONT_HERSHEY_PLAIN, 0.90, cv::Scalar(100, 50, 130), 1);
 
-        const int COLS = 3;
-        const int N    = (int)songs.size();
-        const int CW   = 220, CH = 128, G = 12;
-        const int SY   = 80;
+        // === TARJETAS MÁS PEQUEÑAS ===
+        const int COLS = 2;
+        const int N = (int)songs.size();
+        const int CW = 260, CH = 140, G = 25;  // Reducido de 320x180 a 260x140
+        const int SY = 85;
+        const int ITEMS_PER_PAGE = COLS *2;  // 2 cols x 3 filas = 6 canciones por página
+        const int totalPages = (N + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
+        
+        if (currentPage < 0) currentPage = 0;
+        if (currentPage >= totalPages) currentPage = totalPages - 1;
 
         cardRects.clear();
-        for (int i = 0; i < N; ++i) {
-            int row      = i / COLS;
-            int col      = i % COLS;
-            int rowItems = std::min(COLS, N - row * COLS);
-            int rowW     = rowItems * CW + (rowItems - 1) * G;
-            int rowSX    = (W - rowW) / 2;
+        int startIdx = currentPage * ITEMS_PER_PAGE;
+        int endIdx = std::min(startIdx + ITEMS_PER_PAGE, N);
+        
+        int cardIndex = 0;
+        for (int i = startIdx; i < endIdx; ++i) {
+            int row = cardIndex / COLS, col = cardIndex % COLS;
+            int rowItems = std::min(COLS, (endIdx - startIdx) - row * COLS);
+            int rowW = rowItems * CW + (rowItems - 1) * G;
+            int rowSX = (W - rowW) / 2;
             cv::Rect r{rowSX + col*(CW+G), SY + row*(CH+G), CW, CH};
             cardRects.push_back(r);
             drawSongCard(frame, r, songs[i], hovSong == i, t);
+            cardIndex++;
         }
-
+        // Botones de navegación - SEPARADOS A LOS LADOS DE LA PANTALLA
+        if (totalPages > 1) {
+            int arrowSize = 45;
+            int rightArrowX = W - arrowSize - 15;  // Pegado al borde derecho
+            int leftArrowX = 15;                   // Pegado al borde izquierdo
+            int centerY = H / 2;
+            
+            // Flecha izquierda (anterior)
+            if (currentPage > 0) {
+                // Se centra perfectamente en Y, pero pegado a la izquierda en X
+                prevPageBtn = {leftArrowX, centerY - (arrowSize / 2), arrowSize, arrowSize};
+                drawNavArrow(frame, prevPageBtn, true, hoveredPrevPage);
+            } else { prevPageBtn = {0,0,0,0}; }
+            
+            // Flecha derecha (siguiente)
+            if (currentPage < totalPages - 1) {
+                // Se centra perfectamente en Y, pegado a la derecha en X
+                nextPageBtn = {rightArrowX, centerY - (arrowSize / 2), arrowSize, arrowSize};
+                drawNavArrow(frame, nextPageBtn, false, hoveredNextPage);
+            } else { nextPageBtn = {0,0,0,0}; }
+        }
+        // Botón VOLVER
         backBtn = {W/2 - 65, H - 46, 130, 34};
         drawFlatButton(frame, backBtn, "VOLVER", cv::Scalar(120,120,120), hovBack);
     }
@@ -1208,7 +1427,9 @@ public:
         loadIcon("chat", "chat_bot.png"); loadIcon("dice", "simon_dice.png"); loadIcon("movements", "movements.png");
         loadIcon("emotions", "emociones.png"); loadIcon("filtros", "filtros_menu.png"); loadIcon("rutina1", "yaren2.png");
         loadIcon("rutina2", "yaren3.png"); loadIcon("rutina3", "yaren4.png"); loadIcon("animales", "animales.png");
-        loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png");
+        loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png");loadIcon("piopio", "piopio.png");
+        loadIcon("gallinaturuleca", "gallinaturuleca.png"); loadIcon("susanita", "susanita.png");loadIcon("vacalola", "vacalola.png");
+        loadIcon("video", "video.png"); loadIcon("musica", "musica.png");loadIcon("radio", "radio.png");
 
         ttsActive = false; isBlinking = false; hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
@@ -1373,21 +1594,21 @@ private:
         }};
 
         subMenuMap["sub_yaren_p2"] = { "YAREN", {0,229,255}, {
-            MI("yaren_radio", "YAREN RADIO", "musica y animacion", {255,80,160}, "", "", true, "sub_yaren_radio", "yaren"),
+            MI("yaren_radio", "YAREN RADIO", "musica y animacion", {255,80,160}, "", "", true, "sub_yaren_radio", "radio"),
         }};
         subMenuMap["sub_yaren_p2"].key = "sub_yaren_p2";
 
         subMenuMap["sub_yaren_radio"] = { "YAREN RADIO", {255,80,160}, {
-            MI("radio_musica", "MUSICA", "reproducir musica", {255,120,200}, "INTERNAL_RADIO", "", false, "", "rutina1"),
-            MI("radio_videos", "VIDEOS", "reproducir videos", {200,60,140}, "", "", true, "sub_yaren_videos", "rutina2"),
+            MI("radio_musica", "MUSICA", "reproducir musica", {255,120,200}, "INTERNAL_RADIO", "", false, "", "musica"),
+            MI("radio_videos", "VIDEOS", "reproducir videos", {200,60,140}, "", "", true, "sub_yaren_videos", "video"),
         }};
         subMenuMap["sub_yaren_radio"].key = "sub_yaren_radio";  
 
         subMenuMap["sub_yaren_videos"] = { "VIDEOS", {200,60,140}, {
-            MI("vid_pollito", "POLLITO PIO", "Canciones de la Granja", {0, 200, 255}, "python3 src/YAREN2/yaren_radio/yaren_radio/pollitopio.py &", "for pid in $(ps aux | grep -E 'pollitopio.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina1"),
-            MI("vid_gallina", "GALLINA TURULECA", "Canciones de Yaren", {255, 150, 50}, "python3 src/YAREN2/yaren_radio/yaren_radio/gallinaturuleca.py &", "for pid in $(ps aux | grep -E 'gallinaturuleca.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina2"),
-            MI("vid_vaca", "LA VACA LOLA", "Canciones Infantiles", {100, 255, 100}, "python3 src/YAREN2/yaren_radio/yaren_radio/vacalola.py &", "for pid in $(ps aux | grep -E 'vacalola.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina3"),
-            MI("vid_susanita", "SUSANITA", "La Granja de Zenon", {255, 100, 200}, "python3 src/YAREN2/yaren_radio/yaren_radio/susanita.py &", "for pid in $(ps aux | grep -E 'susanita.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina4"),
+            MI("vid_pollito", "POLLITO PIO", "Canciones de la Granja", {0, 200, 255}, "python3 src/YAREN2/yaren_radio/yaren_radio/pollitopio.py &", "for pid in $(ps aux | grep -E 'pollitopio.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "piopio"),
+            MI("vid_gallina", "GALLINA TURULECA", "Canciones de Yaren", {255, 150, 50}, "python3 src/YAREN2/yaren_radio/yaren_radio/gallinaturuleca.py &", "for pid in $(ps aux | grep -E 'gallinaturuleca.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "gallinaturuleca"),
+            MI("vid_vaca", "LA VACA LOLA", "Canciones Infantiles", {100, 255, 100}, "python3 src/YAREN2/yaren_radio/yaren_radio/vacalola.py &", "for pid in $(ps aux | grep -E 'vacalola.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "vacalola"),
+            MI("vid_susanita", "SUSANITA", "La Granja de Zenon", {255, 100, 200}, "python3 src/YAREN2/yaren_radio/yaren_radio/susanita.py &", "for pid in $(ps aux | grep -E 'susanita.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "susanita"),
         }};
     }
 
@@ -1561,14 +1782,27 @@ private:
                 navStack.pop_back(); hoveredItem = -1; hoveredBack = false;
                 return;
             }
-            if (!activeMode.empty() && stopButtonRect.contains({ x, y })) {
-                if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-                activeMode = ""; activeStopCmd = "";
-                navStack.clear(); hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
-                auto msg = std_msgs::msg::String(); msg.data = "idle";
-                modePublisher->publish(msg);
-                return;
+           if (!activeMode.empty() && stopButtonRect.contains({ x, y })) {
+            std::string prevMode = activeMode;
+            if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
+            activeMode = ""; activeStopCmd = "";
+            navStack.clear();
+            hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
+            auto msg = std_msgs::msg::String(); msg.data = "idle";
+            modePublisher->publish(msg);
+
+            // Si era un video, volver al submenú de videos
+            if (prevMode.rfind("vid_", 0) == 0) {
+                NavLevel root; root.title = "MENU PRINCIPAL";
+                root.accentColor = {0,200,200}; root.items = rootMenuItems;
+                navStack.push_back(root);
+                for (const std::string& key : {"sub_yaren_p2", "sub_yaren_radio", "sub_yaren_videos"}) {
+                    auto it = subMenuMap.find(key);
+                    if (it != subMenuMap.end()) navStack.push_back(it->second);
+                }
             }
+            return;
+        }
             for (int i = 0; i < (int)level.items.size(); ++i) {
                 if (level.items[i].rect.contains({ x, y })) {
                     if (level.items[i].hasSubMenu) {
@@ -1633,14 +1867,46 @@ private:
         modePublisher->publish(msg);
 
         if (!cleanCmd.empty()) {
-            std::thread([this, cleanCmd]() {
+            std::thread([this, cleanCmd, prevMode = item.id]() {
                 auto start = std::chrono::steady_clock::now();
                 int ret = std::system(cleanCmd.c_str());
                 auto end = std::chrono::steady_clock::now();
                 double elapsedSecs = std::chrono::duration<double>(end - start).count();
+                
                 if (ret != 0 && elapsedSecs < 1.5) {
                     RCLCPP_ERROR(get_logger(), "[CMD] Fallo inmediato (Exit %d): %s", ret, cleanCmd.c_str());
                     showErrorOverlay("No se ha podido realizar\nel comando.", 4.0);
+                }
+
+                // --- DETECTAR FIN DEL VIDEO Y VOLVER AL MENÚ ---
+                // Verifica si el proceso que acaba de terminar era un video
+                if (prevMode.rfind("vid_", 0) == 0 && activeMode == prevMode) {
+                    std::lock_guard<std::mutex> lock(navMutex);
+                    activeMode = ""; 
+                    activeStopCmd = "";
+                    
+                    auto msg = std_msgs::msg::String(); 
+                    msg.data = "idle";
+                    modePublisher->publish(msg);
+
+                    // Reconstruir la ruta de navegación directamente hacia "VIDEOS"
+                    navStack.clear();
+                    NavLevel root; 
+                    root.title = "MENU PRINCIPAL";
+                    root.accentColor = {0, 200, 200}; 
+                    root.items = rootMenuItems;
+                    navStack.push_back(root);
+
+                    // Reabrir los submenús correspondientes
+                    for (const std::string& key : {"sub_yaren_p2", "sub_yaren_radio", "sub_yaren_videos"}) {
+                        auto it = subMenuMap.find(key);
+                        if (it != subMenuMap.end()) navStack.push_back(it->second);
+                    }
+                    
+                    hoveredItem = -1; 
+                    hoveredBack = false; 
+                    hoveredStop = false; 
+                    hoveredExit = false;
                 }
             }).detach();
         }
@@ -1649,20 +1915,49 @@ private:
     void renderSettingsButton(cv::Mat& frame) {
         int W = frame.cols, btnSz = 38, margin = 10;
         settingsButtonRect = {W - btnSz - margin, margin, btnSz, btnSz};
+
         cv::Scalar bg   = hoveredSettings ? cv::Scalar(30,50,70) : cv::Scalar(12,20,35);
         cv::Scalar bord = hoveredSettings ? cv::Scalar(0,200,255) : cv::Scalar(40,70,100);
-
         cv::rectangle(frame, settingsButtonRect, bg, cv::FILLED);
         cv::rectangle(frame, settingsButtonRect, bord, 1, cv::LINE_AA);
 
-        int cx = settingsButtonRect.x + btnSz/2, cy = settingsButtonRect.y + btnSz/2;
-        cv::Scalar ic = hoveredSettings ? cv::Scalar(0,220,255) : cv::Scalar(80,130,160);
-        cv::circle(frame, {cx,cy}, 8, ic, 1, cv::LINE_AA);
-        cv::circle(frame, {cx,cy}, 4, ic, cv::FILLED, cv::LINE_AA);
-        for (int d = 0; d < 8; ++d) {
-            double ang = d * CV_PI / 4.0;
-            cv::line(frame, {(int)(cx + 8*std::cos(ang)), (int)(cy + 8*std::sin(ang))}, 
-                            {(int)(cx + 13*std::cos(ang)), (int)(cy + 13*std::sin(ang))}, ic, 2, cv::LINE_AA);
+        auto iconIt = iconMap.find("settings");
+        if (iconIt != iconMap.end()) {
+            // Usar el PNG de settings
+            int pad = 6;
+            int iconW = btnSz - pad*2, iconH = btnSz - pad*2;
+            cv::Mat icon;
+            cv::resize(iconIt->second, icon, {iconW, iconH}, 0, 0, cv::INTER_AREA);
+            int ix0 = settingsButtonRect.x + pad;
+            int iy0 = settingsButtonRect.y + pad;
+            cv::Rect dst(ix0, iy0, iconW, iconH);
+            cv::Rect bounds(0, 0, frame.cols, frame.rows);
+            dst &= bounds;
+            if (dst.area() > 0) {
+                cv::Rect src(dst.x - ix0, dst.y - iy0, dst.width, dst.height);
+                if (icon.channels() == 4) {
+                    cv::Mat roi = frame(dst), iconCrop = icon(src);
+                    for (int ry = 0; ry < dst.height; ++ry)
+                        for (int rx = 0; rx < dst.width; ++rx) {
+                            cv::Vec4b px = iconCrop.at<cv::Vec4b>(ry, rx);
+                            float a = px[3] / 255.f;
+                            if (a > 0.f) {
+                                cv::Vec3b& bg2 = roi.at<cv::Vec3b>(ry, rx);
+                                cv::Scalar tint = hoveredSettings ? cv::Scalar(0,220,255) : cv::Scalar(180,190,200);
+                                for (int c = 0; c < 3; ++c)
+                                    bg2[c] = cv::saturate_cast<uchar>(
+                                        (px[c] * (tint[c]/255.f)) * a + bg2[c] * (1.f - a));
+                            }
+                        }
+                } else {
+                    icon(src).copyTo(frame(dst));
+                }
+            }
+        } else {
+            // Fallback: círculo simple si no cargó el PNG
+            int cx = settingsButtonRect.x + btnSz/2, cy = settingsButtonRect.y + btnSz/2;
+            cv::Scalar ic = hoveredSettings ? cv::Scalar(0,220,255) : cv::Scalar(80,130,160);
+            cv::circle(frame, {cx,cy}, 8, ic, cv::FILLED, cv::LINE_AA);
         }
     }
 
@@ -1767,11 +2062,11 @@ private:
             const std::string& curKey = navStack.back().key;
             if (curKey == "sub_yaren") {
                 rightNavArrowRect = { W - 58, H/2 - 70, 48, 130 };
-                renderSideNavArrow(frame, rightNavArrowRect, false, "RADIO", hoveredRightNav);
+                renderSideNavArrow(frame, rightNavArrowRect, false, "1/2", hoveredRightNav);
             }
             if (curKey == "sub_yaren_p2") {
                 leftNavArrowRect = { 10, H/2 - 70, 48, 130 };
-                renderSideNavArrow(frame, leftNavArrowRect, true, "YAREN", hoveredLeftNav);
+                renderSideNavArrow(frame, leftNavArrowRect, true, "2/2", hoveredLeftNav);
             }
         }
         exitButtonRect = { cx, btnY, navW, btnH };

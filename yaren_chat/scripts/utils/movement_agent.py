@@ -158,7 +158,7 @@ class MovementDetectionAgent:
             r"(cabeza.*(derech|der)|(derech|der).*cabe|mira.*(derech|der)|voltea.*(derech|der))": "mira_a_la_derecha",
             r"\b(cabeza|mirar|gira.*cabe|volte)\b": "mueve_la_cabeza",
             
-            # 🔄 CUERPO (Direcciones específicas antes del genérico)
+            # CUERPO (Direcciones específicas antes del genérico)
             r"(cuerpo.*(izquierd|izq)|(izquierd|izq).*cuerpo|gira.*(izquierd|izq)|voltea.*(izquierd|izq))": "gira_a_la_izquierda",
             r"(cuerpo.*(derech|der)|(derech|der).*cuerpo|gira.*(derech|der)|voltea.*(derech|der))": "gira_a_la_derecha",
             r"\b(cuerpo|gira\s*(el\s*)?cuerpo|date\s*la\s*vuelta|volt[eé]ate)\b": "gira_el_cuerpo",

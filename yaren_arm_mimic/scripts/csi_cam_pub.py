@@ -21,7 +21,7 @@ def gstreamer_pipeline(
 
 class CSICameraPublisher(Node):
     def __init__(self):
-        super().__init__('camara')
+        super().__init__('csi_cam_pub')
         self.declare_parameter('sensor_id',      0)
         self.declare_parameter('capture_width',  1920)
         self.declare_parameter('capture_height', 1080)
@@ -51,23 +51,29 @@ class CSICameraPublisher(Node):
         #CON CAMARA CSI:
         # self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         # CON CAMARA USB:
-        self.cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(0,cv2.CAP_V4L2)
         if not self.cap.isOpened():
             self.get_logger().error('Unable to open CSI camera!')
             raise RuntimeError('Camera not available')
         self.create_timer(1.0 / framerate, self.timer_callback)
         self.get_logger().info('CSI Camera Publisher started.')
-
+        self.frame_count = 0
+    # 2. En timer_callback, añade contador y fallback:
     def timer_callback(self):
         ret, frame = self.cap.read()
         if not ret:
-            self.get_logger().warning('Failed to capture frame.')
+            if self.frame_count % 30 == 0:  # Log cada ~1s para no saturar
+                self.get_logger().warning('️ cap.read() falló. Verifica conexión o cierra otras apps de cámara.')
             return
+        
+        self.frame_count += 1
+        if self.frame_count % 90 == 0:  # Cada ~3s confirma actividad
+            self.get_logger().info(f'✅ Publicando frames: {self.frame_count}')
+            
         msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'csi_camera'
         self.publisher_.publish(msg)
-
     def destroy_node(self):
         self.cap.release()
         super().destroy_node()

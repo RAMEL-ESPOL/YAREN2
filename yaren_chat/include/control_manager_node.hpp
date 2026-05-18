@@ -27,7 +27,7 @@ private:
     void publish_yaren_ready();
     // ── Estado ────────────────────────────────────────────────────────
     bool stt_terminated_;
-    bool lifecycle_busy_ = false;   // ✅ evita transiciones paralelas
+    bool lifecycle_busy_ = false;   //evita transiciones paralelas
     std::mutex state_lock_;
     std::thread init_thread_;
 
@@ -36,13 +36,13 @@ private:
     void stt_status_callback(const std_msgs::msg::Bool::SharedPtr msg);
     void _manage_lifecycle_thread();
 
-    // ✅ Espera activa con timeout configurable por nodo
+    // Espera activa con timeout configurable por nodo
     bool wait_for_service(
         rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr client,
         const std::string& node_name,
         int timeout_sec);
 
-    // ✅ Transición síncrona — bloquea hasta recibir respuesta
+    // Transición síncrona — bloquea hasta recibir respuesta
     bool change_node_state_sync(const std::string& node_name, uint8_t transition_id);
 };
 

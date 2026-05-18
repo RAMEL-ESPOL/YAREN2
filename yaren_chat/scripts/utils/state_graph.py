@@ -50,7 +50,7 @@ class StateGraphLLM:
         
         # Logging detallado para ver qué método se usó
         self.node.get_logger().info(
-            f"🤖 Detection: {movement_result.get('movement_detected')} | "
+            f"Detection: {movement_result.get('movement_detected')} | "
             f"Type: {movement_result.get('movement_type')} | "
             f"Method: {movement_result.get('detection_method', 'unknown')}"
         )

@@ -47,8 +47,8 @@ def show_camera():
 
     # Se pasa flip_method=2 al invocar la función
     print(gstreamer_pipeline(flip_method=2))
-    #video_capture = cv2.VideoCapture(gstreamer_pipeline(flip_method=2), cv2.CAP_GSTREAMER)
-    video_capture = cv2.VideoCapture(0)
+    video_capture = cv2.VideoCapture(gstreamer_pipeline(flip_method=2), cv2.CAP_GSTREAMER)
+    
     if video_capture.isOpened():
         try:
             # --- MODIFICACIÓN PARA PANTALLA COMPLETA ---

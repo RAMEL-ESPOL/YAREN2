@@ -33,7 +33,6 @@ def play_video():
 
          # CREAMOS PRIMERO EL REPRODUCTOR INDIVIDUAL (Control directo de ventana)
         inner_player = vlc_instance.media_player_new()
-        inner_player.set_fullscreen(True) # Forzado inmediato antes de cargar archivos
 
         # CREAMOS EL REPRODUCTOR DE LISTA Y LE VINCULAMOS EL REPRODUCTOR BASE
         player = vlc_instance.media_list_player_new()
@@ -47,10 +46,6 @@ def play_video():
         # 4. Configurar bucle infinito
         player.set_playback_mode(vlc.PlaybackMode.loop)
         
-        # 5. Forzar el Fullscreen
-        inner_player = player.get_media_player()
-        inner_player.set_fullscreen(True)
-        
         # --- INICIAR EL DETECTOR DE CLICS EN SEGUNDO PLANO ---
         listener = mouse.Listener(on_click=on_click)
         listener.start()
@@ -58,7 +53,8 @@ def play_video():
 
         # Reproducir
         player.play()
-        
+        time.sleep(0.5)
+        inner_player.set_fullscreen(True)
         print(" Reproduciendo video. Haz clic izquierdo en la pantalla para salir.")
     
         # 6. Mantener el programa abierto hasta que se haga clic
