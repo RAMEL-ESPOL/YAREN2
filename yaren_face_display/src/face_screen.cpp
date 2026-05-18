@@ -50,30 +50,48 @@ static std::vector<AlsaDevice> parsePulseDevices(bool isSink) {
     auto flush = [&]() {
         if (curName.empty() || curDesc.empty()) return;
 
-        // Filtros: excluir NVIDIA, HDMI-audio de GPU, monitores (loopback)
-        std::string low = curDesc;
-        std::transform(low.begin(), low.end(), low.begin(), ::tolower);
-        bool isNvidia   = (low.find("nvidia")  != std::string::npos);
-        bool isMonitor  = (low.find(".monitor") != std::string::npos ||
-                           curName.find(".monitor") != std::string::npos);
-        bool isVirtual  = (low.find("null")    != std::string::npos ||
-                           low.find("dummy")   != std::string::npos);
+        std::string low     = curDesc;
+        std::string lowName = curName;
+        std::transform(low.begin(),     low.end(),     low.begin(),     ::tolower);
+        std::transform(lowName.begin(), lowName.end(), lowName.begin(), ::tolower);
 
-        if (!isNvidia && !isVirtual && !(isMonitor && !isSink)) {
+        bool isMonitor = low.find(".monitor")     != std::string::npos ||
+                         lowName.find(".monitor")  != std::string::npos;
+        bool isVirtual = low.find("null")  != std::string::npos ||
+                         low.find("dummy") != std::string::npos;
+
+        bool incluir = false;
+
+        if (isSink) {
+            bool isHDMI      = low.find("hdmi")       != std::string::npos ||
+                               low.find("displayport") != std::string::npos;
+            bool isSPDIF     = low.find("s/pdif")      != std::string::npos ||
+                               low.find("spdif")       != std::string::npos ||
+                               low.find("digital")     != std::string::npos;
+            bool isAnalog    = low.find("analog")      != std::string::npos;
+            bool isHeadphone = low.find("headphone")   != std::string::npos;
+
+            incluir = (isHDMI || isSPDIF || isAnalog || isHeadphone) && !isVirtual && !isMonitor;
+        } else {
+            // Blacklist para fuentes: excluir monitores, virtuales y NVIDIA
+            bool isNvidia = low.find("nvidia") != std::string::npos;
+            incluir = !isNvidia && !isVirtual && !isMonitor;
+        }
+
+        if (incluir) {
             AlsaDevice d;
             d.hwId  = curName;
             d.label = curDesc;
             result.push_back(d);
         }
+
         curName.clear(); curDesc.clear();
     };
 
     while (fgets(buf, sizeof(buf), pipe)) {
         std::string line(buf);
-        // quitar \n
         while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
 
-        // trim izquierdo
         size_t s = line.find_first_not_of(" \t");
         std::string trimmed = (s != std::string::npos) ? line.substr(s) : "";
 
@@ -88,11 +106,11 @@ static std::vector<AlsaDevice> parsePulseDevices(bool isSink) {
             if (s != std::string::npos) curDesc = curDesc.substr(s);
         }
     }
+
     flush();
     pclose(pipe);
     return result;
 }
-
 // Obtiene el sink/source por defecto actual del sistema
 static std::string getPulseDefault(bool isSink) {
     std::string cmd = isSink
@@ -158,6 +176,14 @@ static void drawArrow(cv::Mat& frame, cv::Point center, bool up,
 // =============================================================================
 class SettingsMenu {
 public:
+    // --- VARIABLES NUEVAS PARA VOLUMEN ---
+    int volumeLevel = 64;           
+    int previousVolume = 64;        
+    bool isMuted = false;
+    bool isDraggingVolume = false;  
+    cv::Rect muteBtnRect {0, 0, 0, 0};
+    cv::Rect sliderTrackRect {0, 0, 0, 0};
+    // -------------------------------------
     std::function<void(const std::string&)> onMicSelected;
     std::function<void(const std::string&)> onSpkSelected;
 
@@ -228,28 +254,126 @@ public:
                          cv::FONT_HERSHEY_DUPLEX, 0.80, cv::Scalar(0, 229, 255), 2);
         cv::line(frame, {W/2-320, 48}, {W/2+320, 48}, cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
 
-        int available = H - 58 - 70;
-        int micPanelH = available * 35 / 100;
-        int spkPanelH = available * 35 / 100;
-        int datPanelH = available - micPanelH - spkPanelH;
+        // --- DISTRIBUCIÓN EXACTA DE PÍXELES PARA 480p ---
+        // 58px para el título arriba + 62px para botones abajo = 120px ocupados
+        // Quedan 360px libres para los 4 paneles.
+        int micPanelH = 105; 
+        int spkPanelH = 105;
+        int datPanelH = 85;
+        int volPanelH = 65;
 
         int micTop = 58;
         int spkTop = micTop + micPanelH;
         int datTop = spkTop + spkPanelH;
+        int volTop = datTop + datPanelH;
 
         renderAudioPanel(frame, micTop, micPanelH, true);
         renderAudioPanel(frame, spkTop, spkPanelH, false);
         renderDatePanel (frame, datTop, datPanelH);
+        
+        // Ajustamos la posición X y el ancho para que alinee con Fecha
+        renderVolumePanel(frame, 20, volTop + 5, W - 40, volPanelH - 10);
+        
         renderBottomBar(frame, H - 62);
     }
 
+    void renderVolumePanel(cv::Mat& frame, int x, int y, int w, int h) {
+        cv::Rect panelRect{x, y, w, h};
+        cv::rectangle(frame, panelRect, cv::Scalar(10, 18, 32), cv::FILLED);
+        cv::rectangle(frame, panelRect, cv::Scalar(50, 65, 85), 1, cv::LINE_AA);
+        
+        // Texto más arriba para que encaje
+        cv::putText(frame, "VOLUMEN DE MUSICA", {x + 15, y + 18}, cv::FONT_HERSHEY_PLAIN, 0.80, cv::Scalar(150, 160, 180), 1, cv::LINE_AA);
+
+        int btnSz = 26; // Botón un poco más pequeño
+        muteBtnRect = {x + 15, y + 24, btnSz, btnSz};
+        bool hovMute = muteBtnRect.contains(hoveredRect.tl());
+        cv::Scalar muteColor = isMuted ? cv::Scalar(40, 40, 220) : (hovMute ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 229, 255));
+
+        cv::rectangle(frame, muteBtnRect, hovMute ? cv::Scalar(40,50,70) : cv::Scalar(20,28,42), cv::FILLED);
+        cv::rectangle(frame, muteBtnRect, muteColor, 1, cv::LINE_AA);
+
+        int cx = muteBtnRect.x + btnSz/2 - 2, cy = muteBtnRect.y + btnSz/2;
+        std::vector<cv::Point> speaker = { {cx - 5, cy - 3}, {cx - 2, cy - 3}, {cx + 3, cy - 6}, {cx + 3, cy + 6}, {cx - 2, cy + 3}, {cx - 5, cy + 3} };
+        cv::fillPoly(frame, speaker, muteColor, cv::LINE_AA);
+        
+        if (isMuted) {
+            cv::line(frame, {muteBtnRect.x + 4, muteBtnRect.y + 4}, {muteBtnRect.x + btnSz - 4, muteBtnRect.y + btnSz - 4}, cv::Scalar(0, 0, 255), 2, cv::LINE_AA);
+        } else {
+            cv::ellipse(frame, {cx + 1, cy}, {5, 5}, 0, -45, 45, muteColor, 1, cv::LINE_AA);
+            cv::ellipse(frame, {cx + 1, cy}, {8, 8}, 0, -45, 45, muteColor, 1, cv::LINE_AA);
+        }
+
+        int trackX = muteBtnRect.x + muteBtnRect.width + 15;
+        int trackW = w - (trackX - x) - 20;
+        int trackH = 6;
+        sliderTrackRect = {trackX, muteBtnRect.y + (btnSz - trackH)/2, trackW, trackH};
+        cv::rectangle(frame, sliderTrackRect, cv::Scalar(25, 35, 50), cv::FILLED);
+
+        int fillW = (isMuted ? 0 : volumeLevel) * trackW / 128;
+        cv::Rect filledTrack = {trackX, sliderTrackRect.y, fillW, trackH};
+        cv::rectangle(frame, filledTrack, cv::Scalar(0, 200, 255), cv::FILLED);
+
+        int knobX = trackX + fillW, knobY = sliderTrackRect.y + trackH/2, knobR = 8;
+        cv::Rect sliderHitbox = {trackX, sliderTrackRect.y - 10, trackW, trackH + 20};
+        bool hovSlider = sliderHitbox.contains(hoveredRect.tl()) || isDraggingVolume;
+
+        cv::circle(frame, {knobX, knobY}, knobR + 2, cv::Scalar(10, 15, 25), cv::FILLED, cv::LINE_AA);
+        cv::circle(frame, {knobX, knobY}, knobR, hovSlider ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 229, 255), cv::FILLED, cv::LINE_AA);
+    }
+
     void handleMouse(int event, int x, int y) {
-        if (event == cv::EVENT_MOUSEMOVE) {
+        cv::Point pt{x, y};
+
+        // 1. Actualizar hover (siempre)
+        if (event == cv::EVENT_MOUSEMOVE && !isDraggingVolume) {
             hoveredRect = findHovered(x, y);
             return;
         }
+
+        // 2. Lógica de arrastre del slider
+        if (event == cv::EVENT_MOUSEMOVE && isDraggingVolume) {
+            int relX = std::max(0, std::min(sliderTrackRect.width, x - sliderTrackRect.x));
+            volumeLevel = (relX * 128) / sliderTrackRect.width;
+            isMuted = (volumeLevel == 0);
+            Mix_VolumeMusic(volumeLevel);
+            return;
+        }
+
+        // 3. Soltar el slider
+        if (event == cv::EVENT_LBUTTONUP && isDraggingVolume) {
+            isDraggingVolume = false;
+            return;
+        }
+
+        // --- A partir de aquí solo procesamos clics hacia abajo ---
         if (event != cv::EVENT_LBUTTONDOWN) return;
 
+        // 4. Clic en botón MUTE
+        if (muteBtnRect.contains(pt)) {
+            isMuted = !isMuted;
+            if (isMuted) { 
+                previousVolume = volumeLevel; 
+                volumeLevel = 0; 
+            } else { 
+                volumeLevel = (previousVolume == 0) ? 64 : previousVolume; 
+            }
+            Mix_VolumeMusic(volumeLevel);
+            return;
+        }
+
+        // 5. Clic para iniciar arrastre del Slider
+        cv::Rect sliderHitbox = {sliderTrackRect.x, sliderTrackRect.y - 15, sliderTrackRect.width, sliderTrackRect.height + 30};
+        if (sliderHitbox.contains(pt)) {
+            isDraggingVolume = true;
+            int relX = std::max(0, std::min(sliderTrackRect.width, x - sliderTrackRect.x));
+            volumeLevel = (relX * 128) / sliderTrackRect.width;
+            isMuted = (volumeLevel == 0);
+            Mix_VolumeMusic(volumeLevel);
+            return;
+        }
+
+        // --- CÓDIGO ORIGINAL PARA LOS DEMÁS CLICS (Mics, Spks, Fecha, etc) ---
         if (btnMicUp.contains({x,y})) { 
             if (micScroll > 0) micScroll--; 
             return; 
@@ -291,7 +415,6 @@ public:
         if (btnMonUp.contains({x,y}))   { editMon = editMon%12+1; return; }
         if (btnMonDown.contains({x,y})) { editMon = (editMon-2+12)%12+1; return; }
       
-
         if (btnRefresh.contains({x,y})) { refresh(); return; }
 
         if (btnSaveAll.contains({x,y})) {
@@ -326,7 +449,6 @@ public:
 
         if (btnBack.contains({x,y})) { if (onBack) onBack(); return; }
     }
-
     std::function<void()> onBack;
     std::string feedbackMsg;
     std::chrono::steady_clock::time_point feedbackTime;
@@ -335,7 +457,7 @@ public:
         feedbackMsg  = msg;
         feedbackTime = std::chrono::steady_clock::now();
     }
-
+    // ----------------------------------------------
 private:
     int W = 800, H = 480;
     int currentFaceIndex { 0 };  // 0=original, 1=money, 2=open, 3=ready, 4=tongue
@@ -490,16 +612,16 @@ private:
                     cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(60, 90, 60), 1, cv::LINE_AA);
 
         // Solo 2 spinners: DAY y MONTH
-        int*        vals[2]   = { &editDay, &editMon };
+        int* vals[2]   = { &editDay, &editMon };
         const char* labels[2] = { "DIA", "MES" };
-        cv::Rect*   upBtns[2] = { &btnDayUp,  &btnMonUp  };
-        cv::Rect*   dnBtns[2] = { &btnDayDown, &btnMonDown };
+        cv::Rect* upBtns[2] = { &btnDayUp,  &btnMonUp  };
+        cv::Rect* dnBtns[2] = { &btnDayDown, &btnMonDown };
 
         int spinCount = 2;
-        int spinW     = 160;
-        int spinH     = panelH - 44;
+        int spinW     = 140; // Ancho ajustado
+        int spinH     = 46;  // Altura fija exacta para que quepan 2 botones de 22px
         int gap       = (W - MARGIN*2 - spinW*spinCount) / (spinCount + 1);
-        int spinTop   = top + 34;
+        int spinTop   = top + 32;
 
         for (int s = 0; s < spinCount; ++s) {
             int sx = MARGIN + gap + s * (spinW + gap);
@@ -507,38 +629,42 @@ private:
             cv::rectangle(frame, spinRect, cv::Scalar(10, 18, 32), cv::FILLED);
             cv::rectangle(frame, spinRect, cv::Scalar(50, 80, 50), 1, cv::LINE_AA);
 
-            int btnSz  = 28;
-            int marginL = 12;
-            int arrowX  = sx + marginL;
-            cv::Rect up{arrowX, spinTop + spinH/2 - btnSz - 2, btnSz, btnSz};
-            cv::Rect dn{arrowX, spinTop + spinH/2 + 2,         btnSz, btnSz};
+            // --- APILADO PERFECTO DE FLECHAS ---
+            int btnSz  = 22;
+            int arrowX = sx + 2; // Pegadas a la izquierda de la caja verde
+            
+            cv::Rect up{arrowX, spinTop + 1, btnSz, btnSz};
+            cv::Rect dn{arrowX, spinTop + btnSz + 1, btnSz, btnSz};
 
             *upBtns[s] = up;
             *dnBtns[s] = dn;
 
+            // Dibujar Flecha Arriba
             bool hovU = up.contains(hoveredRect.tl());
             cv::rectangle(frame, up, hovU ? cv::Scalar(45,90,45) : cv::Scalar(18,30,18), cv::FILLED);
             cv::rectangle(frame, up, cv::Scalar(60,120,60), 1, cv::LINE_AA);
             drawArrow(frame, {up.x+btnSz/2, up.y+btnSz/2}, true,
-                    hovU ? cv::Scalar(255,255,255) : accent, 6);
+                    hovU ? cv::Scalar(255,255,255) : accent, 4);
 
+            // Dibujar Flecha Abajo
             bool hovD = dn.contains(hoveredRect.tl());
             cv::rectangle(frame, dn, hovD ? cv::Scalar(45,90,45) : cv::Scalar(18,30,18), cv::FILLED);
             cv::rectangle(frame, dn, cv::Scalar(60,120,60), 1, cv::LINE_AA);
             drawArrow(frame, {dn.x+btnSz/2, dn.y+btnSz/2}, false,
-                    hovD ? cv::Scalar(255,255,255) : accent, 6);
+                    hovD ? cv::Scalar(255,255,255) : accent, 4);
 
-            int contentX = arrowX + btnSz + 8;
-            int contentW = sx + spinW - contentX - 5;
+            // --- CENTRADO PERFECTO DEL TEXTO ---
+            int contentX = arrowX + btnSz + 4;
+            int contentW = spinW - (btnSz + 6); // Espacio libre a la derecha de las flechas
 
             // Label (DIA / MES)
             int lblBl = 0;
-            cv::Size ls = cv::getTextSize(labels[s], cv::FONT_HERSHEY_PLAIN, 0.85, 1, &lblBl);
+            cv::Size ls = cv::getTextSize(labels[s], cv::FONT_HERSHEY_PLAIN, 0.70, 1, &lblBl);
             cv::putText(frame, labels[s],
-                        {contentX + (contentW - ls.width)/2, spinTop + 18},
-                        cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(100,150,100), 1, cv::LINE_AA);
+                        {contentX + (contentW - ls.width)/2, spinTop + 16}, // Altura fija Y
+                        cv::FONT_HERSHEY_PLAIN, 0.70, cv::Scalar(100,150,100), 1, cv::LINE_AA);
 
-            // Valor
+            // Valor ("18" o "MAYO")
             char vbuf[16];
             if (s == 1) {
                 const char* mnames[12] = {
@@ -551,16 +677,12 @@ private:
             }
 
             int valBl = 0;
-            double valScale = (s == 1) ? 0.65 : 0.85;
+            double valScale = (s == 1) ? 0.55 : 0.70; // Texto proporcional
             cv::Size vs = cv::getTextSize(vbuf, cv::FONT_HERSHEY_DUPLEX, valScale, 1, &valBl);
             cv::putText(frame, vbuf,
-                        {contentX + (contentW - vs.width)/2, spinTop + spinH/2 + 12},
+                        {contentX + (contentW - vs.width)/2, spinTop + 38}, // Justo debajo del label
                         cv::FONT_HERSHEY_DUPLEX, valScale,
                         cv::Scalar(220,255,200), 1, cv::LINE_AA);
-
-            // Año fijo en gris debajo del valor
-            int yBl = 0;
-            cv::Size ys = cv::getTextSize("2026", cv::FONT_HERSHEY_PLAIN, 0.80, 1, &yBl);
         }
 
         cv::line(frame, {MARGIN, top+panelH-2}, {W-MARGIN, top+panelH-2},
@@ -1404,6 +1526,7 @@ public:
         mouthClosedImg = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/13.png", cv::IMREAD_UNCHANGED);
         mouthOpenImg   = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/8.png",  cv::IMREAD_UNCHANGED);
 
+        
         auto checkImg = [&](const cv::Mat& m, const std::string& name) {
             if (m.empty()) RCLCPP_WARN(get_logger(), "IMAGEN NO CARGADA: %s", name.c_str());
         };
@@ -1442,8 +1565,17 @@ public:
         settingsMenu.onBack = [this]() { showSettings = false; };
 
         radioApp.init(pkgDir, this->get_logger());
-        radioApp.onBack = [this]() { showRadio = false; };
-
+        // Añadir rutas de canciones de menu
+        std::srand(std::time(nullptr));
+        menuPlaylist = {
+            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro1.mp3",
+            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro2.mp3",
+            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro3.mp3",
+        };
+        radioApp.onBack = [this]() { 
+            showRadio = false; 
+            startMenuMusic(); // <--- Vuelve a sonar al salir de la radio
+        };
         ttsSubscription = this->create_subscription<std_msgs::msg::Bool>(
             "/audio_playing", 10, std::bind(&VideoSynchronizer::audioPlayingCallback, this, std::placeholders::_1));
 
@@ -1489,7 +1621,11 @@ public:
 
                 std::lock_guard<std::mutex> nlock(navMutex);
                 if (!navStack.empty()) {
-                    if (navStack.size() > 1) navStack.pop_back(); else navStack.clear();
+                    if (navStack.size() > 1) navStack.pop_back(); 
+                    else { 
+                        navStack.clear(); 
+                        stopMenuMusic(); // <--- APAGA MUSICA SI SALES CON ESC
+                    }
                     hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
                 } else {
                     running = false; rclcpp::shutdown();
@@ -1525,7 +1661,32 @@ private:
                        const char* cmd, const char* stop, bool hasSub, const char* subKey, const char* iconKey) {
         return MenuItem(id, label, sublabel, color, cmd, stop, hasSub, subKey, iconKey);
     }
+    // --- VARIABLES DE MUSICA MENU ---
+    std::vector<std::string> menuPlaylist;
+    Mix_Music* menuMusic { nullptr };
+    bool isMenuMusicPlaying { false };
 
+    void startMenuMusic() {
+        if (menuPlaylist.empty()) return;
+        if (menuMusic) { Mix_FreeMusic(menuMusic); menuMusic = nullptr; }
+        int idx = std::rand() % menuPlaylist.size(); // Canción aleatoria
+        if (fs::exists(menuPlaylist[idx])) {
+            menuMusic = Mix_LoadMUS(menuPlaylist[idx].c_str());
+            if (menuMusic) {
+                Mix_PlayMusic(menuMusic, -1);
+                Mix_VolumeMusic(settingsMenu.volumeLevel);
+                isMenuMusicPlaying = true;
+            }
+        }
+    }
+
+    void stopMenuMusic() {
+        if (isMenuMusicPlaying) {
+            Mix_FadeOutMusic(500); // 500ms fade out
+            isMenuMusicPlaying = false;
+        }
+    }
+    // --------------------------------
     void buildMenus() {
         rootMenuItems = {
             MI("modo_prueba", "MODO PRUEBA", "diagnostico y tests", {255,140,0}, "", "", true, "sub_modo_prueba", "test"),
@@ -1635,19 +1796,23 @@ private:
     void executeMicTest() {
         if (micTestRunning.load()) return;
         micTestRunning = true;
-
+        stopMenuMusic();
         navStack.clear();
         hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
 
         if (testThread.joinable()) testThread.join();
         testThread = std::thread([this]() {
-            std::string micId = settingsMenu.selectedMicId.empty() ? "plughw:0,0" : settingsMenu.selectedMicId;
-            std::string spkId = "default"; 
+            
+            // --- CORRECCIÓN DE AUDIO ---
+            std::string micId = settingsMenu.selectedMicId;
+            std::string spkId = settingsMenu.selectedSpkId; 
 
-            const std::string recordCmd = "arecord -D " + micId + " -f S16_LE -r 44100 -c 1 -d 5 /tmp/yaren_mic_test.wav 2>/tmp/yaren_arecord.log";
+            // Puenteamos ALSA con PulseAudio mediante variables de entorno
+            std::string envMic = micId.empty() ? "" : "PULSE_SOURCE='" + micId + "' ";
+            std::string recordCmd = envMic + "arecord -D pulse -f S16_LE -r 44100 -c 1 -d 5 /tmp/yaren_mic_test.wav > /tmp/yaren_arecord.log 2>&1";
 
-            RCLCPP_INFO(get_logger(), "[MIC TEST] Iniciando grabacion con: %s", micId.c_str());
+            RCLCPP_INFO(get_logger(), "[MIC TEST] Iniciando grabacion con comando: %s", recordCmd.c_str());
 
             int recRet = -1;
             std::thread recordingThread([&]() { recRet = std::system(recordCmd.c_str()); });
@@ -1665,7 +1830,11 @@ private:
 
             if (recRet != 0) {
                 RCLCPP_ERROR(get_logger(), "[MIC TEST] Fallo grabacion (exit %d)", recRet);
-                showErrorOverlay("No se ha podido realizar\nel comando.", 4.0);
+                showErrorOverlay("Fallo al grabar audio.\nRevisa el microfono.", 4.0);
+                {
+                    std::lock_guard<std::mutex> lock(overlayMutex);
+                    faceOverlay = FaceOverlay::NONE;
+                }
                 micTestRunning = false;
                 return;
             }
@@ -1675,19 +1844,24 @@ private:
                 faceOverlay    = FaceOverlay::NONE;
                 overlayMessage = "";
             }
-            std::this_thread::sleep_for(std::chrono::seconds(2));
+            
+            std::this_thread::sleep_for(std::chrono::seconds(1)); // Pausa de 1s para naturalidad
+            
             {
                 std::lock_guard<std::mutex> lock(overlayMutex);
                 faceOverlay    = FaceOverlay::MIC_PLAYING;
                 overlayMessage = "Reproduciendo audio...";
             }
 
-            const std::string playCmd = "aplay -D " + spkId + " /tmp/yaren_mic_test.wav 2>/tmp/yaren_aplay.log";
+            // Reproducimos usando la misma técnica para el parlante
+            std::string envSpk = spkId.empty() ? "" : "PULSE_SINK='" + spkId + "' ";
+            std::string playCmd = envSpk + "aplay -D pulse /tmp/yaren_mic_test.wav > /tmp/yaren_aplay.log 2>&1";
+            
             int playRet = std::system(playCmd.c_str());
 
             if (playRet != 0) {
                 RCLCPP_ERROR(get_logger(), "[MIC TEST] Fallo reproduccion (exit %d)", playRet);
-                showErrorOverlay("No se ha podido realizar\nel comando.", 4.0);
+                showErrorOverlay("Fallo al reproducir audio.\nRevisa el parlante.", 4.0);
             }
 
             {
@@ -1696,7 +1870,34 @@ private:
                 overlayMessage   = "";
                 micCountdownSecs = 0;
             }
-            micTestRunning = false;
+
+            // --- RECONSTRUIR EL MENÚ Y VOLVER AL MODO PRUEBA ---
+            {
+                std::lock_guard<std::mutex> nlock(navMutex);
+                navStack.clear();
+                
+                // 1. Añadir Menú Principal
+                NavLevel root;
+                root.title       = "MENU PRINCIPAL";
+                root.accentColor = { 0, 200, 200 };
+                root.items       = rootMenuItems;
+                navStack.push_back(root);
+
+                // 2. Entrar al submenú de Modo Prueba
+                auto it = subMenuMap.find("sub_modo_prueba");
+                if (it != subMenuMap.end()) {
+                    navStack.push_back(it->second);
+                }
+
+                // 3. Reactivar controles y música
+                hoveredItem = -1; 
+                hoveredBack = false; 
+                hoveredStop = false; 
+                hoveredExit = false;
+                startMenuMusic();
+            }
+
+            micTestRunning = false; // Liberamos el bloqueo de clics
         });
     }
 
@@ -1758,6 +1959,7 @@ private:
                 navStack.push_back(root);
                 hoveredItem = -1;
                 hoveredBack = hoveredStop = hoveredExit = false;
+                startMenuMusic(); // <--- INICIA MUSICA AQUI
             }
             return;
         }
@@ -1776,6 +1978,7 @@ private:
         if (event == cv::EVENT_LBUTTONDOWN) {
             if (exitButtonRect.contains({ x, y })) {
                 navStack.clear(); hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
+                stopMenuMusic(); // <--- APAGA MUSICA AQUI
                 return;
             }
             if (navStack.size() > 1 && backButtonRect.contains({ x, y })) {
@@ -1791,7 +1994,7 @@ private:
             auto msg = std_msgs::msg::String(); msg.data = "idle";
             modePublisher->publish(msg);
 
-            // Si era un video, volver al submenú de videos
+            /// Si era un video, volver al submenú de videos
             if (prevMode.rfind("vid_", 0) == 0) {
                 NavLevel root; root.title = "MENU PRINCIPAL";
                 root.accentColor = {0,200,200}; root.items = rootMenuItems;
@@ -1800,6 +2003,7 @@ private:
                     auto it = subMenuMap.find(key);
                     if (it != subMenuMap.end()) navStack.push_back(it->second);
                 }
+                startMenuMusic();
             }
             return;
         }
@@ -1831,6 +2035,7 @@ private:
         }
 
         navStack.clear();
+        stopMenuMusic(); // <--- APAGA MUSICA AL ENTRAR A MODO
         hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
 
@@ -1907,6 +2112,8 @@ private:
                     hoveredBack = false; 
                     hoveredStop = false; 
                     hoveredExit = false;
+                    
+                    startMenuMusic(); 
                 }
             }).detach();
         }
@@ -2243,8 +2450,13 @@ private:
         for (const auto& f : files) { cv::Mat m = cv::imread(f); if (!m.empty()) frames.push_back(m); }
     }
 
-    void audioPlayingCallback(const std_msgs::msg::Bool::SharedPtr msg) { ttsActive = msg->data; }
-
+    void audioPlayingCallback(const std_msgs::msg::Bool::SharedPtr msg) { 
+        ttsActive = msg->data; 
+        if (isMenuMusicPlaying) {
+            if (ttsActive) Mix_PauseMusic();
+            else Mix_ResumeMusic();
+        }
+    }
     void overlayImage(cv::Mat& bg, const cv::Mat& fg) {
         if (fg.empty() || bg.empty()) return;
         cv::Mat fgResized;
