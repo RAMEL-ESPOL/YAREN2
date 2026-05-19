@@ -234,3 +234,4 @@ sudo apt install vlc
 pip3 install python-vlc # em el venv
 pip3 install pynput  # em el venv
 sudo apt install libsdl2-dev libsdl2-mixer-dev
+pip install onnxruntime-gpu

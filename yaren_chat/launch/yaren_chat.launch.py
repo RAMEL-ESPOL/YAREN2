@@ -36,17 +36,10 @@ def generate_launch_description():
         executable='control_manager_node',
         output='screen'
     )
-    
-    face_screen = Node(
-        package='yaren_face_display',
-        executable='face_screen',
-        name='face_screen',
-        output='screen'
-    )
+
 
     return LaunchDescription([
         llm_node,    # 1. El cerebro arranca primero
-        face_screen, # La cara arranca de inmediato
         
         # 2. El TTS arranca 2s después del LLM
         RegisterEventHandler(

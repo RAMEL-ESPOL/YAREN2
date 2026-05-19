@@ -1587,7 +1587,27 @@ public:
                 if (msg->data == "idle" || msg->data.empty()) {
                     if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
                     activeMode.clear(); activeStopCmd.clear();
-                } else { activeMode = msg->data; }
+                } else { 
+                    activeMode = msg->data; 
+                    // --- NUEVO: Permitir que el mensaje salga una vez al entrar al chat ---
+                    if (activeMode == "yaren_chat") {
+                        first_listen_done = false;
+                    }
+                }
+            });
+
+        // 2. AÑADIR este nuevo bloque justo después:
+        sttListeningSubscription_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/stt_listening", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
+                // Verificar que el micrófono está activo, que se está en modo chat, y que es la primera vez
+                if (msg->data && activeMode == "yaren_chat" && !first_listen_done) {
+                    first_listen_done = true; // Bloquear futuros disparos en la misma sesión
+                    
+                    std::thread([this]() {
+                        // Usa la animación de líneas verdes (MIC_PLAYING) por 2.0 segundos
+                        showCustomOverlay(FaceOverlay::MIC_PLAYING, "Yaren te escucha...", 2.0);
+                    }).detach();
+                }
             });
 
         cv::namedWindow("Yaren Face", cv::WINDOW_NORMAL);
@@ -1779,18 +1799,25 @@ private:
         return (ret == 0);
     }
 
-    void showErrorOverlay(const std::string& msg, double secs = 3.0) {
+    void showCustomOverlay(FaceOverlay type, const std::string& msg, double secs) {
         {
             std::lock_guard<std::mutex> lock(overlayMutex);
-            faceOverlay    = FaceOverlay::ERROR_MSG;
+            faceOverlay    = type;
             overlayMessage = msg;
         }
         std::this_thread::sleep_for(std::chrono::duration<double>(secs));
         {
             std::lock_guard<std::mutex> lock(overlayMutex);
-            faceOverlay    = FaceOverlay::NONE;
-            overlayMessage = "";
+            // Evitar limpiar el overlay si fue sobreescrito por otra función mientras dormía
+            if (faceOverlay == type && overlayMessage == msg) {
+                faceOverlay    = FaceOverlay::NONE;
+                overlayMessage = "";
+            }
         }
+    }
+
+    void showErrorOverlay(const std::string& msg, double secs = 3.0) {
+        showCustomOverlay(FaceOverlay::ERROR_MSG, msg, secs);
     }
 
     void executeMicTest() {
@@ -2508,6 +2535,8 @@ private:
     std::mutex        overlayMutex;
 
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  ttsSubscription;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  sttListeningSubscription_;
+    std::atomic<bool> first_listen_done { false };
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr faceScreenPublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   modePublisher;
 

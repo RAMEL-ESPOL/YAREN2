@@ -41,7 +41,7 @@ class STTLifecycleNode(LifecycleNode):
         
         pkg_share_dir = get_package_share_directory('yaren_chat')
         self.vosk_model_path = os.path.join(pkg_share_dir, 'models', 'STT', 'vosk-model-es-0.42')
-        
+        self.stt_listening_publisher = self.create_publisher(Bool, '/stt_listening', 10)
         self.response_publisher = self.create_publisher(PersonResponse, '/response_person', 10)
         self.stt_status_publisher = self.create_publisher(Bool, '/stt_terminado', 10)
         
@@ -97,6 +97,10 @@ class STTLifecycleNode(LifecycleNode):
         
         try:
             self.get_logger().info("🎤 Listening...")
+            # --- NUEVO: Emitir señal indicando que Yaren ya está escuchando ---
+            listen_msg = Bool()
+            listen_msg.data = True
+            self.stt_listening_publisher.publish(listen_msg)
             while self.is_recognizing:
                 data = stream.read(4000, exception_on_overflow=False)
                 
