@@ -11,7 +11,6 @@
 #include <map>
 #include <string>
 #include <vector>
-#include <array>
 
 class DualArmTrajectoryController : public rclcpp::Node {
 public:
@@ -24,20 +23,6 @@ private:
     std::map<std::string, float> calculateMidpoints(const std::vector<std::string>& joints);
     float euler2Radian(float euler);
     float limitJointPosition(const std::string& joint, float position);
-    
-    /**
-     * @brief Validación interdependiente de límites articulares
-     * 
-     * Implementa restricciones cinemáticas que dependen de múltiples articulaciones:
-     * - Cuando elevation es muy baja, azimuth debe ser limitado
-     * - Cuando elbow está en extremos, wrist tiene restricciones adicionales
-     * - Detecta singularidades cinemáticas
-     */
-    std::map<std::string, float> validateInterdependentLimits(
-        const std::map<std::string, float>& positions,
-        const std::vector<std::string>& arm_joints
-    );
-    
     std::map<std::string, float> processArmData(const std::array<float, 4>& angles, 
                                               const std::vector<std::string>& arm_joints, 
                                               const bool is_right);

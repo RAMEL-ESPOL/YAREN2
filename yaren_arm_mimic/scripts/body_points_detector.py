@@ -61,6 +61,7 @@ class BodyPointsDetectorNode(Node):
     def image_callback(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            frame = cv2.flip(frame, 0)
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.pose.process(image)
 

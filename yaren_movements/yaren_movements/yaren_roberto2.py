@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" rutina_17052026_003439.py — Generado por yaren_pose_recorder """
+""" yaren_roberto2.py — Generado por yaren_pose_recorder """
 import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -8,11 +8,11 @@ import time
 
 JOINT_NAMES   = ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6', 'joint_7', 'joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12']
 STEP_DURATION = 2
-STEPS         = [[0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.4619850790407161, -3.0, 0.0, 0.45267373403451705, 0.0], [0.0, 0.0, 0.0, 0.0, 1.257130044114304, 1.0, 0.0, 1.0, -3.0, 0.0, 0.2849977329174953, 0.0]]
+STEPS         = [[0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.5, 1.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.5, 1.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5]]
 
 class RutinaNode(Node):
     def __init__(self):
-        super().__init__("rutina_17052026_003439")
+        super().__init__("yaren_roberto2")
         self._pub = self.create_publisher(
             JointTrajectory,
             "/joint_trajectory_controller/joint_trajectory", 10)

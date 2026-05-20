@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-yaren_pose_recorder.py  —  yaren_movements
+yaren_rutinanuevapy  —  yaren_movements
 Graba rutinas por imitación con countdown automático y calibración por T-pose.
 
 Pipeline:
@@ -68,6 +68,14 @@ SCRIPTS_DIR  = Path("src/YAREN2/yaren_movements/yaren_movements")
 
 # Paleta UI
 BG_COLOR  = (13, 5, 30)
+POSE_DATABASE = {
+    "Reposo / Brazos Abajo": [0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0],
+    "Brazos Arriba":         [3.0, 0.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0],
+    "T-Pose":                [1.5, 1.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0],
+    "Forma de L":            [1.5, 1.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0],
+    "L Invertida":           [3.0, 0.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0],
+    "Brazos Adelante":       [1.5, 0.0, 0.0, 0.0, -1.5, 0.0, 0.0, 0.0]
+}
 ACCENT    = (251, 64, 224)
 GREEN     = (0, 200, 80)
 ORANGE    = (0, 160, 255)
@@ -90,6 +98,8 @@ class State:
     IMITATING   = "imitating"     # imitando — esperando pose estable
     STABLE      = "stable"        # pose estable — iniciando countdown
     SAVING      = "saving"        # guardando paso
+    NAMING      = "naming"        # NUEVO: Nombrando la rutina
+    DONE_OPTIONS= "done_options"  # NUEVO: Opciones finales (Reproducir/Salir)
     FINISHED    = "finished"      # rutina terminada
 
 
@@ -121,7 +131,12 @@ class PoseRecorderNode(Node):
         self._calibrated: bool = False
         self._t_pose_frame_count: int = 0
         self._calib_start: float = 0.0
+        self.current_detected_pose = "Buscando..."
         
+        # Variables para nombrar la rutina
+        self.routine_name = ""
+        self.final_script_path = ""
+
         # Cámara
         self.latest_frame: np.ndarray | None = None
         self._bridge = CvBridge()
@@ -159,6 +174,7 @@ class PoseRecorderNode(Node):
     def _camera_cb(self, msg: Image):
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, "bgr8")
+            frame = cv2.flip(frame, 0)
             with self._lock:
                 self.latest_frame = frame
         except Exception:
@@ -168,7 +184,7 @@ class PoseRecorderNode(Node):
     def _body_tracker_cb(self, msg: BodyPosition):
         if not msg.is_valid:
             with self._lock:
-                if self.state not in (State.SAVING, State.FINISHED):
+                if self.state not in (State.SAVING, State.NAMING, State.DONE_OPTIONS, State.FINISHED):
                     self.state = State.WAITING
             return
 
@@ -190,22 +206,24 @@ class PoseRecorderNode(Node):
 
         with self._lock:
             if not arms_visible:
-                self.state = State.ARMS_HIDDEN
-                self._angle_window.clear()
-                self.countdown_start = 0.0
-                self._t_pose_frame_count = 0
+                if self.state not in (State.NAMING, State.DONE_OPTIONS):
+                    self.state = State.ARMS_HIDDEN
+                    self._angle_window.clear()
+                    self.countdown_start = 0.0
+                    self._t_pose_frame_count = 0
                 return
 
             self._detected_arm_angles = angles
             self._last_valid_bp = msg
 
             # ── Flujo de estados ──
-            if self.state in (State.SAVING, State.FINISHED):
+            if self.state in (State.SAVING, State.NAMING, State.DONE_OPTIONS, State.FINISHED):
                 return
 
             if not self._calibrated:
                 self._handle_calibration(angles)
             else:
+                self.current_detected_pose, _ = self._find_closest_pose(angles)
                 self._angle_window.append(angles)
                 self._update_state()
 
@@ -280,7 +298,7 @@ class PoseRecorderNode(Node):
 
     # ── Actualizar estado (post-calibración) ───────────────────────────────
     def _update_state(self):
-        if self.state in (State.SAVING, State.FINISHED):
+        if self.state in (State.SAVING, State.NAMING, State.DONE_OPTIONS, State.FINISHED):
             return
 
         if len(self._angle_window) < STABILITY_FRAMES:
@@ -347,22 +365,54 @@ class PoseRecorderNode(Node):
 
         return [r[0], j6, r[1], r[2],
                 r[3], j10, r[4], r[5]]
-                
+
+    def _find_closest_pose(self, human_angles: list[float]) -> tuple[str, list[float]]:
+        # Extraemos los ángulos directos de la cámara
+        r_yx = human_angles[0]  # Elevación hombro derecho
+        r_zy = human_angles[1]  # Profundidad hombro derecho
+        l_yx = human_angles[4]  # Elevación hombro izquierdo
+        l_zy = human_angles[5]  # Profundidad hombro izquierdo
+
+        best_name = "Reposo / Brazos Abajo" # Fallback por defecto
+
+        # Clasificación estricta mediante reglas humanas
+        if r_yx > 130 and l_yx > 130:
+            best_name = "Brazos Arriba"
+        elif r_yx < 45 and l_yx < 45:
+            best_name = "Reposo / Brazos Abajo"
+        elif r_yx > 130 and 45 <= l_yx <= 130:
+            best_name = "Forma de L"      # Der arriba, Izq horizontal
+        elif l_yx > 130 and 45 <= r_yx <= 130:
+            best_name = "L Invertida"     # Izq arriba, Der horizontal
+        elif 45 <= r_yx <= 130 and 45 <= l_yx <= 130:
+            # Ambos brazos horizontales. ZY nos dice si están a los lados o adelante.
+            if abs(r_zy) > 35 or abs(l_zy) > 35:
+                best_name = "Brazos Adelante"
+            else:
+                best_name = "T-Pose"
+
+        return best_name, POSE_DATABASE[best_name]
+
+    def get_current_pose_name(self) -> str:
+        with self._lock: 
+            return self.current_detected_pose               
+
     # ── Guardar paso ───────────────────────────────────────────────────────
     def _save_step(self):
         torso_joints = [0.0, 0.0, 0.0, 0.0]
-        arm_joints   = self._map_human_to_robot_angles(self._detected_arm_angles)
-        positions    = torso_joints + arm_joints
+        
+        # Obtenemos la pose perfecta basada en tus movimientos directos
+        best_name, matched_arm_joints = self._find_closest_pose(self._detected_arm_angles)
+        
+        # Armamos los 12 joints (4 del torso en cero + los 8 perfectos de tu BD)
+        positions = torso_joints + list(matched_arm_joints)
 
         self.steps.append(positions)
         self.state = State.SAVING
         self.countdown_start = time.time()
 
-        deg_in  = [round(x, 1) for x in self._detected_arm_angles]
-        rad_out = [round(x, 3) for x in arm_joints]
-        self.get_logger().info(f"Paso {len(self.steps)} guardado")
-        self.get_logger().info(f"  Humano (deg): {deg_in}")
-        self.get_logger().info(f"  Robot  (rad): {rad_out}")
+        self.get_logger().info(f"Paso {len(self.steps)} guardado - Pose: {best_name}")
+        self.get_logger().info(f"   Enviando a motores: {positions}")
 
         msg = JointTrajectory()
         msg.joint_names = JOINT_NAMES
@@ -420,6 +470,14 @@ _Y_BTN = WIN_H - _BH - 20
 BTN_FINISH = ((WIN_W // 2) - _BW - _GAP // 2, _Y_BTN, _BW, _BH)
 BTN_CANCEL = ((WIN_W // 2) + _GAP // 2, _Y_BTN, _BW, _BH)
 BTN_RECALIB = (WIN_W - 210, _Y_BTN, 190, _BH)
+
+# Botones pantalla Naming
+BTN_SAVE_NAME = (WIN_W // 2 - 90, WIN_H // 2 + 60, 180, 46)
+
+# Botones pantalla Done Options
+BTN_PLAY_ROUTINE = (WIN_W // 2 - 200, WIN_H // 2, 180, 46)
+BTN_EXIT_APP     = (WIN_W // 2 + 20, WIN_H // 2, 180, 46)
+
 _hover = ""
 
 
@@ -430,23 +488,56 @@ def _hit(btn, x, y):
 
 def _on_mouse(event, x, y, flags, node):
     global _hover
+    state = node.get_state()
+    
     if event == cv2.EVENT_MOUSEMOVE:
-        if _hit(BTN_FINISH, x, y):   _hover = "finish"
-        elif _hit(BTN_CANCEL, x, y): _hover = "cancel"
-        elif _hit(BTN_RECALIB, x, y):_hover = "recalib"
-        else: _hover = ""
+        if state not in (State.NAMING, State.DONE_OPTIONS):
+            if _hit(BTN_FINISH, x, y):   _hover = "finish"
+            elif _hit(BTN_CANCEL, x, y): _hover = "cancel"
+            elif _hit(BTN_RECALIB, x, y):_hover = "recalib"
+            else: _hover = ""
+        elif state == State.NAMING:
+            if _hit(BTN_SAVE_NAME, x, y): _hover = "save_name"
+            else: _hover = ""
+        elif state == State.DONE_OPTIONS:
+            if _hit(BTN_PLAY_ROUTINE, x, y): _hover = "play"
+            elif _hit(BTN_EXIT_APP, x, y):   _hover = "exit"
+            else: _hover = ""
+
     if event == cv2.EVENT_LBUTTONDOWN:
         steps = node.get_steps()
-        if _hit(BTN_FINISH, x, y) and len(steps) > 0:
-            node.set_state(State.FINISHED)
-        elif _hit(BTN_CANCEL, x, y):
-            node.set_state(State.FINISHED)
-        elif _hit(BTN_RECALIB, x, y):
-            with node._lock:
-                node._calibrated = False
-                node._t_pose_frame_count = 0
-                node.state = State.CALIBRATING
-                node._angle_window.clear()
+        
+        if state not in (State.NAMING, State.DONE_OPTIONS):
+            if _hit(BTN_FINISH, x, y) and len(steps) > 0:
+                node.set_state(State.NAMING)
+            elif _hit(BTN_CANCEL, x, y):
+                node.set_state(State.FINISHED)
+            elif _hit(BTN_RECALIB, x, y):
+                with node._lock:
+                    node._calibrated = False
+                    node._t_pose_frame_count = 0
+                    node.state = State.CALIBRATING
+                    node._angle_window.clear()
+        
+        elif state == State.NAMING:
+            if _hit(BTN_SAVE_NAME, x, y):
+                # Generar archivo
+                _save_routine_files(node)
+                node.set_state(State.DONE_OPTIONS)
+                
+        elif state == State.DONE_OPTIONS:
+            if _hit(BTN_PLAY_ROUTINE, x, y):
+                print(f"[INFO] Reproduciendo rutina: {node.final_script_path}")
+                # Ejecutar el script guardado de forma independiente y salir
+                subprocess.Popen(
+                    ["python3", str(node.final_script_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setsid
+                )
+                node.set_state(State.FINISHED)
+            elif _hit(BTN_EXIT_APP, x, y):
+                node.set_state(State.FINISHED)
 
 
 def _draw_header(canvas):
@@ -455,7 +546,6 @@ def _draw_header(canvas):
     (tw, _), _ = cv2.getTextSize(title, FONT, 0.62, 1)
     cv2.putText(canvas, title, ((WIN_W - tw) // 2, 30),
                 FONT, 0.62, ACCENT, 1, cv2.LINE_AA)
-
 
 def _draw_steps(canvas, steps):
     r, gap = 14, 10
@@ -480,7 +570,6 @@ def _draw_steps(canvas, steps):
     cv2.putText(canvas, lbl, ((WIN_W - lw) // 2, y + r + 18),
                 FONT_S, 0.9, GRAY, 1, cv2.LINE_AA)
 
-
 def _draw_calibration_panel(canvas, node):
     state      = node.get_state()
     calibrated = node.is_calibrated()
@@ -499,7 +588,7 @@ def _draw_calibration_panel(canvas, node):
         prep_left = max(0.0, PREP_SECS - elapsed)
 
         if prep_left > 0:
-            txt1 = "PREPARATE PARA T-POSE"
+            txt1 = "MANTENE LOS BRAZOS ARRIBA ..."
             num  = str(math.ceil(prep_left))
 
             (w1, _),  _ = cv2.getTextSize(txt1, FONT, 0.80, 2)
@@ -549,7 +638,6 @@ def _draw_calibration_panel(canvas, node):
 
         _draw_arms_up_icon(canvas, cx, cy + r_arc + 50)
 
-
 def _draw_arms_up_icon(canvas, cx, cy):
     cv2.circle(canvas, (cx, cy + 20), 12, YELLOW, 2, cv2.LINE_AA)
     cv2.line(canvas, (cx, cy + 32), (cx, cy + 80), YELLOW, 2, cv2.LINE_AA)
@@ -598,7 +686,6 @@ def _draw_state_panel(canvas, state, calibrated):
     cv2.rectangle(canvas, (10, 10), (cw + 20, 34), GREEN, -1)
     cv2.putText(canvas, cal_txt, (15, 28), FONT_S, 0.85, (0, 0, 0), 1, cv2.LINE_AA)
 
-
 def _draw_countdown_arc(canvas, node):
     prog = node.countdown_progress()
     if prog <= 0:
@@ -613,7 +700,6 @@ def _draw_countdown_arc(canvas, node):
     (nw, nh), _ = cv2.getTextSize(num, FONT, 2.0, 3)
     cv2.putText(canvas, num, (cx - nw // 2, cy + nh // 2),
                 FONT, 2.0, WHITE, 3, cv2.LINE_AA)
-
 
 def _draw_buttons(canvas, steps, calibrated):
     buttons = [
@@ -638,7 +724,6 @@ def _draw_buttons(canvas, steps, calibrated):
                     (bx + (bw - tw) // 2, by + (bh + th) // 2 - 2),
                     FONT, 0.48, WHITE if active else GRAY, 1, cv2.LINE_AA)
 
-
 def _draw_saving_flash(canvas, node, steps):
     prog  = node.saving_progress()
     alpha = max(0.0, 1.0 - prog) * 0.30
@@ -650,6 +735,120 @@ def _draw_saving_flash(canvas, node, steps):
     (tw, th), _ = cv2.getTextSize(txt, FONT, 1.0, 2)
     cv2.putText(canvas, txt, ((WIN_W - tw) // 2, WIN_H // 2),
                 FONT, 1.0, WHITE, 2, cv2.LINE_AA)
+
+def _draw_current_pose(canvas, node):
+    if not node.is_calibrated():
+        return
+        
+    pose_name = node.get_current_pose_name()
+    if pose_name:
+        txt = f"Pose: {pose_name}"
+        (tw, th), _ = cv2.getTextSize(txt, FONT, 0.8, 2)
+        x = 20
+        y = WIN_H - 90
+        
+        cv2.rectangle(canvas, (x - 10, y - th - 10), (x + tw + 10, y + 10), (0, 0, 0), -1)
+        cv2.rectangle(canvas, (x - 10, y - th - 10), (x + tw + 10, y + 10), ACCENT, 2, cv2.LINE_AA)
+        cv2.putText(canvas, txt, (x, y), FONT, 0.8, WHITE, 2, cv2.LINE_AA)
+
+# ── NUEVAS PANTALLAS ──
+def _draw_naming_screen(canvas, node):
+    cv2.rectangle(canvas, (0, 0), (WIN_W, WIN_H), BG_COLOR, -1)
+    
+    title = "NOMBRE DE LA RUTINA"
+    (tw, _), _ = cv2.getTextSize(title, FONT, 0.8, 2)
+    cv2.putText(canvas, title, ((WIN_W - tw) // 2, 80), FONT, 0.8, ACCENT, 2, cv2.LINE_AA)
+
+    # Input Box
+    box_w, box_h = 400, 50
+    box_x = (WIN_W - box_w) // 2
+    box_y = WIN_H // 2 - box_h // 2 - 20
+    cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), (20, 20, 40), -1)
+    cv2.rectangle(canvas, (box_x, box_y), (box_x + box_w, box_y + box_h), WHITE, 2, cv2.LINE_AA)
+    
+    # Texto ingresado
+    display_text = "yaren_" + node.routine_name
+    # Cursor parpadeante
+    if int(time.time() * 2) % 2 == 0:
+        display_text += "|"
+    
+    cv2.putText(canvas, display_text, (box_x + 10, box_y + 35), FONT, 0.7, WHITE, 1, cv2.LINE_AA)
+
+    # Instrucciones
+    inst = "Escribe usando tu teclado (solo letras/numeros)"
+    (iw, _), _ = cv2.getTextSize(inst, FONT_S, 1.0, 1)
+    cv2.putText(canvas, inst, ((WIN_W - iw) // 2, box_y - 15), FONT_S, 1.0, GRAY, 1, cv2.LINE_AA)
+
+    # Botón Guardar
+    bx, by, bw, bh = BTN_SAVE_NAME
+    hov = (_hover == "save_name") and (len(node.routine_name) > 0)
+    color = GREEN if len(node.routine_name) > 0 else (40, 40, 40)
+    if hov: color = tuple(min(255, int(c * 1.3)) for c in color)
+    
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), color, -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), WHITE if len(node.routine_name) > 0 else GRAY, 2 if hov else 1, cv2.LINE_AA)
+    
+    lbl = "GUARDAR"
+    (lw, lh), _ = cv2.getTextSize(lbl, FONT, 0.48, 1)
+    cv2.putText(canvas, lbl, (bx + (bw - lw) // 2, by + (bh + lh) // 2 - 2), FONT, 0.48, WHITE if len(node.routine_name) > 0 else GRAY, 1, cv2.LINE_AA)
+
+def _draw_done_options_screen(canvas, node):
+    cv2.rectangle(canvas, (0, 0), (WIN_W, WIN_H), BG_COLOR, -1)
+    
+    title = "RUTINA GUARDADA CON EXITO"
+    (tw, _), _ = cv2.getTextSize(title, FONT, 0.8, 2)
+    cv2.putText(canvas, title, ((WIN_W - tw) // 2, 100), FONT, 0.8, GREEN, 2, cv2.LINE_AA)
+    
+    sub = f"Guardada como: yaren_{node.routine_name}.py"
+    (sw, _), _ = cv2.getTextSize(sub, FONT_S, 1.2, 1)
+    cv2.putText(canvas, sub, ((WIN_W - sw) // 2, 150), FONT_S, 1.2, WHITE, 1, cv2.LINE_AA)
+
+    # Botón Reproducir
+    bx, by, bw, bh = BTN_PLAY_ROUTINE
+    hov = (_hover == "play")
+    color = ORANGE
+    if hov: color = tuple(min(255, int(c * 1.3)) for c in color)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), color, -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), WHITE, 2 if hov else 1, cv2.LINE_AA)
+    lbl = "REPRODUCIR AHORA"
+    (lw, lh), _ = cv2.getTextSize(lbl, FONT, 0.48, 1)
+    cv2.putText(canvas, lbl, (bx + (bw - lw) // 2, by + (bh + lh) // 2 - 2), FONT, 0.48, WHITE, 1, cv2.LINE_AA)
+
+    # Botón Salir
+    bx, by, bw, bh = BTN_EXIT_APP
+    hov = (_hover == "exit")
+    color = GRAY
+    if hov: color = tuple(min(255, int(c * 1.3)) for c in color)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), color, -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), WHITE, 2 if hov else 1, cv2.LINE_AA)
+    lbl = "SALIR"
+    (lw, lh), _ = cv2.getTextSize(lbl, FONT, 0.48, 1)
+    cv2.putText(canvas, lbl, (bx + (bw - lw) // 2, by + (bh + lh) // 2 - 2), FONT, 0.48, WHITE, 1, cv2.LINE_AA)
+
+
+def _save_routine_files(node):
+    steps = node.get_steps()
+    # Asegurar el prefijo "yaren_"
+    name = "yaren_" + node.routine_name
+    
+    yaml_path = ROUTINES_DIR / f"{name}.yaml"
+    py_path   = SCRIPTS_DIR  / f"{name}.py"
+    
+    node.final_script_path = py_path # Guardar la ruta para reproducir luego
+
+    ROUTINES_DIR.mkdir(parents=True, exist_ok=True)
+    SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "name":    name,
+        "created": datetime.now().isoformat(),
+        "joints":  JOINT_NAMES,
+        "steps":   [{"step": i + 1, "positions": s}
+                     for i, s in enumerate(steps)],
+    }
+    yaml_path.write_text(yaml.dump(data, default_flow_style=False))
+    generate_script(steps, name, py_path)
+    print(f"[INFO] Rutina guardada en: {py_path}")
 
 
 def run_ui(node: PoseRecorderNode) -> bool:
@@ -664,42 +863,69 @@ def run_ui(node: PoseRecorderNode) -> bool:
         calibrated = node.is_calibrated()
         cam        = node.get_frame()
 
-        if cam is not None:
-            canvas = cv2.resize(cam, (WIN_W, WIN_H))
-            dark   = np.zeros_like(canvas)
-            cv2.addWeighted(canvas, 0.45, dark, 0.55, 0, canvas)
-        else:
-            canvas[:] = BG_COLOR
+        if state not in (State.NAMING, State.DONE_OPTIONS):
+            if cam is not None:
+                canvas = cv2.resize(cam, (WIN_W, WIN_H))
+                dark   = np.zeros_like(canvas)
+                cv2.addWeighted(canvas, 0.45, dark, 0.55, 0, canvas)
+            else:
+                canvas[:] = BG_COLOR
 
-        _draw_header(canvas)
-        _draw_steps(canvas, steps)
-        _draw_state_panel(canvas, state, calibrated)
-        _draw_calibration_panel(canvas, node)
-        _draw_countdown_arc(canvas, node)
-        _draw_buttons(canvas, steps, calibrated)
+            _draw_header(canvas)
+            _draw_steps(canvas, steps)
+            _draw_state_panel(canvas, state, calibrated)
+            _draw_calibration_panel(canvas, node)
+            _draw_countdown_arc(canvas, node)
+            _draw_current_pose(canvas, node)
+            _draw_buttons(canvas, steps, calibrated)
 
-        if state == State.SAVING:
-            _draw_saving_flash(canvas, node, steps)
-            if node.saving_progress() >= 1.0:
-                node.set_state(
-                    State.FINISHED if len(steps) >= MAX_STEPS else State.IMITATING
-                )
+            if state == State.SAVING:
+                _draw_saving_flash(canvas, node, steps)
+                if node.saving_progress() >= 1.0:
+                    node.set_state(
+                        State.NAMING if len(steps) >= MAX_STEPS else State.IMITATING
+                    )
+        elif state == State.NAMING:
+            _draw_naming_screen(canvas, node)
+        elif state == State.DONE_OPTIONS:
+            _draw_done_options_screen(canvas, node)
 
         cv2.imshow(WINDOW, canvas)
+        
+        key = cv2.waitKey(16)
+        
         if state == State.FINISHED:
             break
-        if cv2.waitKey(16) == 27:
+        
+        if key == 27: # ESC
             node.set_state(State.FINISHED)
             break
+            
+        # --- Manejo de Teclado para Naming ---
+        if state == State.NAMING and key != -1:
+            if key == 8 or key == 127: # Backspace o Delete
+                node.routine_name = node.routine_name[:-1]
+            elif key == 13 or key == 10: # Enter
+                if len(node.routine_name) > 0:
+                    _save_routine_files(node)
+                    node.set_state(State.DONE_OPTIONS)
+            elif 32 <= key <= 126: # Caracteres imprimibles
+                char = chr(key)
+                # Solo permitir alfanuméricos y guiones bajos
+                if char.isalnum() or char == '_':
+                    if len(node.routine_name) < 20: # Limite de longitud
+                        node.routine_name += char
+
 
     cv2.destroyWindow(WINDOW)
     return len(node.get_steps()) > 0
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Generador de script
 # ══════════════════════════════════════════════════════════════════════════════
 def generate_script(steps: list, name: str, script_path: Path):
+    posicion_base = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5]
+    steps_con_base = steps + [posicion_base]
     script = f'''#!/usr/bin/env python3
 """ {name}.py — Generado por yaren_pose_recorder """
 import rclpy
@@ -710,7 +936,7 @@ import time
 
 JOINT_NAMES   = {JOINT_NAMES!r}
 STEP_DURATION = {STEP_DURATION}
-STEPS         = {steps!r}
+STEPS         = {steps_con_base!r}
 
 class RutinaNode(Node):
     def __init__(self):
@@ -759,7 +985,6 @@ if __name__ == "__main__": main()
         f.write(script)
     script_path.chmod(0o755)
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -787,9 +1012,9 @@ def main():
     )
     spin_thread.start()
 
-    print("[INFO] Recorder listo. Haz T-pose para calibrar. ESC para cancelar.")
+    print("[INFO] Recorder listo. Ponlo los brazos hacia arriba para calibrar. ESC para cancelar.")
     try:
-        rutina_guardada = run_ui(node)
+        run_ui(node) # El valor de retorno se ignora porque el guardado se maneja en UI
     finally:
         print("[INFO] Iniciando limpieza...")
         node.destroy_node()
@@ -805,32 +1030,7 @@ def main():
                 pass
 
         print("[INFO] Limpieza completada.")
-
-        steps = node.get_steps()
         cv2.destroyAllWindows()
-
-        if steps and rutina_guardada:
-            name      = datetime.now().strftime("rutina_%d%m%Y_%H%M%S")
-            yaml_path = ROUTINES_DIR / f"{name}.yaml"
-            py_path   = SCRIPTS_DIR  / f"{name}.py"
-            
-            # ERROR CORREGIDO 4: Asegurar la creación de ambos directorios para evitar FileNotFoundError
-            ROUTINES_DIR.mkdir(parents=True, exist_ok=True)
-            SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
-
-            data = {
-                "name":    name,
-                "created": datetime.now().isoformat(),
-                "joints":  JOINT_NAMES,
-                "steps":   [{"step": i + 1, "positions": s}
-                             for i, s in enumerate(steps)],
-            }
-            yaml_path.write_text(yaml.dump(data, default_flow_style=False))
-            generate_script(steps, name, py_path)
-            print(f"[INFO] Rutina guardada: {py_path}")
-            print(f"[INFO] Pasos: {len(steps)}")
-        else:
-            print("[INFO] Rutina omitida")
 
 
 if __name__ == "__main__":

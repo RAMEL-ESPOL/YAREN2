@@ -1,6 +1,5 @@
 #include "yaren_controller.hpp"
 #include <cmath>
-#include <algorithm>
 
 DualArmTrajectoryController::DualArmTrajectoryController() : Node("body_trajectory_controller") {
     joint_limits_["joint_2"] = std::make_pair(-0.3, 0.3);  
@@ -52,7 +51,7 @@ DualArmTrajectoryController::DualArmTrajectoryController() : Node("body_trajecto
     new_data_available_ = false;
     goal_sent_ = false;
     
-    RCLCPP_INFO(this->get_logger(), "Dual arm trajectory controller initialized with improved kinematic limits");
+    RCLCPP_INFO(this->get_logger(), "Dual arm trajectory controller initialized");
 }
 
 std::map<std::string, float> DualArmTrajectoryController::calculateMidpoints(const std::vector<std::string>& joints) {
@@ -76,100 +75,16 @@ float DualArmTrajectoryController::limitJointPosition(const std::string& joint, 
     return position;
 }
 
-/**
- * NUEVA FUNCIÓN: Validación interdependiente de límites articulares
- * 
- * Implementa restricciones cinemáticas adicionales:
- * - Cuando elevation es muy baja, azimuth debe ser limitado (configuración mecánica)
- * - Cuando elbow rotation es extremo, las restricciones de wrist son más severas
- * - Detecta configuraciones "imposibles" del robot
- */
-std::map<std::string, float> DualArmTrajectoryController::validateInterdependentLimits(
-    const std::map<std::string, float>& positions,
-    const std::vector<std::string>& arm_joints
-) {
-    std::map<std::string, float> validated = positions;
-    
-    // Índices: [0]=azimuth(joint_5/9), [1]=elevation(joint_6/10), 
-    //          [2]=elbow(joint_7/11), [3]=wrist(joint_8/12)
-    
-    float azimuth = validated[arm_joints[0]];
-    float elevation = validated[arm_joints[1]];
-    float elbow = validated[arm_joints[2]];
-    float wrist = validated[arm_joints[3]];
-    
-    // RESTRICCIÓN 1: Cuando elevation es muy baja (<0.2 rad), 
-    // azimuth debe estar en rango central para evitar colisiones
-    if (elevation < 0.2f) {
-        float azimuth_min = -0.3f;
-        float azimuth_max = 0.3f;
-        if (azimuth < azimuth_min || azimuth > azimuth_max) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                "Arm elevation too low (%.3f) - restricting azimuth to [%.3f, %.3f]",
-                elevation, azimuth_min, azimuth_max);
-            azimuth = std::max(azimuth_min, std::min(azimuth_max, azimuth));
-            validated[arm_joints[0]] = azimuth;
-        }
-    }
-    
-    // RESTRICCIÓN 2: Validar que no hay "bloqueos" cinemáticos
-    // El brazo no puede pasar a través del cuerpo
-    // Si elevation es negativa (imposible), forzar a 0.05 (mínimo)
-    if (elevation < 0.05f) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-            "Shoulder elevation below minimum (%.3f) - clamping to minimum 0.05",
-            elevation);
-        elevation = 0.05f;
-        validated[arm_joints[1]] = elevation;
-    }
-    
-    // RESTRICCIÓN 3: Cuando elbow está en rango extremo (>0.5 rad),
-    // aplicar restricciones adicionales en wrist para estabilidad
-    if (std::abs(elbow) > 0.5f) {
-        // En posiciones de codo extremas, wrist debe moverse con cuidado
-        float wrist_min = 0.25f;
-        float wrist_max = 1.2f;
-        if (wrist < wrist_min || wrist > wrist_max) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                "Wrist angle conflicting with elbow extremes - correcting");
-            wrist = std::max(wrist_min, std::min(wrist_max, wrist));
-            validated[arm_joints[3]] = wrist;
-        }
-    }
-    
-    // RESTRICCIÓN 4: Detección de singularidad cercana
-    // Si elevation está muy cerca del máximo, el robot entra en singularidad
-    if (elevation > 0.9f) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-            "Approaching shoulder singularity at elevation %.3f - limiting",
-            elevation);
-        elevation = 0.9f;
-        validated[arm_joints[1]] = elevation;
-    }
-    
-    return validated;
-}
-
 std::map<std::string, float> DualArmTrajectoryController::processArmData(const std::array<float, 4>& angles, 
                                           const std::vector<std::string>& arm_joints, 
                                           const bool is_right) {
     std::map<std::string, float> positions;
 
-    // Convertir ángulos de grados a radianes
     positions[arm_joints[0]] = euler2Radian(angles[0]);
     positions[arm_joints[1]] = euler2Radian(angles[1]);
     positions[arm_joints[2]] = euler2Radian(angles[2]); 
     positions[arm_joints[3]] = euler2Radian(angles[3]);  
     
-    // Aplicar límites básicos primero
-    for (const auto& joint : arm_joints) {
-        positions[joint] = limitJointPosition(joint, positions[joint]);
-    }
-    
-    // NUEVO: Aplicar validación interdependiente
-    positions = validateInterdependentLimits(positions, arm_joints);
-    
-    // Verificación final de límites (por si la validación interdependiente generó valores fuera de rango)
     for (const auto& joint : arm_joints) {
         positions[joint] = limitJointPosition(joint, positions[joint]);
     }
@@ -179,7 +94,7 @@ std::map<std::string, float> DualArmTrajectoryController::processArmData(const s
 
 void DualArmTrajectoryController::armTrackerCallback(const yaren_interfaces::msg::BodyPosition::SharedPtr msg) {
     if (!msg->is_valid) {
-        RCLCPP_DEBUG(this->get_logger(), "Invalid data. Maintaining position.");
+        RCLCPP_INFO(this->get_logger(), "Datos inválidos. Manteniendo posición.");
         return;
     }
 
@@ -189,8 +104,8 @@ void DualArmTrajectoryController::armTrackerCallback(const yaren_interfaces::msg
     std::array<float, 4> right_angles = {
         msg->right_shoulder_elbow_zy,
         msg->right_shoulder_elbow_yx,
-        msg->right_elbow_wrist_zy,
-        msg->right_elbow_wrist_yx
+        msg->right_elbow_wrist_zy, // Orden corregido según el MSG
+        msg->right_elbow_wrist_yx  // Orden corregido según el MSG
     };
     
     last_right_pos_ = processArmData(right_angles, right_joints_, true);
@@ -198,8 +113,8 @@ void DualArmTrajectoryController::armTrackerCallback(const yaren_interfaces::msg
     std::array<float, 4> left_angles = {
         msg->left_shoulder_elbow_zy,
         msg->left_shoulder_elbow_yx,
-        msg->left_elbow_wrist_zy,
-        msg->left_elbow_wrist_yx
+        msg->left_elbow_wrist_zy, // Orden corregido según el MSG
+        msg->left_elbow_wrist_yx  // Orden corregido según el MSG
     };
     
     last_left_pos_ = processArmData(left_angles, left_joints_, false);
@@ -211,7 +126,7 @@ void DualArmTrajectoryController::goal_response_callback(const GoalHandleFollowJ
     if (!goal_handle) {
         RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
     } else {
-        RCLCPP_DEBUG(this->get_logger(), "Goal accepted by server, waiting for result");
+        RCLCPP_INFO(this->get_logger(), "Goal accepted by server, waiting for result");
         goal_sent_ = true;
     }
 }
@@ -254,7 +169,7 @@ void DualArmTrajectoryController::sendTrajectoryGoal() {
     for (int i = 1; i <= steps; ++i) {
         float t = static_cast<float>(i) / steps;
         
-        // Curva Ease-in / Ease-out (suavizado cúbico)
+        // Curva Ease-in / Ease-out
         float ease_t = t * t * (3.0f - 2.0f * t); 
         
         trajectory_msgs::msg::JointTrajectoryPoint point;

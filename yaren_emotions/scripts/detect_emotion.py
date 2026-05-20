@@ -90,7 +90,7 @@ class EmotionDetectionNode(Node):
             self.get_logger().error(f'Error cv_bridge: {e}')
             return
 
-        frame = cv2.flip(frame, -1)
+        frame = cv2.flip(frame, 0)
         
         if self._frame_count % self._INFER_EVERY == 0:
             with self._lock:

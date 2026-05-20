@@ -176,14 +176,13 @@ static void drawArrow(cv::Mat& frame, cv::Point center, bool up,
 // =============================================================================
 class SettingsMenu {
 public:
-    // --- VARIABLES NUEVAS PARA VOLUMEN ---
     int volumeLevel = 64;           
     int previousVolume = 64;        
     bool isMuted = false;
     bool isDraggingVolume = false;  
     cv::Rect muteBtnRect {0, 0, 0, 0};
     cv::Rect sliderTrackRect {0, 0, 0, 0};
-    // -------------------------------------
+    
     std::function<void(const std::string&)> onMicSelected;
     std::function<void(const std::string&)> onSpkSelected;
 
@@ -254,9 +253,6 @@ public:
                          cv::FONT_HERSHEY_DUPLEX, 0.80, cv::Scalar(0, 229, 255), 2);
         cv::line(frame, {W/2-320, 48}, {W/2+320, 48}, cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
 
-        // --- DISTRIBUCIÓN EXACTA DE PÍXELES PARA 480p ---
-        // 58px para el título arriba + 62px para botones abajo = 120px ocupados
-        // Quedan 360px libres para los 4 paneles.
         int micPanelH = 105; 
         int spkPanelH = 105;
         int datPanelH = 85;
@@ -271,7 +267,6 @@ public:
         renderAudioPanel(frame, spkTop, spkPanelH, false);
         renderDatePanel (frame, datTop, datPanelH);
         
-        // Ajustamos la posición X y el ancho para que alinee con Fecha
         renderVolumePanel(frame, 20, volTop + 5, W - 40, volPanelH - 10);
         
         renderBottomBar(frame, H - 62);
@@ -282,10 +277,9 @@ public:
         cv::rectangle(frame, panelRect, cv::Scalar(10, 18, 32), cv::FILLED);
         cv::rectangle(frame, panelRect, cv::Scalar(50, 65, 85), 1, cv::LINE_AA);
         
-        // Texto más arriba para que encaje
         cv::putText(frame, "VOLUMEN DE MUSICA", {x + 15, y + 18}, cv::FONT_HERSHEY_PLAIN, 0.80, cv::Scalar(150, 160, 180), 1, cv::LINE_AA);
 
-        int btnSz = 26; // Botón un poco más pequeño
+        int btnSz = 26; 
         muteBtnRect = {x + 15, y + 24, btnSz, btnSz};
         bool hovMute = muteBtnRect.contains(hoveredRect.tl());
         cv::Scalar muteColor = isMuted ? cv::Scalar(40, 40, 220) : (hovMute ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 229, 255));
@@ -325,13 +319,11 @@ public:
     void handleMouse(int event, int x, int y) {
         cv::Point pt{x, y};
 
-        // 1. Actualizar hover (siempre)
         if (event == cv::EVENT_MOUSEMOVE && !isDraggingVolume) {
             hoveredRect = findHovered(x, y);
             return;
         }
 
-        // 2. Lógica de arrastre del slider
         if (event == cv::EVENT_MOUSEMOVE && isDraggingVolume) {
             int relX = std::max(0, std::min(sliderTrackRect.width, x - sliderTrackRect.x));
             volumeLevel = (relX * 128) / sliderTrackRect.width;
@@ -340,16 +332,13 @@ public:
             return;
         }
 
-        // 3. Soltar el slider
         if (event == cv::EVENT_LBUTTONUP && isDraggingVolume) {
             isDraggingVolume = false;
             return;
         }
 
-        // --- A partir de aquí solo procesamos clics hacia abajo ---
         if (event != cv::EVENT_LBUTTONDOWN) return;
 
-        // 4. Clic en botón MUTE
         if (muteBtnRect.contains(pt)) {
             isMuted = !isMuted;
             if (isMuted) { 
@@ -362,7 +351,6 @@ public:
             return;
         }
 
-        // 5. Clic para iniciar arrastre del Slider
         cv::Rect sliderHitbox = {sliderTrackRect.x, sliderTrackRect.y - 15, sliderTrackRect.width, sliderTrackRect.height + 30};
         if (sliderHitbox.contains(pt)) {
             isDraggingVolume = true;
@@ -373,7 +361,6 @@ public:
             return;
         }
 
-        // --- CÓDIGO ORIGINAL PARA LOS DEMÁS CLICS (Mics, Spks, Fecha, etc) ---
         if (btnMicUp.contains({x,y})) { 
             if (micScroll > 0) micScroll--; 
             return; 
@@ -414,7 +401,7 @@ public:
         if (btnDayDown.contains({x,y})) { editDay--; clampDate(); return; }
         if (btnMonUp.contains({x,y}))   { editMon = editMon%12+1; return; }
         if (btnMonDown.contains({x,y})) { editMon = (editMon-2+12)%12+1; return; }
-      
+       
         if (btnRefresh.contains({x,y})) { refresh(); return; }
 
         if (btnSaveAll.contains({x,y})) {
@@ -457,10 +444,9 @@ public:
         feedbackMsg  = msg;
         feedbackTime = std::chrono::steady_clock::now();
     }
-    // ----------------------------------------------
 private:
     int W = 800, H = 480;
-    int currentFaceIndex { 0 };  // 0=original, 1=money, 2=open, 3=ready, 4=tongue
+    int currentFaceIndex { 0 }; 
     std::vector<AlsaDevice> mics, spks;
     int selMic = 0, selSpk = 0;
     int micScroll = 0, spkScroll = 0;
@@ -554,9 +540,8 @@ private:
             if (sel) cv::circle(frame, {row.x + 10, row.y + row.height/2}, 4, accent, cv::FILLED, cv::LINE_AA);
 
             std::string label = devs[devIdx].label;
-            int maxLabelW = listW - 28;  // margen: 20 bullet + 8 derecho
+            int maxLabelW = listW - 28;  
             int bl2 = 0;
-            // Truncar hasta que quepa
             if (cv::getTextSize(label, cv::FONT_HERSHEY_PLAIN, 0.88, 1, &bl2).width > maxLabelW) {
                 while (label.size() > 3) {
                     label.pop_back();
@@ -604,22 +589,20 @@ private:
         cv::line(frame, {MARGIN, top+26}, {MARGIN+120, top+26},
                 cv::Scalar(70,110,50), 1, cv::LINE_AA);
 
-        // Fecha del sistema (solo día y mes)
         std::time_t t_now = std::time(nullptr);
         char sysBuf[64];
         std::strftime(sysBuf, sizeof(sysBuf), "Sistema: %d/%m/%Y", std::localtime(&t_now));
         cv::putText(frame, sysBuf, {W - 260, top + 20},
                     cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(60, 90, 60), 1, cv::LINE_AA);
 
-        // Solo 2 spinners: DAY y MONTH
         int* vals[2]   = { &editDay, &editMon };
         const char* labels[2] = { "DIA", "MES" };
         cv::Rect* upBtns[2] = { &btnDayUp,  &btnMonUp  };
         cv::Rect* dnBtns[2] = { &btnDayDown, &btnMonDown };
 
         int spinCount = 2;
-        int spinW     = 140; // Ancho ajustado
-        int spinH     = 46;  // Altura fija exacta para que quepan 2 botones de 22px
+        int spinW     = 140; 
+        int spinH     = 46;  
         int gap       = (W - MARGIN*2 - spinW*spinCount) / (spinCount + 1);
         int spinTop   = top + 32;
 
@@ -629,9 +612,8 @@ private:
             cv::rectangle(frame, spinRect, cv::Scalar(10, 18, 32), cv::FILLED);
             cv::rectangle(frame, spinRect, cv::Scalar(50, 80, 50), 1, cv::LINE_AA);
 
-            // --- APILADO PERFECTO DE FLECHAS ---
             int btnSz  = 22;
-            int arrowX = sx + 2; // Pegadas a la izquierda de la caja verde
+            int arrowX = sx + 2; 
             
             cv::Rect up{arrowX, spinTop + 1, btnSz, btnSz};
             cv::Rect dn{arrowX, spinTop + btnSz + 1, btnSz, btnSz};
@@ -639,32 +621,27 @@ private:
             *upBtns[s] = up;
             *dnBtns[s] = dn;
 
-            // Dibujar Flecha Arriba
             bool hovU = up.contains(hoveredRect.tl());
             cv::rectangle(frame, up, hovU ? cv::Scalar(45,90,45) : cv::Scalar(18,30,18), cv::FILLED);
             cv::rectangle(frame, up, cv::Scalar(60,120,60), 1, cv::LINE_AA);
             drawArrow(frame, {up.x+btnSz/2, up.y+btnSz/2}, true,
                     hovU ? cv::Scalar(255,255,255) : accent, 4);
 
-            // Dibujar Flecha Abajo
             bool hovD = dn.contains(hoveredRect.tl());
             cv::rectangle(frame, dn, hovD ? cv::Scalar(45,90,45) : cv::Scalar(18,30,18), cv::FILLED);
             cv::rectangle(frame, dn, cv::Scalar(60,120,60), 1, cv::LINE_AA);
             drawArrow(frame, {dn.x+btnSz/2, dn.y+btnSz/2}, false,
                     hovD ? cv::Scalar(255,255,255) : accent, 4);
 
-            // --- CENTRADO PERFECTO DEL TEXTO ---
             int contentX = arrowX + btnSz + 4;
-            int contentW = spinW - (btnSz + 6); // Espacio libre a la derecha de las flechas
+            int contentW = spinW - (btnSz + 6); 
 
-            // Label (DIA / MES)
             int lblBl = 0;
             cv::Size ls = cv::getTextSize(labels[s], cv::FONT_HERSHEY_PLAIN, 0.70, 1, &lblBl);
             cv::putText(frame, labels[s],
-                        {contentX + (contentW - ls.width)/2, spinTop + 16}, // Altura fija Y
+                        {contentX + (contentW - ls.width)/2, spinTop + 16}, 
                         cv::FONT_HERSHEY_PLAIN, 0.70, cv::Scalar(100,150,100), 1, cv::LINE_AA);
 
-            // Valor ("18" o "MAYO")
             char vbuf[16];
             if (s == 1) {
                 const char* mnames[12] = {
@@ -677,10 +654,10 @@ private:
             }
 
             int valBl = 0;
-            double valScale = (s == 1) ? 0.55 : 0.70; // Texto proporcional
+            double valScale = (s == 1) ? 0.55 : 0.70; 
             cv::Size vs = cv::getTextSize(vbuf, cv::FONT_HERSHEY_DUPLEX, valScale, 1, &valBl);
             cv::putText(frame, vbuf,
-                        {contentX + (contentW - vs.width)/2, spinTop + 38}, // Justo debajo del label
+                        {contentX + (contentW - vs.width)/2, spinTop + 38}, 
                         cv::FONT_HERSHEY_DUPLEX, valScale,
                         cv::Scalar(220,255,200), 1, cv::LINE_AA);
         }
@@ -735,7 +712,6 @@ private:
 
     void applyDateTime() {
         clampDate();
-        // Año fijo 2026, hora no se toca
         char buf[128];
         snprintf(buf, sizeof(buf),
                 "sudo timedatectl set-time '%04d-%02d-%02d' 2>/dev/null",
@@ -747,29 +723,22 @@ private:
     void saveAudioConfig() {
         bool ok = true;
 
-        // ── Aplicar parlante ──────────────────────────────────────────────────
         if (!selectedSpkId.empty()) {
             std::string cmd = "pactl set-default-sink '" + selectedSpkId + "' 2>/dev/null";
             if (std::system(cmd.c_str()) != 0) ok = false;
-
-            // Mover streams existentes al nuevo sink
             std::system(
                 ("for i in $(pactl list sink-inputs short 2>/dev/null | awk '{print $1}'); "
                 "do pactl move-sink-input $i '" + selectedSpkId + "' 2>/dev/null; done").c_str());
         }
 
-        // ── Aplicar micrófono ─────────────────────────────────────────────────
         if (!selectedMicId.empty()) {
             std::string cmd = "pactl set-default-source '" + selectedMicId + "' 2>/dev/null";
             if (std::system(cmd.c_str()) != 0) ok = false;
-
-            // Mover streams de grabación existentes
             std::system(
                 ("for i in $(pactl list source-outputs short 2>/dev/null | awk '{print $1}'); "
                 "do pactl move-source-output $i '" + selectedMicId + "' 2>/dev/null; done").c_str());
         }
 
-        // ── Guardar en archivos (para otros nodos de YAREN2) ─────────────────
         auto writeFile = [](const char* path, const std::string& val) {
             FILE* f = fopen(path, "w");
             if (f) { fprintf(f, "%s\n", val.c_str()); fclose(f); }
@@ -806,11 +775,9 @@ public:
     void drawNavArrow(cv::Mat& frame, const cv::Rect& r, bool left, bool hovered) {
         cv::Scalar color = hovered ? cv::Scalar(255, 100, 255) : cv::Scalar(150, 80, 180);
         
-        // Fondo del botón
         cv::rectangle(frame, r, cv::Scalar(20, 15, 40), cv::FILLED);
         cv::rectangle(frame, r, color, hovered ? 2 : 1, cv::LINE_AA);
         
-        // Dibujar flecha
         int cx = r.x + r.width/2;
         int cy = r.y + r.height/2;
         int size = 15;
@@ -837,7 +804,6 @@ public:
         pkgDir = pkg;
         logger_ = log;
         currentPage = 0;
-        // Después de inicializar altFaces y songs:
         RCLCPP_INFO(logger_, "🔄 Ciclo de caras: original → money → open → ready → tongue → ...");
         eyesOpen    = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/7.png",  cv::IMREAD_UNCHANGED);
         eyesClosed  = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/3.png",  cv::IMREAD_UNCHANGED);
@@ -859,15 +825,9 @@ public:
             cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
             if (!img.empty()) {
                 altFaces.push_back(img);
-                RCLCPP_INFO(logger_, "Cargada cara alternativa: %s", path.c_str());
-            } else {
-                RCLCPP_WARN(logger_, "No se pudo cargar: %s", path.c_str());
             }
         }
         
-        if (!altFaces.empty()) {
-            RCLCPP_INFO(logger_, "%d caras alternativas disponibles para el modo Radio", (int)altFaces.size());
-        }
         songs = {
             { "aramsamsam",    "ARA RAM SAM SAM",  "Cancion infantil",   "Luli Pampín - ARAM SAM SAM 2021.mp3",    {220, 100, 255}, 3.0 },
             { "gorila",        "BAILE DE GORILA",  "Baila con Yaren",    "CantaJuego - El Baile del Gorila.mp3", {180,  60, 255}, 2.5 },
@@ -877,7 +837,6 @@ public:
             { "sasa",          "SA SA",            "Cancion divertida",  "Luli Pampín - SASA LA SERPIENTE (Official Video).mp3",          {80,  255, 180}, 2.8 },
             { "sitienesganas", "SI TIENES GANAS",  "Animate!",           "Luli Pampín - SI TÚ TIENES MUCHAS GANAS DE APLAUDIR - Official Video.mp3", {60,  180, 255}, 3.2 },
         };
-        RCLCPP_INFO(logger_, "%d canciones cargadas en Yaren Radio", (int)songs.size());
 
         if (SDL_Init(SDL_INIT_AUDIO) < 0) {
             RCLCPP_ERROR(logger_, "No se pudo inicializar SDL: %s", SDL_GetError());
@@ -886,9 +845,7 @@ public:
             SDL_Quit();
         } else {
             audioInitialized = true;
-            RCLCPP_INFO(logger_, "SDL2_mixer inicializado correctamente");
         }
-
 
         lastBlinkTime   = std::chrono::steady_clock::now();
         lastFaceSwitch  = std::chrono::steady_clock::now();
@@ -898,24 +855,20 @@ public:
         currentAltFaceIndex = 0;
         isBlinking          = false;
         currentSongIndex    = -1;
-        
-        RCLCPP_INFO(logger_, "RadioApp inicializada correctamente");
     }
 
-    // Destructor para limpiar recursos de SDL2
     ~RadioApp() {
         killAudio();
         if (audioInitialized) {
             Mix_CloseAudio();
             SDL_Quit();
-            RCLCPP_INFO(logger_, "SDL2_mixer cerrado correctamente");
         }
     }
 
     void killAudio() {
         if (audioInitialized && Mix_PlayingMusic()) {
-            Mix_FadeOutMusic(300);  // Fade out de 300ms para suavizar
-            SDL_Delay(350);          // Esperar a que termine el fade
+            Mix_FadeOutMusic(300); 
+            SDL_Delay(350);         
             Mix_HaltMusic();
         }
         if (currentMusic) {
@@ -939,18 +892,14 @@ public:
 
     void playSong(int idx) {
         if (idx < 0 || idx >= (int)songs.size()) return;
-        
         killAudio();
-        
         currentSongIndex = idx;
         currentSong = idx;
         state = RadioState::PLAYING;
         playStart = std::chrono::steady_clock::now();
         
         std::string audioPath = pkgDir + "/audios/" + songs[idx].audioFile;
-        
         if (!fs::exists(audioPath)) {
-            RCLCPP_WARN(logger_, "Audio no encontrado: %s", audioPath.c_str());
             state = RadioState::SELECTING;
             currentSong = -1;
             currentSongIndex = -1;
@@ -959,53 +908,35 @@ public:
         
         if (audioInitialized) {
             currentMusic = Mix_LoadMUS(audioPath.c_str());
-            if (!currentMusic) {
-                RCLCPP_ERROR(logger_, "No se pudo cargar el audio: %s", Mix_GetError());
-                state = RadioState::SELECTING;
-                currentSong = -1;
-                currentSongIndex = -1;
-                return;
+            if (currentMusic) {
+                if (Mix_FadeInMusic(currentMusic, -1, 500) == 0) {
+                    std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
+                    return;
+                }
             }
-            
-            if (Mix_FadeInMusic(currentMusic, -1, 500) < 0) {
-                RCLCPP_ERROR(logger_, "No se pudo reproducir: %s", Mix_GetError());
-                Mix_FreeMusic(currentMusic);
-                currentMusic = nullptr;
-                state = RadioState::SELECTING;
-                currentSong = -1;
-                currentSongIndex = -1;
-                return;
-            }
-            
-            RCLCPP_INFO(logger_, "Reproduciendo con SDL2: %s", songs[idx].title.c_str());
-            std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
-        } else {
-            RCLCPP_WARN(logger_, "SDL2 no inicializado, usando fallback");
-            std::string cmd = "mpg123 -q \"" + audioPath + "\" &";
-            std::thread([cmd]() { std::system(cmd.c_str()); }).detach();
-            std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
         }
+        
+        std::string cmd = "mpg123 -q \"" + audioPath + "\" &";
+        std::thread([cmd]() { std::system(cmd.c_str()); }).detach();
+        std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
     }
 
     void handleMouse(int ev, int x, int y) {
         mousePos = {x, y, 1, 1};
-        const int ITEMS_PER_PAGE = 4; // ¡Fijamos el límite real aquí!
+        const int ITEMS_PER_PAGE = 4; 
 
-        // 1. Evaluar Hover (Movimiento del mouse) según el estado
         if (ev == cv::EVENT_MOUSEMOVE) {
             if (state == RadioState::SELECTING) {
                 hovSong = -1;
                 for (int i = 0; i < (int)cardRects.size(); ++i) {
                     if (cardRects[i].contains({x,y})) { 
-                        hovSong = currentPage * ITEMS_PER_PAGE + i; // <-- CORREGIDO PARA HOVER
+                        hovSong = currentPage * ITEMS_PER_PAGE + i; 
                         break; 
                     }
                 }
-                
                 hovBack = backBtn.area() > 0 && backBtn.contains({x,y});
                 hoveredPrevPage = prevPageBtn.area() > 0 && prevPageBtn.contains({x,y});
                 hoveredNextPage = nextPageBtn.area() > 0 && nextPageBtn.contains({x,y});
-                
                 hovStop = false; 
             } else if (state == RadioState::PLAYING) {
                 hovStop = stopBtn.area() > 0 && stopBtn.contains({x,y});
@@ -1019,48 +950,29 @@ public:
 
         if (ev != cv::EVENT_LBUTTONDOWN) return;
 
-        // 2. Evaluar Clics estrictamente separados por estado
         if (state == RadioState::SELECTING) {
-            
-            // Navegación de páginas
             if (hoveredPrevPage && prevPageBtn.area() > 0) {
-                currentPage--;
-                hovSong = -1;
-                return;
+                currentPage--; hovSong = -1; return;
             }
             if (hoveredNextPage && nextPageBtn.area() > 0) {
-                currentPage++;
-                hovSong = -1;
-                return;
+                currentPage++; hovSong = -1; return;
             }
-
-            // Botón VOLVER al menú principal
             if (hovBack) {
-                killAudio();
-                currentPage = 0;  
-                if (onBack) onBack();
-                return;
+                killAudio(); currentPage = 0;  
+                if (onBack) onBack(); return;
             }
-            
-            // Selección de tarjeta de canción
             for (int i = 0; i < (int)cardRects.size(); ++i) {
                 if (cardRects[i].contains({x,y})) {
-                    int actualIndex = currentPage * ITEMS_PER_PAGE + i;  // <-- CORREGIDO PARA CLIC
-                    if (actualIndex < (int)songs.size()) {
-                        playSong(actualIndex); 
-                    }
+                    int actualIndex = currentPage * ITEMS_PER_PAGE + i;  
+                    if (actualIndex < (int)songs.size()) playSong(actualIndex); 
                     return; 
                 }
             }
-            
         } else if (state == RadioState::PLAYING) {
-            // Botón DETENER canción actual
             if (hovStop) {
                 killAudio();
                 state = RadioState::SELECTING;  
-                currentSong = -1;
-                currentSongIndex = -1;
-                currentPage = 0;  
+                currentSong = -1; currentSongIndex = -1; currentPage = 0;  
                 return;
             }
         }
@@ -1075,7 +987,6 @@ private:
     bool hoveredPrevPage { false };
     bool hoveredNextPage { false };
 
-    //Variables para caras alternativas:
     std::vector<cv::Mat> altFaces;
     size_t currentAltFaceIndex { 0 };
     bool showingAltFace { false };
@@ -1084,7 +995,6 @@ private:
     std::chrono::steady_clock::time_point lastFaceSwitch;
     double faceSwitchInterval { 2.0 };
     
-    // 🎵 Variables para SDL2_mixer:
     bool audioInitialized { false };
     Mix_Music* currentMusic { nullptr };
     int currentSongIndex { -1 };
@@ -1107,7 +1017,6 @@ private:
         int W = frame.cols, H = frame.rows;
         double t = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 
-        // Fondo degradado
         for (int y = 0; y < H; ++y) {
             float r = (float)y / H;
             frame.row(y).setTo(cv::Scalar(6 + r*8, 5 + r*5, 18 + r*12));
@@ -1119,12 +1028,11 @@ private:
         cv::line(frame, {W/2+20, 50}, {W/2+240, 50}, cv::Scalar(120, 30, 160), 1, cv::LINE_AA);
         drawCenteredText(frame, "Elige una cancion", W, 68, cv::FONT_HERSHEY_PLAIN, 0.90, cv::Scalar(100, 50, 130), 1);
 
-        // === TARJETAS MÁS PEQUEÑAS ===
         const int COLS = 2;
         const int N = (int)songs.size();
-        const int CW = 260, CH = 140, G = 25;  // Reducido de 320x180 a 260x140
+        const int CW = 260, CH = 140, G = 25;  
         const int SY = 85;
-        const int ITEMS_PER_PAGE = COLS *2;  // 2 cols x 3 filas = 6 canciones por página
+        const int ITEMS_PER_PAGE = COLS *2;  
         const int totalPages = (N + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
         
         if (currentPage < 0) currentPage = 0;
@@ -1145,28 +1053,22 @@ private:
             drawSongCard(frame, r, songs[i], hovSong == i, t);
             cardIndex++;
         }
-        // Botones de navegación - SEPARADOS A LOS LADOS DE LA PANTALLA
         if (totalPages > 1) {
             int arrowSize = 45;
-            int rightArrowX = W - arrowSize - 15;  // Pegado al borde derecho
-            int leftArrowX = 15;                   // Pegado al borde izquierdo
+            int rightArrowX = W - arrowSize - 15;  
+            int leftArrowX = 15;                   
             int centerY = H / 2;
             
-            // Flecha izquierda (anterior)
             if (currentPage > 0) {
-                // Se centra perfectamente en Y, pero pegado a la izquierda en X
                 prevPageBtn = {leftArrowX, centerY - (arrowSize / 2), arrowSize, arrowSize};
                 drawNavArrow(frame, prevPageBtn, true, hoveredPrevPage);
             } else { prevPageBtn = {0,0,0,0}; }
             
-            // Flecha derecha (siguiente)
             if (currentPage < totalPages - 1) {
-                // Se centra perfectamente en Y, pegado a la derecha en X
                 nextPageBtn = {rightArrowX, centerY - (arrowSize / 2), arrowSize, arrowSize};
                 drawNavArrow(frame, nextPageBtn, false, hoveredNextPage);
             } else { nextPageBtn = {0,0,0,0}; }
         }
-        // Botón VOLVER
         backBtn = {W/2 - 65, H - 46, 130, 34};
         drawFlatButton(frame, backBtn, "VOLVER", cv::Scalar(120,120,120), hovBack);
     }
@@ -1223,7 +1125,7 @@ private:
 
         double alpha = 0.55 + 0.45 * std::sin(t * 2.0);
         cv::Scalar nc(s.color[0]*alpha, s.color[1]*alpha, s.color[2]*alpha);
-        cv::putText(frame, "MUSIC: " + s.title, {12, H - 56}, cv::FONT_HERSHEY_PLAIN, 0.85, nc, 1, cv::LINE_AA);    
+        cv::putText(frame, "MUSIC: " + s.title, {12, H - 56}, cv::FONT_HERSHEY_PLAIN, 0.85, nc, 1, cv::LINE_AA);  
     }
 
     void drawSongInfoBar(cv::Mat& frame, const SongInfo& s, double t, double beat) {
@@ -1245,19 +1147,12 @@ private:
         int W = frame.cols, H = frame.rows;
         auto now = std::chrono::steady_clock::now();
         
-        // 🔄 Lógica de rotación cíclica de caras
         double elapsed = std::chrono::duration<double>(now - lastFaceSwitch).count();
-        
-        // Cambiar de cara cada X segundos
         if (elapsed > faceSwitchInterval) {
-            currentFaceIndex = (currentFaceIndex + 1) % (altFaces.size() + 1);  // +1 para incluir la original
+            currentFaceIndex = (currentFaceIndex + 1) % (altFaces.size() + 1);  
             lastFaceSwitch = now;
-            RCLCPP_DEBUG(logger_, "🔄 Cambiando a cara índice %d", currentFaceIndex);
         }
         
-        // ─────────────────────────────────────────
-        // CASO 0: Cara ORIGINAL (ojos + boca separados)
-        // ─────────────────────────────────────────
         if (currentFaceIndex == 0) {
             double sinceBlink = std::chrono::duration<double>(now - lastBlinkTime).count();
             
@@ -1271,7 +1166,7 @@ private:
             }
 
             const cv::Mat& eyesSrc  = isBlinking ? eyesClosed : eyesOpen;
-            const cv::Mat& mouthSrc = mouthClosed;  // Boca siempre cerrada
+            const cv::Mat& mouthSrc = mouthClosed; 
 
             cv::Size faceSize(800, 480);
             if (!eyesOpen.empty()) faceSize = eyesOpen.size();
@@ -1296,7 +1191,6 @@ private:
             int fx = (W - fW)/2 + (int)bounceX;
             int fy = (H - fH)/2 - 10 + (int)bounceY;
 
-            // Rectángulo negro de fondo
             int rectW = fW + 40;
             int rectH = fH + 40;
             int rectX = fx - 20;
@@ -1305,7 +1199,6 @@ private:
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(0, 0, 0), cv::FILLED);
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(40, 40, 40), 2, cv::LINE_AA);
 
-            // Dibujar cara
             cv::Rect dst(fx, fy, fW, fH);
             cv::Rect bounds(0, 0, W, H);
             dst &= bounds;
@@ -1315,7 +1208,6 @@ private:
                     faceRot(src).copyTo(frame(dst));
             }
 
-            // Aura
             double auraA = 0.08 * std::max(0.0, std::sin(t * beat * CV_PI));
             if (auraA > 0.01) {
                 cv::Mat aov = frame.clone();
@@ -1325,12 +1217,9 @@ private:
             return;
         }
         
-        // ─────────────────────────────────────────
-        // CASO 1-4: Caras ALTERNATIVAS (money, open, ready, tongue)
-        // ─────────────────────────────────────────
-        int altIdx = currentFaceIndex - 1;  // Convertir índice: 1→0, 2→1, 3→2, 4→3
+        int altIdx = currentFaceIndex - 1;  
         if (altIdx >= 0 && altIdx < (int)altFaces.size()) {
-            float alpha = 1.0f;  // Sin fade, transición directa
+            float alpha = 1.0f;  
             
             double bounceY = std::sin(t * beat * CV_PI) * 8.0;
             double bounceX = std::cos(t * beat * CV_PI * 0.5) * 4.0;
@@ -1344,7 +1233,6 @@ private:
             int fx = (W - fW)/2 + (int)bounceX;
             int fy = (H - fH)/2 - 10 + (int)bounceY;
             
-            // Rectángulo negro de fondo (DIBUJADO PRIMERO)
             int rectW = fW + 40;
             int rectH = fH + 40;
             int rectX = fx - 20;
@@ -1353,7 +1241,6 @@ private:
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(0, 0, 0), cv::FILLED);
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(40, 40, 40), 2, cv::LINE_AA);
             
-            // Dibujar cara alternativa SOBRE el rectángulo
             if (faceResized.channels() == 4) {
                 for (int y = 0; y < fH && y + fy < H; ++y) {
                     for (int x = 0; x < fW && x + fx < W; ++x) {
@@ -1371,7 +1258,6 @@ private:
                 faceResized.copyTo(frame(cv::Rect(fx, fy, fW, fH)));
             }
             
-            // Aura pulsante
             double auraA = 0.12 * std::max(0.0, std::sin(t * beat * CV_PI));
             if (auraA > 0.01) {
                 cv::Mat aov = frame.clone();
@@ -1481,6 +1367,187 @@ private:
 };
 
 // =============================================================================
+//  RoutinesApp — Interfaz gráfica para gestionar rutinas personales
+// =============================================================================
+class RoutinesApp {
+public:
+    std::function<void()> onBack;
+    std::function<void(std::string)> onLaunchSubprocess;
+    std::vector<std::string> routines;
+    int currentPage {0};
+    cv::Rect prevPageBtn {0,0,0,0}, nextPageBtn {0,0,0,0}, backBtn {0,0,0,0};
+    cv::Rect newBtn {0,0,0,0}, continueBtn {0,0,0,0};
+    RadioState state { RadioState::SELECTING };
+    bool hovBack{false}, hovNew{false}, hovContinue{false};
+    bool hovPrev{false}, hovNext{false};
+    int hovCard{-1};
+    std::vector<cv::Rect> cardRects;
+    
+    void launchRoutine(const std::string& scriptPath, const std::string& routineName) {
+        state = RadioState::PLAYING; // Reutilizamos este estado para mostrar "Reproduciendo"
+        
+        std::thread([this, scriptPath, routineName]() {
+            // 1. Comando de reproducción
+            std::string cmd = "python3 src/YAREN2/yaren_movements/yaren_movements/" + routineName + " &";
+            // 4. Regresar al menú y refrescar
+            state = RadioState::SELECTING;
+            refresh(); // Esto recarga la lista de rutinas
+        }).detach();
+    }
+    void refresh() {
+        routines.clear();
+        std::string dirPath = "src/YAREN2/yaren_movements/yaren_movements";
+        std::vector<std::string> exclude = {
+            "__init__.py", "yaren_dance_radio.py", "yaren_fullmovement.py",
+            "yaren_movement.py", "yaren_rutinanueva.py", "yaren_rutinanueva.py", "yaren_rutina1.py"
+        };
+        if (fs::exists(dirPath)) {
+            for (const auto& entry : fs::directory_iterator(dirPath)) {
+                if (entry.path().extension() == ".py") {
+                    std::string fn = entry.path().filename().string();
+                    if (std::find(exclude.begin(), exclude.end(), fn) == exclude.end()) {
+                        routines.push_back(fn);
+                    }
+                }
+            }
+        }
+        std::sort(routines.begin(), routines.end(), std::greater<std::string>());
+        currentPage = 0;
+    }
+
+    void render(cv::Mat& frame) {
+        if (state == RadioState::PLAYING) {
+            cv::rectangle(frame, {0,0,frame.cols, frame.rows}, cv::Scalar(0,0,0), -1);
+            drawCenteredText(frame, "REPRODUCIENDO RUTINA...", frame.cols, frame.rows/2, cv::FONT_HERSHEY_DUPLEX, 1.0, cv::Scalar(0,255,0), 2);
+            return; // No dibujar el menú mientras reproduce
+        }
+        int W = frame.cols, H = frame.rows;
+        cv::rectangle(frame, {0,0,W,H}, cv::Scalar(20, 15, 30), cv::FILLED);
+        drawCenteredText(frame, "RUTINAS PERSONALES", W, 40, cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 150, 255), 2);
+        cv::line(frame, {W/2-200, 55}, {W/2+200, 55}, cv::Scalar(150, 50, 150), 1, cv::LINE_AA);
+
+        if (routines.empty()) {
+            drawCenteredText(frame, "No existe ninguna rutina creada, creala ya.", W, H/2 - 30, cv::FONT_HERSHEY_PLAIN, 1.2, cv::Scalar(200,200,200), 1);
+            
+            continueBtn = {W/2 - 120, H/2 + 30, 240, 50};
+            drawFlatButton(frame, continueBtn, "CONTINUAR", cv::Scalar(130, 80, 255), hovContinue);
+            
+            backBtn = {W/2 - 120, H/2 + 100, 240, 50};
+            drawFlatButton(frame, backBtn, "SALIR", cv::Scalar(120,120,120), hovBack);
+            newBtn = {0,0,0,0};
+            cardRects.clear();
+        } else {
+            continueBtn = {0,0,0,0};
+            const int COLS = 2;
+            const int ITEMS_PER_PAGE = 4;
+            const int CW = 280, CH = 120, G = 20, SY = 80;
+            int totalPages = (routines.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
+            if (currentPage >= totalPages) currentPage = std::max(0, totalPages - 1);
+
+            cardRects.clear();
+            int startIdx = currentPage * ITEMS_PER_PAGE;
+            int endIdx = std::min(startIdx + ITEMS_PER_PAGE, (int)routines.size());
+
+            int idx = 0;
+            for (int i = startIdx; i < endIdx; ++i) {
+                int row = idx / COLS, col = idx % COLS;
+                int rowItems = std::min(COLS, endIdx - startIdx - row * COLS);
+                int rowW = rowItems * CW + (rowItems - 1) * G;
+                int rowSX = (W - rowW) / 2;
+                cv::Rect r{rowSX + col*(CW+G), SY + row*(CH+G), CW, CH};
+                cardRects.push_back(r);
+                
+                bool hov = (hovCard == i);
+                cv::Scalar a = cv::Scalar(190, 100, 220);
+                cv::rectangle(frame, r, hov ? cv::Scalar(40,20,50) : cv::Scalar(20,10,30), cv::FILLED);
+                cv::rectangle(frame, r, hov ? a : cv::Scalar(a[0]*.4, a[1]*.4, a[2]*.4), hov?2:1, cv::LINE_AA);
+                
+                std::string niceName = routines[i];
+                if (niceName.size() > 3) niceName = niceName.substr(0, niceName.size() - 3);
+                
+                drawTextInRect(frame, niceName, r, cv::FONT_HERSHEY_DUPLEX, 0.6, hov?cv::Scalar(255,255,255):cv::Scalar(200,200,200), 1);
+                idx++;
+            }
+
+            if (totalPages > 1) {
+                int arrowSize = 45;
+                prevPageBtn = {15, H/2 - arrowSize/2, arrowSize, arrowSize};
+                nextPageBtn = {W - 15 - arrowSize, H/2 - arrowSize/2, arrowSize, arrowSize};
+                if (currentPage > 0) drawNavArrow(frame, prevPageBtn, true, hovPrev);
+                else prevPageBtn = {0,0,0,0};
+                if (currentPage < totalPages - 1) drawNavArrow(frame, nextPageBtn, false, hovNext);
+                else nextPageBtn = {0,0,0,0};
+            } else {
+                prevPageBtn = {0,0,0,0}; nextPageBtn = {0,0,0,0};
+            }
+
+            newBtn = {W/2 - 170, H - 60, 160, 42};
+            drawFlatButton(frame, newBtn, "NUEVA RUTINA", cv::Scalar(130, 80, 255), hovNew);
+            backBtn = {W/2 + 10, H - 60, 160, 42};
+            drawFlatButton(frame, backBtn, "VOLVER", cv::Scalar(120,120,120), hovBack);
+        }
+    }
+
+    void handleMouse(int ev, int x, int y) {
+        cv::Point pt{x, y};
+        if (ev == cv::EVENT_MOUSEMOVE) {
+            hovBack = backBtn.contains(pt);
+            hovContinue = continueBtn.contains(pt);
+            hovNew = newBtn.contains(pt);
+            hovPrev = prevPageBtn.contains(pt);
+            hovNext = nextPageBtn.contains(pt);
+            hovCard = -1;
+            for(size_t i=0; i<cardRects.size(); ++i){
+                if(cardRects[i].contains(pt)) hovCard = i;
+            }
+            return;
+        }
+        if (ev == cv::EVENT_LBUTTONDOWN) {
+            if (hovBack && onBack) onBack();
+            if (hovContinue || hovNew) {
+                if (onLaunchSubprocess) {
+                    std::system("for pid in $(ps aux | grep -E 'yaren_rutinanueva' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");
+                    onLaunchSubprocess("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_rutinanueva.py &");
+                }
+            }
+            if (hovPrev && currentPage > 0) currentPage--;
+            if (hovNext) currentPage++;
+            if (hovCard >= 0) {
+                int realIdx = currentPage * 4 + hovCard;
+                if (realIdx < (int)routines.size() && onLaunchSubprocess) {
+                    std::string r = routines[realIdx];
+                    launchRoutine("...", routines[realIdx]); // Llama a la nueva función
+                    std::system(("for pid in $(ps aux | grep -E '" + r + "' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done").c_str());
+                    onLaunchSubprocess("python3 src/YAREN2/yaren_movements/yaren_movements/" + r + " &");
+                }
+            }
+        }
+    }
+
+    void drawNavArrow(cv::Mat& frame, const cv::Rect& r, bool left, bool hovered) {
+        if(r.area() == 0) return;
+        cv::Scalar color = hovered ? cv::Scalar(255, 100, 255) : cv::Scalar(150, 80, 180);
+        cv::rectangle(frame, r, cv::Scalar(20, 15, 40), cv::FILLED);
+        cv::rectangle(frame, r, color, hovered ? 2 : 1, cv::LINE_AA);
+        int cx = r.x + r.width/2, cy = r.y + r.height/2, size = 15;
+        std::vector<cv::Point> pts(3);
+        if (left) pts = {{cx + size/2, cy - size}, {cx + size/2, cy + size}, {cx - size/2, cy}};
+        else pts = {{cx - size/2, cy - size}, {cx - size/2, cy + size}, {cx + size/2, cy}};
+        cv::fillPoly(frame, pts, color);
+    }
+
+    void drawFlatButton(cv::Mat& frame, const cv::Rect& r, const std::string& lbl, const cv::Scalar& accent, bool hov) {
+        if (r.area() == 0) return;
+        cv::Scalar bg   = hov ? cv::Scalar(accent[0]*0.20, accent[1]*0.20, accent[2]*0.20) : cv::Scalar(16, 20, 35);
+        cv::Scalar bord = hov ? accent : cv::Scalar(accent[0]*0.40, accent[1]*0.40, accent[2]*0.40);
+        cv::rectangle(frame, r, bg,   cv::FILLED);
+        cv::rectangle(frame, r, bord, hov ? 2 : 1, cv::LINE_AA);
+        drawTextInRect(frame, lbl, r, cv::FONT_HERSHEY_DUPLEX, 0.46, hov ? cv::Scalar(255,255,255) : cv::Scalar(170,175,190));
+    }
+};
+
+
+// =============================================================================
 //  Navegación e Items
 // =============================================================================
 struct MenuItem {
@@ -1507,7 +1574,7 @@ struct NavLevel {
     std::string           title;
     cv::Scalar            accentColor { 0, 200, 200 };
     std::vector<MenuItem> items;
-    std::string           key {};          
+    std::string           key {};         
 };
 
 enum class FaceOverlay { NONE, ERROR_MSG, MIC_COUNTDOWN, MIC_PLAYING };
@@ -1553,11 +1620,12 @@ public:
         loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png");loadIcon("piopio", "piopio.png");
         loadIcon("gallinaturuleca", "gallinaturuleca.png"); loadIcon("susanita", "susanita.png");loadIcon("vacalola", "vacalola.png");
         loadIcon("video", "video.png"); loadIcon("musica", "musica.png");loadIcon("radio", "radio.png");
+        loadIcon("rutina_nueva", "rutina_nueva.png");
 
         ttsActive = false; isBlinking = false; hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
         activeMode = ""; activeStopCmd = ""; running = true;
-        showSettings = false; showRadio = false;
+        showSettings = false; showRadio = false; showRoutines = false;
         lastBlinkTime = std::chrono::system_clock::now();
 
         faceOverlay = FaceOverlay::NONE; overlayMessage = ""; micCountdownSecs = 0;
@@ -1565,7 +1633,6 @@ public:
         settingsMenu.onBack = [this]() { showSettings = false; };
 
         radioApp.init(pkgDir, this->get_logger());
-        // Añadir rutas de canciones de menu
         std::srand(std::time(nullptr));
         menuPlaylist = {
             "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro1.mp3",
@@ -1574,8 +1641,24 @@ public:
         };
         radioApp.onBack = [this]() { 
             showRadio = false; 
-            startMenuMusic(); // <--- Vuelve a sonar al salir de la radio
+            startMenuMusic(); 
         };
+
+        // Callbacks de la app de Rutinas Personales
+        routinesApp.onBack = [this]() {
+            showRoutines = false;
+            startMenuMusic();
+        };
+        routinesApp.onLaunchSubprocess = [this](std::string cmd) {
+            std::thread([this, cmd]() {
+                int ret = std::system(cmd.c_str());
+                if (ret != 0) {
+                    RCLCPP_ERROR(get_logger(), "Fallo ejecutando rutina: %s", cmd.c_str());
+                    showErrorOverlay("Fallo al ejecutar la rutina.", 3.0);
+                }
+            }).detach();
+        };
+
         ttsSubscription = this->create_subscription<std_msgs::msg::Bool>(
             "/audio_playing", 10, std::bind(&VideoSynchronizer::audioPlayingCallback, this, std::placeholders::_1));
 
@@ -1589,22 +1672,18 @@ public:
                     activeMode.clear(); activeStopCmd.clear();
                 } else { 
                     activeMode = msg->data; 
-                    // --- NUEVO: Permitir que el mensaje salga una vez al entrar al chat ---
                     if (activeMode == "yaren_chat") {
                         first_listen_done = false;
                     }
                 }
             });
 
-        // 2. AÑADIR este nuevo bloque justo después:
         sttListeningSubscription_ = this->create_subscription<std_msgs::msg::Bool>(
             "/stt_listening", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                // Verificar que el micrófono está activo, que se está en modo chat, y que es la primera vez
                 if (msg->data && activeMode == "yaren_chat" && !first_listen_done) {
-                    first_listen_done = true; // Bloquear futuros disparos en la misma sesión
+                    first_listen_done = true; 
                     
                     std::thread([this]() {
-                        // Usa la animación de líneas verdes (MIC_PLAYING) por 2.0 segundos
                         showCustomOverlay(FaceOverlay::MIC_PLAYING, "Yaren te escucha...", 2.0);
                     }).detach();
                 }
@@ -1618,7 +1697,7 @@ public:
         buildMenus();
 
         renderThread = std::thread(&VideoSynchronizer::renderLoop, this);
-        RCLCPP_INFO(get_logger(), "face_screen listo con Radio Interna integrada (SDL2_mixer).");
+        RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
     }
 
     ~VideoSynchronizer() {
@@ -1638,13 +1717,14 @@ public:
             if (key == 27) {
                 if (showSettings) { showSettings = false; return; }
                 if (showRadio) { radioApp.killAudio(); showRadio = false; return; }
+                if (showRoutines) { showRoutines = false; return; }
 
                 std::lock_guard<std::mutex> nlock(navMutex);
                 if (!navStack.empty()) {
                     if (navStack.size() > 1) navStack.pop_back(); 
                     else { 
                         navStack.clear(); 
-                        stopMenuMusic(); // <--- APAGA MUSICA SI SALES CON ESC
+                        stopMenuMusic(); 
                     }
                     hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
                 } else {
@@ -1667,6 +1747,9 @@ private:
     RadioApp     radioApp;
     bool         showRadio { false };
 
+    RoutinesApp  routinesApp;
+    bool         showRoutines { false };
+
     cv::Rect settingsButtonRect {0,0,0,0};
     bool     hoveredSettings    {false};
     cv::Rect leftNavArrowRect  {0,0,0,0};
@@ -1681,7 +1764,7 @@ private:
                        const char* cmd, const char* stop, bool hasSub, const char* subKey, const char* iconKey) {
         return MenuItem(id, label, sublabel, color, cmd, stop, hasSub, subKey, iconKey);
     }
-    // --- VARIABLES DE MUSICA MENU ---
+
     std::vector<std::string> menuPlaylist;
     Mix_Music* menuMusic { nullptr };
     bool isMenuMusicPlaying { false };
@@ -1689,7 +1772,7 @@ private:
     void startMenuMusic() {
         if (menuPlaylist.empty()) return;
         if (menuMusic) { Mix_FreeMusic(menuMusic); menuMusic = nullptr; }
-        int idx = std::rand() % menuPlaylist.size(); // Canción aleatoria
+        int idx = std::rand() % menuPlaylist.size(); 
         if (fs::exists(menuPlaylist[idx])) {
             menuMusic = Mix_LoadMUS(menuPlaylist[idx].c_str());
             if (menuMusic) {
@@ -1702,11 +1785,11 @@ private:
 
     void stopMenuMusic() {
         if (isMenuMusicPlaying) {
-            Mix_FadeOutMusic(500); // 500ms fade out
+            Mix_FadeOutMusic(500); 
             isMenuMusicPlaying = false;
         }
     }
-    // --------------------------------
+
     void buildMenus() {
         rootMenuItems = {
             MI("modo_prueba", "MODO PRUEBA", "diagnostico y tests", {255,140,0}, "", "", true, "sub_modo_prueba", "test"),
@@ -1764,9 +1847,7 @@ private:
         subMenuMap["sub_yaren_movements"] = { "MOVEMENTS", {251,64,224}, {
             MI("yaren_rutina1", "RUTINA 1", "Rutinas", {251,64,224}, "python3 src/YAREN2/yaren_movements/yaren_movements/yaren_rutina1.py &", "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina1"),
             MI("yaren_rutina2", "RUTINA 2", "Rutina infinita", {220,80,200}, "python3 src/YAREN2/yaren_movements/yaren_movements/yaren_fullmovement.py &", "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina2"),
-            MI("yaren_rutina3", "RUTINA 3", "movimiento libre", {190,100,180}, "python3 src/YAREN2/yaren_movements/yaren_movements/yaren_movement.py &", "for pid in $(ps aux | grep -E 'yaren_movement' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina3"),
-            MI("yaren_rutinanueva", "NUEVA RUTINA", "imita y graba", {130, 80, 255}, "python3 src/YAREN2/yaren_movements/yaren_movements/yaren_rutinanueva.py &", "for pid in $(ps aux | grep -E 'yaren_movement' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina_nueva"),
-
+            MI("yaren_rutinanueva", "RUTINAS PERSONALES", "gestionar y grabar", {130, 80, 255}, "INTERNAL_ROUTINES", "", false, "", "rutina_nueva"),
         }};
 
         subMenuMap["sub_yaren_filtros"] = { "FILTROS", {105,240,174}, {
@@ -1808,7 +1889,6 @@ private:
         std::this_thread::sleep_for(std::chrono::duration<double>(secs));
         {
             std::lock_guard<std::mutex> lock(overlayMutex);
-            // Evitar limpiar el overlay si fue sobreescrito por otra función mientras dormía
             if (faceOverlay == type && overlayMessage == msg) {
                 faceOverlay    = FaceOverlay::NONE;
                 overlayMessage = "";
@@ -1831,11 +1911,9 @@ private:
         if (testThread.joinable()) testThread.join();
         testThread = std::thread([this]() {
             
-            // --- CORRECCIÓN DE AUDIO ---
             std::string micId = settingsMenu.selectedMicId;
             std::string spkId = settingsMenu.selectedSpkId; 
 
-            // Puenteamos ALSA con PulseAudio mediante variables de entorno
             std::string envMic = micId.empty() ? "" : "PULSE_SOURCE='" + micId + "' ";
             std::string recordCmd = envMic + "arecord -D pulse -f S16_LE -r 44100 -c 1 -d 5 /tmp/yaren_mic_test.wav > /tmp/yaren_arecord.log 2>&1";
 
@@ -1872,7 +1950,7 @@ private:
                 overlayMessage = "";
             }
             
-            std::this_thread::sleep_for(std::chrono::seconds(1)); // Pausa de 1s para naturalidad
+            std::this_thread::sleep_for(std::chrono::seconds(1)); 
             
             {
                 std::lock_guard<std::mutex> lock(overlayMutex);
@@ -1880,7 +1958,6 @@ private:
                 overlayMessage = "Reproduciendo audio...";
             }
 
-            // Reproducimos usando la misma técnica para el parlante
             std::string envSpk = spkId.empty() ? "" : "PULSE_SINK='" + spkId + "' ";
             std::string playCmd = envSpk + "aplay -D pulse /tmp/yaren_mic_test.wav > /tmp/yaren_aplay.log 2>&1";
             
@@ -1898,25 +1975,21 @@ private:
                 micCountdownSecs = 0;
             }
 
-            // --- RECONSTRUIR EL MENÚ Y VOLVER AL MODO PRUEBA ---
             {
                 std::lock_guard<std::mutex> nlock(navMutex);
                 navStack.clear();
                 
-                // 1. Añadir Menú Principal
                 NavLevel root;
                 root.title       = "MENU PRINCIPAL";
                 root.accentColor = { 0, 200, 200 };
                 root.items       = rootMenuItems;
                 navStack.push_back(root);
 
-                // 2. Entrar al submenú de Modo Prueba
                 auto it = subMenuMap.find("sub_modo_prueba");
                 if (it != subMenuMap.end()) {
                     navStack.push_back(it->second);
                 }
 
-                // 3. Reactivar controles y música
                 hoveredItem = -1; 
                 hoveredBack = false; 
                 hoveredStop = false; 
@@ -1924,7 +1997,7 @@ private:
                 startMenuMusic();
             }
 
-            micTestRunning = false; // Liberamos el bloqueo de clics
+            micTestRunning = false; 
         });
     }
 
@@ -1935,6 +2008,10 @@ private:
         }
         if (showRadio) {
             radioApp.handleMouse(event, x, y);
+            return;
+        }
+        if (showRoutines) {
+            routinesApp.handleMouse(event, x, y);
             return;
         }
 
@@ -1986,7 +2063,7 @@ private:
                 navStack.push_back(root);
                 hoveredItem = -1;
                 hoveredBack = hoveredStop = hoveredExit = false;
-                startMenuMusic(); // <--- INICIA MUSICA AQUI
+                startMenuMusic(); 
             }
             return;
         }
@@ -2005,7 +2082,7 @@ private:
         if (event == cv::EVENT_LBUTTONDOWN) {
             if (exitButtonRect.contains({ x, y })) {
                 navStack.clear(); hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
-                stopMenuMusic(); // <--- APAGA MUSICA AQUI
+                stopMenuMusic(); 
                 return;
             }
             if (navStack.size() > 1 && backButtonRect.contains({ x, y })) {
@@ -2021,7 +2098,6 @@ private:
             auto msg = std_msgs::msg::String(); msg.data = "idle";
             modePublisher->publish(msg);
 
-            /// Si era un video, volver al submenú de videos
             if (prevMode.rfind("vid_", 0) == 0) {
                 NavLevel root; root.title = "MENU PRINCIPAL";
                 root.accentColor = {0,200,200}; root.items = rootMenuItems;
@@ -2061,8 +2137,16 @@ private:
             return; 
         }
 
+        if (item.cmd == "INTERNAL_ROUTINES") {
+            showRoutines = true;
+            routinesApp.refresh();
+            hoveredItem = -1;
+            stopMenuMusic();
+            return; 
+        }
+
         navStack.clear();
-        stopMenuMusic(); // <--- APAGA MUSICA AL ENTRAR A MODO
+        stopMenuMusic(); 
         hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
 
@@ -2110,8 +2194,6 @@ private:
                     showErrorOverlay("No se ha podido realizar\nel comando.", 4.0);
                 }
 
-                // --- DETECTAR FIN DEL VIDEO Y VOLVER AL MENÚ ---
-                // Verifica si el proceso que acaba de terminar era un video
                 if (prevMode.rfind("vid_", 0) == 0 && activeMode == prevMode) {
                     std::lock_guard<std::mutex> lock(navMutex);
                     activeMode = ""; 
@@ -2121,7 +2203,6 @@ private:
                     msg.data = "idle";
                     modePublisher->publish(msg);
 
-                    // Reconstruir la ruta de navegación directamente hacia "VIDEOS"
                     navStack.clear();
                     NavLevel root; 
                     root.title = "MENU PRINCIPAL";
@@ -2129,7 +2210,6 @@ private:
                     root.items = rootMenuItems;
                     navStack.push_back(root);
 
-                    // Reabrir los submenús correspondientes
                     for (const std::string& key : {"sub_yaren_p2", "sub_yaren_radio", "sub_yaren_videos"}) {
                         auto it = subMenuMap.find(key);
                         if (it != subMenuMap.end()) navStack.push_back(it->second);
@@ -2157,7 +2237,6 @@ private:
 
         auto iconIt = iconMap.find("settings");
         if (iconIt != iconMap.end()) {
-            // Usar el PNG de settings
             int pad = 6;
             int iconW = btnSz - pad*2, iconH = btnSz - pad*2;
             cv::Mat icon;
@@ -2188,7 +2267,6 @@ private:
                 }
             }
         } else {
-            // Fallback: círculo simple si no cargó el PNG
             int cx = settingsButtonRect.x + btnSz/2, cy = settingsButtonRect.y + btnSz/2;
             cv::Scalar ic = hoveredSettings ? cv::Scalar(0,220,255) : cv::Scalar(80,130,160);
             cv::circle(frame, {cx,cy}, 8, ic, cv::FILLED, cv::LINE_AA);
@@ -2448,6 +2526,9 @@ private:
             } 
             else if (showRadio) {
                 radioApp.render(frame);
+            }
+            else if (showRoutines) {
+                routinesApp.render(frame);
             } 
             else {
                 renderFaceOverlay(frame); 
