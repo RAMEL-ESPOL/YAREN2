@@ -43,21 +43,7 @@ def generate_launch_description():
         name='game_manager',
         output='screen'
     )
-
-    face_screen = Node(
-        package="yaren_face_display",
-        executable="face_screen",
-        name="face_screen",
-        output="screen",
-    )
-    '''
-    face_screen = Node(
-    	package="yaren_face_display",
-    	executable="face_screen",
-    	name="face_screen",
-    	output="screen",
-    )
-'''
+    
     # return LaunchDescription([
     #     # Arranca la cámara y el speaker apenas inicie el launch
     #     csi_cam,
@@ -90,7 +76,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         csi_cam,
-        face_screen,
         body_landmarks,
         RegisterEventHandler(
             OnProcessStart(

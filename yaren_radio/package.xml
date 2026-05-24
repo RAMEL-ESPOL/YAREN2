@@ -4,7 +4,7 @@
   <name>yaren_radio</name>
   <version>0.0.0</version>
   <description>Scripts de movimiento para el robot Yaren</description>
-  <maintainer email="ramel@todo.com">ramel</maintainer>
+  <maintainer email="raestrad@espol.edu.ec">roberto</maintainer>
   <license>Apache License 2.0</license>
 
   <depend>rclpy</depend>

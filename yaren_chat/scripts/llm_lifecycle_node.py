@@ -11,7 +11,8 @@ from rclpy.executors import MultiThreadedExecutor
 from state_graph import StateGraphLLM
 from text_processor import TextProcessor
 from langchain_core.messages import HumanMessage, SystemMessage
-from config import SYSTEM_PROMPT_BASE
+# 🔹 IMPORTAMOS LOS DOS PROMPTS EN LUGAR DE UNO SOLO
+from config import SYSTEM_PROMPT_BASE_es, SYSTEM_PROMPT_BASE_en
 from yaren_interfaces.action import ProcessResponse
 from rclpy.action import ActionServer, ActionClient, GoalResponse, CancelResponse
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
@@ -19,23 +20,41 @@ from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
+from std_msgs.msg import String
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+
 
 class LLMLifecycleNode(LifecycleNode):
     def __init__(self):
         super().__init__('llm_lifecycle_node')
 
         self.config = {"configurable": {"thread_id": 1}}
-
         self.state_graph_llm = StateGraphLLM(self)
-
         self.joint_action_client = ActionClient(
             self,
             FollowJointTrajectory,
             '/joint_trajectory_controller/follow_joint_trajectory'
         )
-
         self.action_server = None
         self.response_lock = threading.Lock()
+
+        # --- CONFIGURACIÓN DEL IDIOMA ---
+        self.idioma_actual = "es" # Idioma por defecto
+        
+        qos_profile = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.lang_sub = self.create_subscription(
+            String, 
+            '/yaren/current_language', 
+            self.cb_cambio_idioma, 
+            qos_profile
+        )
+
+    def cb_cambio_idioma(self, msg):
+        """Actualiza el idioma en el que debe responder el LLM."""
+        nuevo_idioma = msg.data
+        if nuevo_idioma != self.idioma_actual:
+            self.idioma_actual = nuevo_idioma
+            self.get_logger().info(f"🧠 Idioma del LLM cambiado a: {self.idioma_actual}")
 
     # ── Movimiento de motores ─────────────────────────────────────────
     def execute_robot_movement(self, joints_to_move: dict):
@@ -124,8 +143,19 @@ class LLMLifecycleNode(LifecycleNode):
         try:
             user_input = goal_handle.request.input_text
 
+            # 🔹 SELECCIÓN DINÁMICA DEL PROMPT BASE
+            if self.idioma_actual == "en":
+                base_prompt = SYSTEM_PROMPT_BASE_en
+                lang_reinforcement = "RESPOND STRICTLY IN ENGLISH FROM THE FIRST WORD."
+            else:
+                base_prompt = SYSTEM_PROMPT_BASE_es
+                lang_reinforcement = "RESPONDE ESTRICAMENTE EN ESPAÑOL DESDE LA PRIMERA PALABRA."
+
+            prompt_final = f"{base_prompt}\n\n{lang_reinforcement}"
+            self.get_logger().info(f"🌐 Usando prompt en: {self.idioma_actual}")
+
             messages_to_send = [
-                SystemMessage(content=SYSTEM_PROMPT_BASE),
+                SystemMessage(content=prompt_final),
                 HumanMessage(content=user_input)
             ]
 
@@ -203,12 +233,6 @@ def main(args=None):
 
     node = LLMLifecycleNode()
 
-    # ✅ FIX PRINCIPAL: MultiThreadedExecutor con al menos 2 hilos
-    #    - rclpy.spin() usa un SingleThreadedExecutor que bloquea los
-    #      servicios lifecycle mientras se ejecuta cualquier callback,
-    #      impidiendo que control_manager pueda hacer las transiciones.
-    #    - MultiThreadedExecutor permite atender servicios lifecycle
-    #      y callbacks de action server simultáneamente.
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
 

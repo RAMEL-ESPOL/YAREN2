@@ -4,7 +4,7 @@
   <name>yaren_emotions</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="iesusdavila@gmail.com">iesus_robot</maintainer>
+  <maintainer email="raestrad@espol.edu.ec">roberto</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

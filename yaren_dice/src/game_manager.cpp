@@ -7,6 +7,7 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
     RCLCPP_INFO(this->get_logger(), "Waiting 2 seconds for other nodes to initialize...");
     std::this_thread::sleep_for(std::chrono::seconds(2));
     RCLCPP_INFO(this->get_logger(), "Starting game manager...");
+    
     feedback_publisher_ = this->create_publisher<std_msgs::msg::String>(
         "/game_feedback", 10);
     current_challenge_publisher_ = this->create_publisher<std_msgs::msg::Int16>(
@@ -19,6 +20,13 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
     audio_status_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
         "/audio_playing", 10,
         std::bind(&YarenGameManager::handle_audio_status, this, std::placeholders::_1));
+
+    // Suscripción para saber en qué idioma está el robot
+    rclcpp::QoS qos_profile(1);
+    qos_profile.transient_local();
+    language_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
+        "/yaren/is_english", qos_profile,
+        std::bind(&YarenGameManager::handle_language_change, this, std::placeholders::_1));
     
     current_challenge_ = 0;
     score_ = 0;
@@ -32,35 +40,79 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
     current_level_ = GameLevel::BASIC;
     current_sequence_step_ = 0;
     expected_sequence_length_ = 1;
+    is_english_ = false;
+    game_initialized_ = false;  // FIX: el juego no arranca hasta recibir el idioma
 
     load_challenges_from_yaml();
     load_intermediate_challenges_from_yaml();
     load_advanced_challenges_from_yaml();
     
-    victory_texts_ = {
-        " ¡Muy bien! Has completado el desafío. Tu puntuación es "
+    victory_texts_es_ = {
+        " ¡Muy bien! Has completado el desafío. Tu puntuación es ",
         " Increíble, has superado el desafío. Tu puntaje actual es ",
         " ¡Fantástico! Has logrado el desafío. Tu puntuación es ",
         " Que bien lo hiciste! Has completado el desafío. Tu puntuación es ",
         " Eres el mejor jugador del mundo, sigue asi! Tu puntuación es ",
-        " ¡Impresionante! Has superado el desafío. Tu puntuación es ",
+        " ¡Impresionante! Has superado el desafío. Tu puntuación es "
     };
 
-    defeat_texts_ = {
+    victory_texts_en_ = {
+        " Very good! You completed the challenge. Your score is ",
+        " Incredible, you passed the challenge. Your current score is ",
+        " Fantastic! You achieved the challenge. Your score is ",
+        " You did great! You completed the challenge. Your score is ",
+        " You are the best player in the world, keep it up! Your score is ",
+        " Awesome! You passed the challenge. Your score is "
+    };
+
+    defeat_texts_es_ = {
         " ¡Oh no! Has fallado el desafío, no te preocupes, puedes intentarlo de nuevo. Tienes ",
         " Desafortunadamente, no has logrado el desafío, se que a la próxima lo harás mejor. Actualmente te quedan ",
-        " No te preocupes puedes intentarlo de nuevo, nadie te quitara tu puesto de campeon. Te quedan "
+        " No te preocupes puedes intentarlo de nuevo, nadie te quitara tu puesto de campeon. Te quedan ",
         " No te desanimes sigue practicando, la practica hace al maestro. Te quedan ",
-        " No te rindas! Puedes hacerlo mejor, todos fallamos alguna vez. Tienes ",
+        " No te rindas! Puedes hacerlo mejor, todos fallamos alguna vez. Tienes "
+    };
+
+    defeat_texts_en_ = {
+        " Oh no! You failed the challenge, don't worry, you can try again. You have ",
+        " Unfortunately, you didn't achieve the challenge, I know you'll do better next time. Currently you have ",
+        " Don't worry, you can try again, no one will take your champion spot. You have ",
+        " Don't be discouraged, keep practicing, practice makes perfect. You have ",
+        " Don't give up! You can do better, we all fail sometimes. You have "
     };
     
     challenge_timer_ = this->create_wall_timer(
         500ms, std::bind(&YarenGameManager::check_challenge_timeout, this));
 
-    select_challenge();
-    start_detection();
+    // FIX: NO llamamos select_challenge() ni start_detection() aquí.
+    // El juego arranca en handle_language_change() cuando llega el idioma correcto.
     
-    RCLCPP_INFO(this->get_logger(), "Game started");
+    RCLCPP_INFO(this->get_logger(), "Game manager ready, waiting for language topic...");
+}
+
+void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedPtr msg)
+{
+    is_english_ = msg->data;
+    RCLCPP_INFO(this->get_logger(), "Game manager language updated to: %s", is_english_ ? "English" : "Español");
+
+    if (!game_initialized_)
+    {
+        // Primera vez: arrancar el juego con el idioma correcto
+        game_initialized_ = true;
+        RCLCPP_INFO(this->get_logger(), "Starting game in correct language...");
+        select_challenge();
+        start_detection();
+        RCLCPP_INFO(this->get_logger(), "Game started");
+    }
+    else if (score_ == 0 && lives_ == 3)
+    {
+        // Cambio de idioma antes de que el jugador haya hecho algo
+        RCLCPP_INFO(this->get_logger(), "Language changed before game progress, re-selecting challenge...");
+        waiting_for_pose_ = false;
+        detection_ongoing_ = false;
+        select_challenge();
+        start_detection();
+    }
 }
 
 void YarenGameManager::load_challenges_from_yaml()
@@ -142,34 +194,26 @@ void YarenGameManager::load_advanced_challenges_from_yaml()
 
 GameLevel YarenGameManager::get_current_level()
 {
-    if (score_ >= 15)
-    {
-        return GameLevel::ADVANCED;
-    }
-    else if (score_ >= 7)
-    {
-        return GameLevel::INTERMEDIATE;
-    }
-    else
-    {
-        return GameLevel::BASIC;
-    }
+    if (score_ >= 15) return GameLevel::ADVANCED;
+    else if (score_ >= 7) return GameLevel::INTERMEDIATE;
+    else return GameLevel::BASIC;
 }
 
 void YarenGameManager::announce_level_up(GameLevel new_level)
 {
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-    switch (new_level)
-    {
-        case GameLevel::INTERMEDIATE:
-            feedback_msg->data = "¡Felicidades! Has alcanzado el nivel intermedio. Ahora tendrás que hacer secuencias de hasta 3 movimientos.";
-            break;
-        case GameLevel::ADVANCED:
-            feedback_msg->data = "¡Increíble! Has llegado al nivel avanzado. Prepárate para secuencias de hasta 5 movimientos.";
-            break;
-        default:
-            return;
+    if (new_level == GameLevel::INTERMEDIATE) {
+        feedback_msg->data = is_english_ ? 
+            "Congratulations! You have reached the intermediate level. Now you will have to do sequences of up to 3 movements." : 
+            "¡Felicidades! Has alcanzado el nivel intermedio. Ahora tendrás que hacer secuencias de hasta 3 movimientos.";
+    } else if (new_level == GameLevel::ADVANCED) {
+        feedback_msg->data = is_english_ ? 
+            "Incredible! You have reached the advanced level. Get ready for sequences of up to 5 movements." : 
+            "¡Increíble! Has llegado al nivel avanzado. Prepárate para secuencias de hasta 5 movimientos.";
+    } else {
+        return;
     }
+    
     feedback_publisher_->publish(std::move(feedback_msg));
     RCLCPP_INFO(this->get_logger(), "Level up announced: %d", static_cast<int>(new_level));
 }
@@ -182,7 +226,7 @@ void YarenGameManager::select_challenge()
     {
         announce_level_up(new_level);
         current_level_ = new_level;
-        std::this_thread::sleep_for(std::chrono::seconds(3)); // Tiempo para que se escuche el anuncio
+        std::this_thread::sleep_for(std::chrono::seconds(3)); 
     }
     
     std::vector<YAML::Node>* current_challenges = nullptr;
@@ -210,6 +254,9 @@ void YarenGameManager::select_challenge()
     int random_index = rand() % current_challenges->size();
     YAML::Node selected_challenge = (*current_challenges)[random_index];
     
+    std::string challenge_text;
+    std::string text_key = (is_english_ && selected_challenge["text_en"]) ? "text_en" : "text";
+
     if (current_level_ == GameLevel::BASIC)
     {
         current_challenge_ = selected_challenge["id"].as<int16_t>();
@@ -224,20 +271,15 @@ void YarenGameManager::select_challenge()
         challenge_msg->data = current_challenge_;
         current_challenge_publisher_->publish(std::move(challenge_msg));
 
-        std::vector<std::string> texts = selected_challenge["text"].as<std::vector<std::string>>();
-        int random_text_index = rand() % texts.size();
-        std::string challenge_text = texts[random_text_index];
-        auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-        feedback_msg->data = challenge_text;
-        feedback_publisher_->publish(std::move(feedback_msg));
-        RCLCPP_INFO(this->get_logger(), "Challenge text: %s", challenge_text.c_str());
+        std::vector<std::string> texts = selected_challenge[text_key].as<std::vector<std::string>>();
+        challenge_text = texts[rand() % texts.size()];
     }
     else
     {
         current_sequence_ = selected_challenge["poses"].as<std::vector<int>>();
         expected_sequence_length_ = selected_challenge["sequence_length"].as<int>();
         current_sequence_step_ = 0;
-        current_challenge_ = current_sequence_[0]; // Primer desafío de la secuencia
+        current_challenge_ = current_sequence_[0]; 
         
         RCLCPP_INFO(this->get_logger(), "Selected sequence challenge with %d poses", expected_sequence_length_);
         
@@ -245,18 +287,18 @@ void YarenGameManager::select_challenge()
         challenge_msg->data = current_challenge_;
         current_challenge_publisher_->publish(std::move(challenge_msg));
         
-        std::string sequence_text = selected_challenge["text"].as<std::string>();
-        auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-        feedback_msg->data = sequence_text;
-        feedback_publisher_->publish(std::move(feedback_msg));
-        RCLCPP_INFO(this->get_logger(), "Sequence text: %s", sequence_text.c_str());
+        challenge_text = selected_challenge[text_key].as<std::string>();
     }
+
+    auto feedback_msg = std::make_unique<std_msgs::msg::String>();
+    feedback_msg->data = challenge_text;
+    feedback_publisher_->publish(std::move(feedback_msg));
+    RCLCPP_INFO(this->get_logger(), "Challenge text: %s", challenge_text.c_str());
 }
 
 void YarenGameManager::handle_audio_status(const std_msgs::msg::Bool::SharedPtr msg)
 {
     audio_playing_ = msg->data;
-    
     if (!audio_playing_ && !detection_ongoing_) start_detection();
 }
 
@@ -275,8 +317,8 @@ void YarenGameManager::check_challenge_timeout()
     if (get_current_time() > challenge_timeout_)
     {
         RCLCPP_INFO(this->get_logger(), "Challenge timed out");
-        int random_index = rand() % defeat_texts_.size();
-        std::string defeat_text = defeat_texts_[random_index];
+        int random_index = rand() % defeat_texts_es_.size();
+        std::string defeat_text = is_english_ ? defeat_texts_en_[random_index] : defeat_texts_es_[random_index];
         handle_failed_challenge(defeat_text);
     }
 }
@@ -321,11 +363,10 @@ void YarenGameManager::handle_pose_result(const yaren_interfaces::msg::PoseResul
                 current_challenge_publisher_->publish(std::move(challenge_msg));
                 
                 auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-                feedback_msg->data = "¡Bien! Ahora la siguiente pose de la secuencia.";
+                feedback_msg->data = is_english_ ? "Good! Now the next pose in the sequence." : "¡Bien! Ahora la siguiente pose de la secuencia.";
                 feedback_publisher_->publish(std::move(feedback_msg));
                 
                 RCLCPP_INFO(this->get_logger(), "Moving to next pose in sequence: %d", current_challenge_);
-                
                 challenge_timeout_ = get_current_time() + 20.0;
             }
         }
@@ -345,8 +386,8 @@ void YarenGameManager::handle_successful_challenge()
     score_++;
     
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-    int random_index = rand() % victory_texts_.size();
-    std::string victory_text = victory_texts_[random_index];
+    int random_index = rand() % victory_texts_es_.size();
+    std::string victory_text = is_english_ ? victory_texts_en_[random_index] : victory_texts_es_[random_index];
     
     if (current_level_ == GameLevel::BASIC)
     {
@@ -354,13 +395,13 @@ void YarenGameManager::handle_successful_challenge()
     }
     else
     {
-        feedback_msg->data = "¡Increíble! Has completado toda la secuencia. " + victory_text + std::to_string(score_) + ".";
+        std::string prefix = is_english_ ? "Incredible! You have completed the whole sequence. " : "¡Increíble! Has completado toda la secuencia. ";
+        feedback_msg->data = prefix + victory_text + std::to_string(score_) + ".";
     }
     
     feedback_publisher_->publish(std::move(feedback_msg));
     
     std::this_thread::sleep_for(std::chrono::seconds(3));
-    
     select_challenge();
 }
 
@@ -376,7 +417,10 @@ void YarenGameManager::handle_failed_challenge(const std::string& feedback_text)
     {
         RCLCPP_INFO(this->get_logger(), "Juego terminado.");
         auto game_over_msg = std::make_unique<std_msgs::msg::String>();
-        game_over_msg->data = "Ha sido muy divertido jugar contigo, el juego termino. Tu puntuación final es " + std::to_string(score_) + ".";
+        game_over_msg->data = is_english_ ? 
+            "It was really fun playing with you, the game is over. Your final score is " + std::to_string(score_) + "." :
+            "Ha sido muy divertido jugar contigo, el juego termino. Tu puntuación final es " + std::to_string(score_) + ".";
+        
         feedback_publisher_->publish(std::move(game_over_msg));
         rclcpp::shutdown();
         return;
@@ -384,19 +428,17 @@ void YarenGameManager::handle_failed_challenge(const std::string& feedback_text)
         
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
     std::string defeat_text = feedback_text + std::to_string(lives_);
-    if (lives_ == 1)
-    {
-        defeat_text = defeat_text + " intento.";
+    
+    if (lives_ == 1) {
+        defeat_text += is_english_ ? " attempt left." : " intento.";
+    } else {
+        defeat_text += is_english_ ? " attempts left." : " intentos.";
     }
-    else
-    {
-        defeat_text = defeat_text + " intentos.";
-    }
+    
     feedback_msg->data = defeat_text;
     feedback_publisher_->publish(std::move(feedback_msg));
     
     std::this_thread::sleep_for(std::chrono::seconds(2));
-    
     select_challenge();
 }
 

@@ -64,7 +64,7 @@ install(PROGRAMS
 install(DIRECTORY
   launch
   models
-  scripts
+  scripts/utils
   src
   DESTINATION share/${PROJECT_NAME}
 )

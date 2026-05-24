@@ -4,7 +4,7 @@
   <name>yaren_filters</name>
   <version>0.0.0</version>
   <description>Package responsible for making different easy filters</description>
-  <maintainer email="iesusdavila@gmail.com">Iesus Davila</maintainer>
+  <maintainer email="raestrad@espol.edu.ec">roberto</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

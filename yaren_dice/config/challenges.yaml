@@ -2,138 +2,230 @@ challenges:
   - id: 1
     pose: "Brazo derecho arriba"
     text: 
-      - "  Yaren quiere ver tu brazo derecho apuntando a las nubes vamos tu puedes alza tu brazo derecho"
-      - "  Puedes levantar el brazo derecho como si alcanzaras una estrella"
-      - "  Brazo derecho arriba demuestrale a Yaren que eres rápido como un rayo"
+      - "Yaren quiere ver tu brazo derecho apuntando a las nubes vamos tu puedes alza tu brazo derecho"
+      - "Puedes levantar el brazo derecho como si alcanzaras una estrella"
+      - "Brazo derecho arriba demuestrale a Yaren que eres rápido como un rayo"
+    text_en:
+      - "Yaren wants to see your right arm pointing to the clouds, come on you can do it, raise your right arm"
+      - "Can you raise your right arm as if you were reaching for a star"
+      - "Right arm up, show Yaren that you are fast as lightning"
   - id: 2
     pose: "Brazo izquierdo arriba"
     text: 
-      - "  Ahora es el turno del brazo izquierdo haz que se eleve como un cohete"
-      - "  Levanta el brazo izquierdo y saluda como un astronauta"
-      - "  Puedes hacerlo estira el brazo izquierdo hacia el cielo como si fueras un superhéroe"
+      - "Ahora es el turno del brazo izquierdo haz que se eleve como un cohete"
+      - "Levanta el brazo izquierdo y saluda como un astronauta"
+      - "Puedes hacerlo estira el brazo izquierdo hacia el cielo como si fueras un superhéroe"
+    text_en:
+      - "Now it's the left arm's turn, make it rise like a rocket"
+      - "Raise your left arm and wave like an astronaut"
+      - "You can do it, stretch your left arm towards the sky like a superhero"
   - id: 3
     pose: "Ambos brazos arriba"
     text: 
-      - "  Ahora Yaren dice que alces ambos brazos vamos tú puedes"
-      - "  Vamos a ver si estás atento Yaren dice que levantes tus brazos"
-      - "  Alza tus brazos como alas de águila vamos tu puedes alza tus brazos"
+      - "Ahora Yaren dice que alces ambos brazos vamos tú puedes"
+      - "Vamos a ver si estás atento Yaren dice que levantes tus brazos"
+      - "Alza tus brazos como alas de águila vamos tu puedes alza tus brazos"
+    text_en:
+      - "Now Yaren says to raise both arms, come on you can do it"
+      - "Let's see if you are paying attention, Yaren says raise your arms"
+      - "Raise your arms like eagle wings, come on you can raise your arms"
   - id: 4
     pose: "Brazo derecho hacia delante"
     text: 
-      - "  Estira tu brazo derecho como si fueses un ninja"
-      - "  Puedes empujar el aire con tu brazo derecho como si empujaras una nube"
-      - "  Imagina que alcanzas un tesoro lejano estira ese brazo derecho y atrápalo"
+      - "Estira tu brazo derecho como si fueses un ninja"
+      - "Puedes empujar el aire con tu brazo derecho como si empujaras una nube"
+      - "Imagina que alcanzas un tesoro lejano estira ese brazo derecho y atrápalo"
+    text_en:
+      - "Stretch your right arm out as if you were a ninja"
+      - "Can you push the air with your right arm as if you were pushing a cloud"
+      - "Imagine reaching for a distant treasure, stretch that right arm and catch it"
   - id: 5
     pose: "Brazo izquierdo hacia delante"
     text: 
-      - "  Coloca tu brazo izquierdo hacia adelante como si quisieras empujar algo invisible"
-      - "  El brazo izquierdo quiere ser el protagonista extiéndelo con estilo"
-      - "  Imagina que estás empujando una puerta gigante con tu brazo izquierdo"
+      - "Coloca tu brazo izquierdo hacia adelante como si quisieras empujar algo invisible"
+      - "El brazo izquierdo quiere ser el protagonista extiéndelo con estilo"
+      - "Imagina que estás empujando una puerta gigante con tu brazo izquierdo"
+    text_en:
+      - "Put your left arm forward as if you wanted to push something invisible"
+      - "The left arm wants to be the star, extend it with style"
+      - "Imagine you are pushing a giant door with your left arm"
   - id: 6
     pose: "Ambos brazos hacia delante"
     text: 
-      - "  Alerta de intrusos camina con los brazos tiesos hacia adelante pero sin hablar"
-      - "  Estira ambos brazos como si abrazaras un globo gigante"
-      - "  A por el récord mantén los brazos rectos hacia el frente como un tren veloz"
+      - "Alerta de intrusos camina con los brazos tiesos hacia adelante pero sin hablar"
+      - "Estira ambos brazos como si abrazaras un globo gigante"
+      - "A por el récord mantén los brazos rectos hacia el frente como un tren veloz"
+    text_en:
+      - "Intruder alert, walk with stiff arms forward but without speaking"
+      - "Stretch both arms as if hugging a giant balloon"
+      - "Go for the record, keep your arms straight forward like a speeding train"
   - id: 7
     pose: "Símbolo X con los brazos"
     text: 
-      - "  Cruz de guerrero forma una X con los brazos y protege tu tesoro secreto"
-      - "  Vamos a realizar un escudo con los brazos en forma de X como si fueras un superhéroe"
-      - "  Sabes cómo se hace la X de los piratas cruza los brazos y di 'tierra a la vista'"
+      - "Cruz de guerrero forma una X con los brazos y protege tu tesoro secreto"
+      - "Vamos a realizar un escudo con los brazos en forma de X como si fueras un superhéroe"
+      - "Sabes cómo se hace la X de los piratas cruza los brazos y di 'tierra a la vista'"
+    text_en:
+      - "Warrior cross, form an X with your arms and protect your secret treasure"
+      - "Let's make a shield with our arms in the shape of an X like a superhero"
+      - "Do you know how to make the pirate's X? Cross your arms and say 'land ho'"
   - id: 8
     pose: "Tocando nariz con muneca derecha"
     text: 
-      - "  Toca tu nariz con la muñeca derecha como si buscaras pistas secretas"
-      - "  Puedes hacer que tu muñeca derecha y tu nariz sean mejores amigos"
-      - "  Reto ninja toca la nariz con la muñeca derecha sin hacer ruido"
+      - "Toca tu nariz con la muñeca derecha como si buscaras pistas secretas"
+      - "Puedes hacer que tu muñeca derecha y tu nariz sean mejores amigos"
+      - "Reto ninja toca la nariz con la muñeca derecha sin hacer ruido"
+    text_en:
+      - "Touch your nose with your right wrist as if looking for secret clues"
+      - "Can you make your right wrist and your nose become best friends"
+      - "Ninja challenge, touch your nose with your right wrist without making a sound"
   - id: 9
     pose: "Tocando nariz con muneca izquierda"
     text: 
-      - "  Ahora el lado izquierdo quiere participar puedes tocar tu nariz con la muñeca izquierda sin reírte"
-      - "  Muéstrale a tu nariz que la muñeca izquierda también es divertida puedes tocarla"
-      - "  Serás un robot Toca la nariz con la mano izquierda y di 'soy Yaren, el robot'"
+      - "Ahora el lado izquierdo quiere participar puedes tocar tu nariz con la muñeca izquierda sin reírte"
+      - "Muéstrale a tu nariz que la muñeca izquierda también es divertida puedes tocarla"
+      - "Serás un robot Toca la nariz con la mano izquierda y di 'soy Yaren, el robot'"
+    text_en:
+      - "Now the left side wants to join, can you touch your nose with your left wrist without laughing"
+      - "Show your nose that the left wrist is also fun, can you touch it"
+      - "You will be a robot, touch your nose with your left hand and say 'I am Yaren, the robot'"
   - id: 10
     pose: "Tocando ojo izquierdo con muneca izquierda"
     text: 
-      - "  Cuidado con el ojo izquierdo tócalo suavemente con la muñeca izquierda como si pusieras un parche de pirata"
-      - "  Cierra el ojo derecho y tocalo con la muñeca izquierda como un pirata buscando un tesoro"
-      - "  Toca tu ojo izquierdo con la muñeca izquierda antes de que Yaren cuente hasta 3"
+      - "Cuidado con el ojo izquierdo tócalo suavemente con la muñeca izquierda como si pusieras un parche de pirata"
+      - "Cierra el ojo derecho y tocalo con la muñeca izquierda como un pirata buscando un tesoro"
+      - "Toca tu ojo izquierdo con la muñeca izquierda antes de que Yaren cuente hasta 3"
+    text_en:
+      - "Careful with the left eye, touch it gently with your left wrist as if putting on a pirate patch"
+      - "Close your right eye and touch it with your left wrist like a pirate looking for treasure"
+      - "Touch your left eye with your left wrist before Yaren counts to 3"
   - id: 11
     pose: "Tocando ojo izquierdo con muneca derecha"
     text: 
-      - "  Manos cruzadas usa la muñeca derecha para tocar el ojo izquierdo, como un mago haciendo un truco"
-      - "  Lograrás tocar el ojo izquierdo con la muñeca derecha sin enredarte"
-      - "  Equilibrio total toca tu ojo izquierdo con la muñeca derecha y mantén el equilibrio como un equilibrista"
+      - "Manos cruzadas usa la muñeca derecha para tocar el ojo izquierdo, como un mago haciendo un truco"
+      - "Lograrás tocar el ojo izquierdo con la muñeca derecha sin enredarte"
+      - "Equilibrio total toca tu ojo izquierdo con la muñeca derecha y mantén el equilibrio como un equilibrista"
+    text_en:
+      - "Crossed hands, use your right wrist to touch your left eye, like a magician doing a trick"
+      - "Will you manage to touch your left eye with your right wrist without getting tangled"
+      - "Total balance, touch your left eye with your right wrist and keep your balance like a tightrope walker"
   - id: 12
     pose: "Tocando ojo derecho con muneca derecha"
     text: 
-      - "  Toca tu ojo derecho con la muñeca derecha, pero con mucho cuidado, por favor"
-      - "  Imagina que tu ojo derecho es un botón mágico tócalo con tu muñeca derecha para activarlo"
-      - "  Puedes hacerlo con un ojo cerrado toca el ojo derecho con tu muñeca derecha y haz como que duermes"
+      - "Toca tu ojo derecho con la muñeca derecha, pero con mucho cuidado, por favor"
+      - "Imagina que tu ojo derecho es un botón mágico tócalo con tu muñeca derecha para activarlo"
+      - "Puedes hacerlo con un ojo cerrado toca el ojo derecho con tu muñeca derecha y haz como que duermes"
+    text_en:
+      - "Touch your right eye with your right wrist, but very carefully, please"
+      - "Imagine your right eye is a magic button, touch it with your right wrist to activate it"
+      - "Can you do it with one eye closed? Touch your right eye with your right wrist and pretend to sleep"
   - id: 13
     pose: "Tocando ojo derecho con muneca izquierda"
     text: 
-      - "  Usa tu muñeca izquierda para tocar el ojo derecho, como si desactivaras una bomba de cosquillas"
-      - "  Podrás tocar el ojo derecho con la muñeca izquierda sin hacerte daño"
-      - "  Toca tu ojo derecho con la muñeca izquierda serás más ágil que un delfin"
+      - "Usa tu muñeca izquierda para tocar el ojo derecho, como si desactivaras una bomba de cosquillas"
+      - "Podrás tocar el ojo derecho con la muñeca izquierda sin hacerte daño"
+      - "Toca tu ojo derecho con la muñeca izquierda serás más ágil que un delfin"
+    text_en:
+      - "Use your left wrist to touch your right eye, as if defusing a tickle bomb"
+      - "Will you be able to touch your right eye with your left wrist without hurting yourself"
+      - "Touch your right eye with your left wrist, you will be more agile than a dolphin"
   - id: 14
     pose: "Tocando oreja derecha con mano derecha"
     text: 
-      - "  Yaren dice Agarra tu oreja derecha con tu mano derecha como si escucharas un secreto del espacio"
-      - "  Puedes tocar tu oreja derecha con tu mano derecha y hacer la pose de un teléfono antiguo"
-      - "  Oreja derecha al rescate tócala rapido con tu mano derecho antes de que Yaren diga pilas"
+      - "Yaren dice Agarra tu oreja derecha con tu mano derecha como si escucharas un secreto del espacio"
+      - "Puedes tocar tu oreja derecha con tu mano derecha y hacer la pose de un teléfono antiguo"
+      - "Oreja derecha al rescate tócala rapido con tu mano derecho antes de que Yaren diga pilas"
+    text_en:
+      - "Yaren says, grab your right ear with your right hand as if listening to a secret from space"
+      - "Can you touch your right ear with your right hand and strike the pose of an old telephone"
+      - "Right ear to the rescue, touch it quickly with your right hand before Yaren says go"
   - id: 15
     pose: "Tocando oreja derecha con mano izquierda"
     text: 
-      - "  Toca la oreja derecha con la mano izquierda, como un detective descubriendo un misterio"
-      - "  Tu mano izquierda y tu oreja derecha son enemigos o amigos Haz que se den la paz"
-      - "  Toca la oreja derecha con la mano izquierda sin perder el balance"
+      - "Toca la oreja derecha con la mano izquierda, como un detective descubriendo un misterio"
+      - "Tu mano izquierda y tu oreja derecha son enemigos o amigos Haz que se den la paz"
+      - "Toca la oreja derecha con la mano izquierda sin perder el balance"
+    text_en:
+      - "Touch your right ear with your left hand, like a detective discovering a mystery"
+      - "Are your left hand and right ear enemies or friends? Make them make peace"
+      - "Touch your right ear with your left hand without losing your balance"
   - id: 16
     pose: "Tocando oreja derecha con ambas manos"
     text: 
-      - "  Cubre tu oreja con ambas manos como si fuera un paraguas contra una lluvia de hamburguesas"
-      - "  Tapa tu oreja derecha con las dos manos antes que se moje con la lluvia"
-      - "  Acaricia tu oreja derecha con ambas manos como si fuera un conejito tímido"
+      - "Cubre tu oreja con ambas manos como si fuera un paraguas contra una lluvia de hamburguesas"
+      - "Tapa tu oreja derecha con las dos manos antes que se moje con la lluvia"
+      - "Acaricia tu oreja derecha con ambas manos como si fuera un conejito tímido"
+    text_en:
+      - "Cover your ear with both hands as if it were an umbrella against a rain of hamburgers"
+      - "Cover your right ear with both hands before it gets wet in the rain"
+      - "Pet your right ear with both hands as if it were a shy little bunny"
   - id: 17
     pose: "Tocando oreja izquierda con mano izquierda"
     text: 
-      - "  Oreja izquierda, acción Tócala con tu mano izquierda como si ajustaras una antena alienígena"
-      - "  Puedes tocar tu mano izquierda y hacer la pose de un teléfono antiguo en tu oreja izquierda"
-      - "  Levanta la mano izquierda, toca tu oreja y di en secreto: Conexión galactica establecida"
+      - "Oreja izquierda, acción Tócala con tu mano izquierda como si ajustaras una antena alienígena"
+      - "Puedes tocar tu mano izquierda y hacer la pose de un teléfono antiguo en tu oreja izquierda"
+      - "Levanta la mano izquierda, toca tu oreja y di en secreto: Conexión galactica establecida"
+    text_en:
+      - "Left ear, action! Touch it with your left hand as if adjusting an alien antenna"
+      - "Can you touch your left hand and strike the pose of an old phone on your left ear"
+      - "Raise your left hand, touch your ear and say in secret: Galactic connection established"
   - id: 18
     pose: "Tocando oreja izquierda con mano derecha"
     text: 
-      - "  Toca tu oreja izquierda con la mano derecha, como si desbloquearas un poder secreto de superheroe"
-      - "  Puedes tocar la oreja izquierda con la mano derecha sin hacerte nudos en los dedos tú puedes"
-      - "  Imagina que eres un superheroe toca tu oreja izquierda con la mano derecha como si activaras un superpoder"
+      - "Toca tu oreja izquierda con la mano derecha, como si desbloquearas un poder secreto de superheroe"
+      - "Puedes tocar la oreja izquierda con la mano derecha sin hacerte nudos en los dedos tú puedes"
+      - "Imagina que eres un superheroe toca tu oreja izquierda con la mano derecha como si activaras un superpoder"
+    text_en:
+      - "Touch your left ear with your right hand, as if unlocking a secret superhero power"
+      - "Can you touch your left ear with your right hand without knotting your fingers, you can do it"
+      - "Imagine you are a superhero, touch your left ear with your right hand as if activating a superpower"
   - id: 19
     pose: "Tocando oreja izquierda con ambas manos"
     text: 
-      - "  Tapa tu oreja izquierda con ambas manos como si un dinosaurio rugiera pero sin asustarte"
-      - "  Abraza tu oreja izquierda con las dos manos, como si guardaras un diamante invisible"
-      - "  Hay un silencio universal cúbrete la oreja izquierda con ambas manos y susurra amigos estoy listo para escuchar"
+      - "Tapa tu oreja izquierda con ambas manos como si un dinosaurio rugiera pero sin asustarte"
+      - "Abraza tu oreja izquierda con las dos manos, como si guardaras un diamante invisible"
+      - "Hay un silencio universal cúbrete la oreja izquierda con ambas manos y susurra amigos estoy listo para escuchar"
+    text_en:
+      - "Cover your left ear with both hands as if a dinosaur roared but without getting scared"
+      - "Hug your left ear with both hands, as if guarding an invisible diamond"
+      - "There is a universal silence, cover your left ear with both hands and whisper friends I am ready to listen"
   - id: 20
     pose: "Tocando hombro izquierdo con mano derecha"
     text: 
-      - "  Cruza tu mano derecha para tocar el hombro izquierdo sin que el guardián de la pizza lo note"
-      - "  Tu mano derecha y tu hombro izquierdo son equipo chócalos como compañeros de aventuras"
-      - "  Toca el hombro izquierdo con la mano derecha y mantén el equilibrio como un flamenco elegante"
+      - "Cruza tu mano derecha para tocar el hombro izquierdo sin que el guardián de la pizza lo note"
+      - "Tu mano derecha y tu hombro izquierdo son equipo chócalos como compañeros de aventuras"
+      - "Toca el hombro izquierdo con la mano derecha y mantén el equilibrio como un flamenco elegante"
+    text_en:
+      - "Cross your right hand to touch your left shoulder without the pizza guardian noticing"
+      - "Your right hand and your left shoulder are a team, high-five them like adventure buddies"
+      - "Touch your left shoulder with your right hand and keep your balance like an elegant flamingo"
   - id: 21
     pose: "Tocando hombro derecho con mano izquierda"
     text: 
-      - "  Toca tu hombro derecho con la mano izquierda, como si fueras un robot con cables cruzados Cuidado con los cortocircuitos"
-      - "  Puedes tocar el hombro derecho con la mano izquierda"
-      - "  Usa tu mano izquierda para alcanzar el hombro derecho y balancea como si nadaras"
+      - "Toca tu hombro derecho con la mano izquierda, como si fueras un robot con cables cruzados Cuidado con los cortocircuitos"
+      - "Puedes tocar el hombro derecho con la mano izquierda"
+      - "Usa tu mano izquierda para alcanzar el hombro derecho y balancea como si nadaras"
+    text_en:
+      - "Touch your right shoulder with your left hand, like a robot with crossed wires. Careful with short circuits!"
+      - "Can you touch your right shoulder with your left hand"
+      - "Use your left hand to reach your right shoulder and balance as if you were swimming"
   - id: 22
     pose: "Tocando codo izquierdo con mano derecha"
     text: 
-      - "  Toca tu codo izquierdo con la mano derecha como si buscaras un botón invisible de emergencia"
-      - "  Logras tocar el codo izquierdo con la mano derecha sin parecer un galleta humano tu puedes"
-      - "  Hora del saludo extraterrestre mano derecha al codo izquierdo y di Nanu nanu"
+      - "Toca tu codo izquierdo con la mano derecha como si buscaras un botón invisible de emergencia"
+      - "Logras tocar el codo izquierdo con la mano derecha sin parecer un galleta humano tu puedes"
+      - "Hora del saludo extraterrestre mano derecha al codo izquierdo y di Nanu nanu"
+    text_en:
+      - "Touch your left elbow with your right hand as if looking for an invisible emergency button"
+      - "Can you manage to touch your left elbow with your right hand without looking like a human pretzel, you can do it"
+      - "Time for the alien greeting, right hand to left elbow and say Nanu nanu"
   - id: 23
     pose: "Tocando codo derecho con mano izquierda"
     text: 
-      - "  Toca tu codo derecho con la mano izquierda y mueve las caderas como si resbalaras en hielo"
-      - "  Por favor coloca tu mano izquierda en tu codo derecho y haz la cara de sorpresa"
-      - "  Podrás tocar el codo derecho con la mano izquierda y sacar la lengua Doble desafío"
+      - "Toca tu codo derecho con la mano izquierda y mueve las caderas como si resbalaras en hielo"
+      - "Por favor coloca tu mano izquierda en tu codo derecho y haz la cara de sorpresa"
+      - "Podrás tocar el codo derecho con la mano izquierda y sacar la lengua Doble desafío"
+    text_en:
+      - "Touch your right elbow with your left hand and move your hips as if slipping on ice"
+      - "Please place your left hand on your right elbow and make a surprised face"
+      - "Will you be able to touch your right elbow with your left hand and stick your tongue out? Double challenge!"

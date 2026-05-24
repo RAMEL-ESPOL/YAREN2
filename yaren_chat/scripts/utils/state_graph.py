@@ -50,7 +50,7 @@ class StateGraphLLM:
         
         # Logging detallado para ver qué método se usó
         self.node.get_logger().info(
-            f"Detection: {movement_result.get('movement_detected')} | "
+            f"🤖 Detection: {movement_result.get('movement_detected')} | "
             f"Type: {movement_result.get('movement_type')} | "
             f"Method: {movement_result.get('detection_method', 'unknown')}"
         )
@@ -82,15 +82,22 @@ class StateGraphLLM:
         }
     
     def execute_movement(self, state: ChatState):
-        """Ejecuta el movimiento del robot basado en la intención detectada"""        
-        self.node.get_logger().info(f"Movement detected: {state['movement_intent']['movement_type']}")
+            """Ejecuta el movimiento del robot basado en la intención detectada"""        
+            self.node.get_logger().info(f"Movement detected: {state['movement_intent']['movement_type']}")
 
-        mensaje_ai_predefinido = AIMessage(
-            content=f"¡He realizado el movimiento de {state['movement_intent']['movement_type']}! ¿Hay algo más en lo que pueda ayudarte?"
-        )
+            # Leer el idioma actual directamente del nodo principal
+            idioma = getattr(self.node, 'idioma_actual', 'es')
+            
+            # Asignar la respuesta dinámica según el estado
+            if idioma == "en":
+                texto_respuesta = f"I have executed the {state['movement_intent']['movement_type']} movement! Is there anything else I can help you with?"
+            else:
+                texto_respuesta = f"¡He realizado el movimiento de {state['movement_intent']['movement_type']}! ¿Hay algo más en lo que pueda ayudarte?"
 
-        state["messages"].append(mensaje_ai_predefinido)
+            mensaje_ai_predefinido = AIMessage(content=texto_respuesta)
 
-        return {
-            "messages": state["messages"]
-        }
+            state["messages"].append(mensaje_ai_predefinido)
+
+            return {
+                "messages": state["messages"]
+            }

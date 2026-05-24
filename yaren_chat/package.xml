@@ -4,7 +4,7 @@
   <name>yaren_chat</name>
   <version>0.0.0</version>
   <description>Package to incorporate a virtual voice assistant for children in hospitals</description>
-  <maintainer email="iesusdavila@gmail.com">Iesus Davila</maintainer>
+  <maintainer email="raestrad@espol.edu.ec">roberto</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

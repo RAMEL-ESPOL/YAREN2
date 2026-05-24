@@ -1,76 +1,60 @@
 #!/usr/bin/env python3
-import time
 import vlc
 import sys
-from pynput import mouse
-
-cerrar_programa = False
-
-def on_click(x, y, button, pressed):
-    """Función que detecta clics globales del ratón."""
-    global cerrar_programa
-    # Filtrar solo cuando se presiona el botón izquierdo
-    if pressed and button == mouse.Button.left:
-        print("\nClic izquierdo detectado. Cerrando video y terminando proceso...")
-        cerrar_programa = True
-        return False  # Detiene el listener de pynput para no consumir recursos
+import tkinter as tk
 
 def play_video():
-    global cerrar_programa
-    try:
-        # 1. Definir los argumentos para pantalla completa y sin distracciones
-        vlc_args = [
-            "--fullscreen",                   
-            "--no-video-title-show", 
-            "--mouse-hide-timeout=0",
-            "--video-on-top",
-            "--no-mouse-events"           
-        ]
-        
-        # 2. Inicializar VLC
-        vlc_instance = vlc.Instance(*vlc_args)
-        player = vlc_instance.media_list_player_new()
+    # 1. Crear ventana principal a pantalla completa
+    root = tk.Tk()
+    root.attributes('-fullscreen', True)
+    root.configure(background='black')
+    root.config(cursor="none")  # Ocultar el cursor para no distraer
 
-         # CREAMOS PRIMERO EL REPRODUCTOR INDIVIDUAL (Control directo de ventana)
-        inner_player = vlc_instance.media_player_new()
-
-        # CREAMOS EL REPRODUCTOR DE LISTA Y LE VINCULAMOS EL REPRODUCTOR BASE
-        player = vlc_instance.media_list_player_new()
-        player.set_media_player(inner_player) # <--- Enlace crucial
-        
-        # 3. Cargar el video
-        ruta_video = "/home/jetson/robotis_ws/src/YAREN2/yaren_radio/videos/El Pollito Pío 3D - Canciones de la Granja de Zenón 2.mp4"
-        media_list = vlc_instance.media_list_new([ruta_video])
-        player.set_media_list(media_list)
-        
-        # 4. Configurar bucle infinito
-        player.set_playback_mode(vlc.PlaybackMode.loop)
-        
-        # --- INICIAR EL DETECTOR DE CLICS EN SEGUNDO PLANO ---
-        listener = mouse.Listener(on_click=on_click)
-        listener.start()
-        # -----------------------------------------------------
-
-        # Reproducir
-        player.play()
-        time.sleep(0.5)
-        inner_player.set_fullscreen(True)
-        print(" Reproduciendo video. Haz clic izquierdo en la pantalla para salir.")
-    
-        # 6. Mantener el programa abierto hasta que se haga clic
-        while not cerrar_programa:
-            time.sleep(0.2)    
-            
-    except KeyboardInterrupt:
-        print("\nDeteniendo el video por terminal...")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        # Detener la reproducción y limpiar instancias de memoria
-        if 'player' in locals() and player is not None:
-            player.stop()
-        print("Proceso completamente terminado.")
+    # 2. Función unificada para cerrar todo
+    def close_app(event=None):
+        print("\nEntrada detectada (Touch/Clic/Tecla). Cerrando video...")
+        player.stop()
+        root.destroy()
         sys.exit(0)
 
+    # 3. Vincular el clic izquierdo/toque (<Button-1>) y cualquier tecla para cerrar
+    root.bind('<Button-1>', close_app)
+    root.bind('<Any-KeyPress>', close_app)
+
+    # 4. Crear el frame (marco) contenedor donde se proyectará el video
+    video_frame = tk.Frame(root, bg='black')
+    video_frame.pack(fill=tk.BOTH, expand=True)
+    video_frame.bind('<Button-1>', close_app)
+
+    # 5. Configurar VLC
+    # --no-mouse-events y --no-keyboard-events hacen que VLC no se "robe" el touch,
+    # permitiendo que pase a la ventana de Tkinter que lo cerrará.
+    vlc_instance = vlc.Instance("--no-xlib", "--no-mouse-events", "--no-keyboard-events", "--quiet")
+    
+    inner_player = vlc_instance.media_player_new()
+    player = vlc_instance.media_list_player_new()
+    player.set_media_player(inner_player)
+
+    # 6. Cargar el video
+    ruta_video = "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/videos/El Pollito Pío 3D - Canciones de la Granja de Zenón 2.mp4"
+    media_list = vlc_instance.media_list_new([ruta_video])
+    player.set_media_list(media_list)
+    player.set_playback_mode(vlc.PlaybackMode.loop)
+
+    # 7. Empotrar VLC en la ventana de Tkinter (Requerido para Linux/Ubuntu)
+    # winfo_id() obtiene el ID de la ventana para que VLC dibuje directamente ahí
+    window_id = video_frame.winfo_id()
+    inner_player.set_xwindow(window_id)
+
+    # 8. Reproducir e iniciar el bucle de la interfaz gráfica
+    player.play()
+    print("Reproduciendo video. Toca la pantalla o haz clic para salir.")
+    
+    try:
+        # mainloop() reemplaza tu 'while not cerrar_programa'
+        root.mainloop() 
+    except KeyboardInterrupt:
+        close_app()
+
 if __name__ == '__main__':
-     play_video()
+    play_video()

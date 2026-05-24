@@ -6,6 +6,14 @@ from launch.event_handlers import OnProcessStart
 
 def generate_launch_description():
 
+    # 🔹 GESTOR DE IDIOMA — arranca primero, publica /yaren/current_language
+    gestor_idioma_node = Node(
+        name='language_manager',
+        package='yaren_idioma',
+        executable='gestor_idioma',
+        output='screen',
+    )
+
     stt_node = LifecycleNode(
         name='stt_lifecycle_node',
         namespace='',
@@ -13,7 +21,6 @@ def generate_launch_description():
         executable='stt_lifecycle_node.py',
         output='screen',
     )
-
     llm_node = LifecycleNode(
         name='llm_lifecycle_node',
         namespace='',
@@ -21,7 +28,6 @@ def generate_launch_description():
         executable='llm_lifecycle_node.py',
         output='screen',
     )
-
     tts_node = LifecycleNode(
         name='tts_lifecycle_node',
         namespace='',
@@ -29,7 +35,6 @@ def generate_launch_description():
         executable='tts_lifecycle_node.py',
         output='screen',
     )
-
     control_manager_node = Node(
         name='lifecycle_control_manager',
         package='yaren_chat',
@@ -37,31 +42,31 @@ def generate_launch_description():
         output='screen'
     )
 
-
     return LaunchDescription([
-        llm_node,    # 1. El cerebro arranca primero
-        
-        # 2. El TTS arranca 2s después del LLM
+        gestor_idioma_node,
+
+        RegisterEventHandler(
+            OnProcessStart(
+                target_action=gestor_idioma_node,
+                on_start=[TimerAction(period=0.5, actions=[llm_node])]
+            )
+        ),
         RegisterEventHandler(
             OnProcessStart(
                 target_action=llm_node,
-                on_start=[TimerAction(period=2.0, actions=[tts_node])]
+                on_start=[TimerAction(period=1.0, actions=[tts_node])]
             )
         ),
-        
-        # 3. El STT arranca 5s después del LLM (tiempo suficiente para inicializar Vosk)
         RegisterEventHandler(
             OnProcessStart(
                 target_action=llm_node,
-                on_start=[TimerAction(period=10.0, actions=[stt_node])]
+                on_start=[TimerAction(period=3.0, actions=[stt_node])]
             )
         ),
-        
-        # 4. El controlador arranca SOLO cuando el STT (el más lento) ha iniciado
         RegisterEventHandler(
             OnProcessStart(
                 target_action=stt_node,
-                on_start=[TimerAction(period=15.0, actions=[control_manager_node])]
+                on_start=[TimerAction(period=5.0, actions=[control_manager_node])]
             )
         ),
     ])

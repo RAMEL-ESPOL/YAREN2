@@ -3,8 +3,9 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from std_msgs.msg import Int16, Bool
+from rclpy.qos import QoSProfile, DurabilityPolicy
 from cv_bridge import CvBridge
-from std_msgs.msg import Int16
 import numpy as np
 import tensorflow as tf
 import cv2
@@ -13,18 +14,34 @@ import os
 import threading
 from ament_index_python.packages import get_package_share_directory
 
-EMOTIONS_LIST = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
+# 1. Definir diccionarios de emociones para ambos idiomas
+EMOTIONS_EN = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
+EMOTIONS_ES = ["Enojado", "Disgusto", "Miedo", "Feliz", "Triste", "Sorpresa", "Neutral"]
 
 class EmotionDetectionNode(Node):
     def __init__(self):
         super().__init__('detector')
 
+        # 2. Variable para el idioma actual (inicia en False = Español por defecto)
+        self.is_english = False
+
         self.window_name = "YAREN2 - Emotion Detector"
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         
-        # Configurar evento de clic de ratón
         cv2.setMouseCallback(self.window_name, self.on_mouse_click)
+
+        # 3. Suscripción al tópico de idioma con QoS Transient Local
+        qos_profile = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
+        )
+        self.lang_subscription = self.create_subscription(
+            Bool, 
+            '/yaren/is_english', 
+            self.language_callback, 
+            qos_profile
+        )
 
         pkg_path = get_package_share_directory('yaren_emotions')
         model_path = os.path.join(pkg_path, 'models', 'model_mbn_1.h5')
@@ -59,21 +76,23 @@ class EmotionDetectionNode(Node):
         self.get_logger().info('Emotion Node: PANTALLA COMPLETA activada ✓')
         self.get_logger().info('Haz click izquierdo en la ventana para CERRAR.')
 
-   # --- CAMBIO AQUÍ: Forzar el cierre de la ventana y matar procesos ---
+    # 4. Callback para actualizar el idioma en tiempo real
+    def language_callback(self, msg):
+        self.is_english = msg.data
+        lang_str = "English" if self.is_english else "Español"
+        self.get_logger().info(f'Idioma actualizado en detector de emociones a: {lang_str}')
+
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN: 
             self.get_logger().info('Clic detectado. Cerrando ventana y matando procesos de cámara/emociones...')
             
-            # 1. Destruir la ventana de OpenCV inmediatamente
             cv2.destroyAllWindows()
-            for i in range(5):  # Asegurar que OpenCV libere la ventana en Linux
+            for i in range(5): 
                 cv2.waitKey(1)
                 
-            # 2. Matar el proceso de la cámara (csi_cam) y cualquier proceso de yaren_emotions
             kill_cmd = "for pid in $(ps aux | grep -E 'csi_cam|yaren_emotions' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done"
             os.system(kill_cmd)
             
-            # 3. Apagar ROS (si el proceso actual sobrevive al kill_cmd)
             try:
                 rclpy.shutdown()
             except Exception:
@@ -110,7 +129,6 @@ class EmotionDetectionNode(Node):
 
         vis = cv2.resize(vis, (800, 480))
         
-        # Solo intentar renderizar si ROS sigue activo (evita errores si se hace click a mitad del callback)
         if rclpy.ok():
             cv2.imshow(self.window_name, vis)
             cv2.waitKey(1)
@@ -153,10 +171,16 @@ class EmotionDetectionNode(Node):
                     preds = self.model(roi, training=False)
                     idx = int(np.argmax(preds))
                     
+                    # 5. Seleccionar la lista según el idioma
+                    current_emotion_list = EMOTIONS_EN if self.is_english else EMOTIONS_ES
+                    
                     with self._lock:
-                        self._result_label = EMOTIONS_LIST[idx]
+                        # 6. Asignar la emoción traducida
+                        self._result_label = current_emotion_list[idx]
                         self._result_box = (x_min, y_min, x_max, y_max)
 
+                    # Importante: El ID que se publica sigue siendo el mismo número, 
+                    # solo cambia el texto que se dibuja en pantalla.
                     self.publisher.publish(Int16(data=idx))
             else:
                 with self._lock:
@@ -170,7 +194,6 @@ def main(args=None):
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
-        # Limpieza final por seguridad
         cv2.destroyAllWindows()
         node.destroy_node()
         if rclpy.ok():

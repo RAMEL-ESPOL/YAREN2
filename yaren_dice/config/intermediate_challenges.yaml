@@ -1,41 +1,51 @@
 intermediate_challenges:
   - id: 1
     sequence_length: 2
-    poses: [1, 2]  # Brazo derecho arriba, Brazo izquierdo arriba
+    poses: [1, 2] 
     text: "Perfecto! Ahora haremos una secuencia de dos movimientos. Primero alza tu brazo derecho, luego alza tu brazo izquierdo"
+    text_en: "Perfect! Now we'll do a two-movement sequence. First raise your right arm, then raise your left arm."
   - id: 2
     sequence_length: 2
-    poses: [3, 8]  # Ambos brazos arriba, Tocando nariz con muñeca derecha
+    poses: [3, 8] 
     text: "Vamos con otra secuencia. Primero alza ambos brazos, luego toca tu nariz con la muñeca derecha"
+    text_en: "Let's go with another sequence. First raise both arms, then touch your nose with your right wrist."
   - id: 3
     sequence_length: 3
-    poses: [4, 5, 7]  # Brazo derecho adelante, Brazo izquierdo adelante, X con brazos
+    poses: [4, 5, 7] 
     text: "¡Secuencia de tres! Estira tu brazo derecho hacia adelante, después el izquierdo y por último forma una X con tus brazos"
+    text_en: "Sequence of three! Stretch your right arm forward, then the left, and finally form an X with your arms."
   - id: 4
     sequence_length: 2
-    poses: [1, 9]  # Brazo derecho arriba, Tocando nariz con muñeca izquierda
+    poses: [1, 9] 
     text: "Nueva secuencia de dos movimientos. Alza tu brazo derecho y luego toca tu nariz con la muñeca izquierda"
+    text_en: "New sequence of two movements. Raise your right arm and then touch your nose with your left wrist."
   - id: 5
     sequence_length: 3
-    poses: [2, 4, 8]  # Brazo izquierdo arriba, Brazo derecho adelante, Tocando nariz con muñeca derecha
+    poses: [2, 4, 8] 
     text: "Secuencia intermedia de tres pasos. Levanta el brazo izquierdo, estira el derecho hacia adelante y toca tu nariz con la muñeca derecha"
+    text_en: "Intermediate three-step sequence. Raise your left arm, stretch your right arm forward, and touch your nose with your right wrist."
   - id: 6
     sequence_length: 2
-    poses: [6, 3]  # Ambos brazos adelante, Ambos brazos arriba
+    poses: [6, 3] 
     text: "Dos movimientos seguidos. Estira ambos brazos hacia adelante y después levántalos hacia arriba"
+    text_en: "Two movements in a row. Stretch both arms forward and then raise them up."
   - id: 7
     sequence_length: 3
-    poses: [1, 5, 9]  # Brazo derecho arriba, Brazo izquierdo adelante, Tocando nariz con muñeca izquierda
+    poses: [1, 5, 9]
     text: "Secuencia de tres movimientos. Brazo derecho arriba, brazo izquierdo hacia adelante y toca la nariz con muñeca izquierda"
+    text_en: "Three-movement sequence. Right arm up, left arm forward, and touch your nose with your left wrist."
   - id: 8
     sequence_length: 2
-    poses: [7, 2]  # X con brazos, Brazo izquierdo arriba
+    poses: [7, 2] 
     text: "Combinación de dos poses. Forma una X con los brazos y después levanta solo el brazo izquierdo"
+    text_en: "Two-pose combination. Make an X with your arms and then raise only your left arm."
   - id: 9
     sequence_length: 3
-    poses: [3, 7, 4]  # Ambos brazos arriba, X con brazos, Brazo derecho adelante
+    poses: [3, 7, 4] 
     text: "Tres movimientos en secuencia. Ambos brazos arriba, forma una X y estira el brazo derecho hacia adelante"
+    text_en: "Three movements in sequence. Both arms up, make an X, and stretch your right arm forward."
   - id: 10
     sequence_length: 2
-    poses: [8, 6]  # Tocando nariz con muñeca derecha, Ambos brazos adelante
+    poses: [8, 6]
     text: "Secuencia de dos. Toca tu nariz con la muñeca derecha y después estira ambos brazos hacia adelante"
+    text_en: "Sequence of two. Touch your nose with your right wrist and then stretch both arms forward."

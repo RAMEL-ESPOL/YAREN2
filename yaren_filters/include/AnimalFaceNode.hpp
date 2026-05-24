@@ -6,6 +6,7 @@
 #include <message_filters/synchronizer.h>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/bool.hpp>          // ← faltaba este include
 #include "mask/AnimalFilter.hpp"
 #include "yaren_interfaces/msg/landmarks.hpp"
 #include <mutex>
@@ -27,26 +28,33 @@ public:
     // true cuando el usuario hizo clic en la ventana de cámara
     std::atomic<bool> cam_clicked_{ false };
 
-    // === NUEVO: Publicador para avisar al face_screen ===
+    // Idioma actual — publicado por face_screen en /yaren/is_english
+    std::atomic<bool> is_english_{ false };
+    // En AnimalFaceNode, agrega en el .hpp:
+    std::atomic<bool> language_received_{ false };
+    
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr language_sub_;
+    
+    // Publicador para avisar al face_screen
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr mode_pub_;
 
 private:
-    using ImageMsg = sensor_msgs::msg::Image;
-    using Landmarks = yaren_interfaces::msg::Landmarks;
+    using ImageMsg   = sensor_msgs::msg::Image;
+    using Landmarks  = yaren_interfaces::msg::Landmarks;
     using ApproximateTimePolicy =
         message_filters::sync_policies::ApproximateTime<ImageMsg, Landmarks>;
     using Synchronizer = message_filters::Synchronizer<ApproximateTimePolicy>;
 
-    message_filters::Subscriber<ImageMsg> image_sub_;
-    message_filters::Subscriber<Landmarks> landmarks_sub_;
-    std::shared_ptr<Synchronizer> sync_;
-    image_transport::Publisher image_pub_;
+    message_filters::Subscriber<ImageMsg>   image_sub_;
+    message_filters::Subscriber<Landmarks>  landmarks_sub_;
+    std::shared_ptr<Synchronizer>           sync_;
+    image_transport::Publisher              image_pub_;
 
     AnimalFilter current_filter_;
-    std::mutex filter_mutex_; // protege current_filter_ Y last_frame_
-    cv::Mat last_frame_; 
-    bool has_frame_{ false };
+    std::mutex   filter_mutex_;   // protege current_filter_ Y last_frame_
+    cv::Mat      last_frame_;
+    bool         has_frame_{ false };
 
-    void callback(const ImageMsg::ConstSharedPtr& img_msg,
+    void callback(const ImageMsg::ConstSharedPtr&  img_msg,
                   const Landmarks::ConstSharedPtr& landmarks_msg);
 };

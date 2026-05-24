@@ -5,8 +5,8 @@
 #include <thread>
 #include <mutex>
 #include <string>
+#include <chrono>
 #include <functional>
-
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -24,25 +24,35 @@ private:
     rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr llm_state_client_;
     rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr tts_state_client_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr yaren_ready_publisher_;
+
     void publish_yaren_ready();
+
     // ── Estado ────────────────────────────────────────────────────────
     bool stt_terminated_;
-    bool lifecycle_busy_ = false;   //evita transiciones paralelas
+    bool lifecycle_busy_ = false;
     std::mutex state_lock_;
     std::thread init_thread_;
 
-    // ── Métodos privados ──────────────────────────────────────────────
-    void _initial_configuration();
-    void stt_status_callback(const std_msgs::msg::Bool::SharedPtr msg);
-    void _manage_lifecycle_thread();
+    // ── Transición síncrona con timeout ──────────────────────────────
+    bool change_node_state(
+        const std::string& node_name,
+        uint8_t transition_id,
+        std::chrono::seconds timeout = std::chrono::seconds(15)
+    );
 
-    // Espera activa con timeout configurable por nodo
+    // ── Métodos privados ──────────────────────────────────────────────
+    void _configure_initial_nodes();   // ← lanza el hilo de configuración inicial
+    void _initial_configuration();     // ← corre dentro del hilo
+    void manage_node_lifecycle();      // ← lanza el hilo de transiciones
+    void _manage_lifecycle_thread();   // ← corre dentro del hilo
+    void stt_status_callback(const std_msgs::msg::Bool::SharedPtr msg);
+
     bool wait_for_service(
         rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr client,
         const std::string& node_name,
-        int timeout_sec);
+        int timeout_sec
+    );
 
-    // Transición síncrona — bloquea hasta recibir respuesta
     bool change_node_state_sync(const std::string& node_name, uint8_t transition_id);
 };
 
