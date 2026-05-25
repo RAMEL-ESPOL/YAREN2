@@ -1466,13 +1466,39 @@ public:
         routinesApp.isEnglish = &isEnglish;
 
         std::srand(std::time(nullptr));
+        // 🔹 RUTAS DINÁMICAS PARA LA PLAYLIST DEL MENÚ
+        // Se obtiene el directorio actual de ejecución (raíz del workspace)
+        std::string ws_dir = std::filesystem::current_path().string();
+        
         menuPlaylist = {
-            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro1.mp3",
-            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro2.mp3",
-            "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios/Intro3.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Intro1.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Intro2.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Intro3.mp3",
         };
-        radioApp.onBack = [this]() { showRadio = false; startMenuMusic(); };
-        routinesApp.onBack = [this]() { showRoutines = false; startMenuMusic(); };
+        radioApp.onBack = [this]() {
+            std::lock_guard<std::mutex> lock(navMutex);
+            
+            // 1. Detener audio de la radio
+            radioApp.killAudio();
+            
+            // 2. Ocultar interfaz de radio
+            showRadio = false;
+            
+            // 3. No publicamos "idle" (porque eso nos saca de los menús)
+            // En su lugar, simplemente nos aseguramos de que el stack 
+            // esté posicionado donde queremos.
+            
+            // 4. Si el stack no tiene la radio, la volvemos a poner
+            // (O simplemente, al no publicar idle, el VideoSynchronizer 
+            // se mantendrá en el último estado de navegación activo).
+            
+            startMenuMusic(); // Reactiva la música de menú
+        };
+        routinesApp.onBack = [this]() {
+            auto msg = std_msgs::msg::String();
+            msg.data = "idle";
+            modePublisher->publish(msg);
+        };
         routinesApp.onLaunchSubprocess = [this](std::string cmd) {
             std::thread([this, cmd]() {
                 int ret = std::system(cmd.c_str());
@@ -1489,10 +1515,32 @@ public:
         modeSubscription_ = this->create_subscription<std_msgs::msg::String>(
             "/yaren_mode", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(navMutex);
+                
                 if (msg->data == "idle" || msg->data.empty()) {
                     if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
                     activeMode.clear(); activeStopCmd.clear();
-                } else {
+                    
+                    if (showRadio) {
+                        radioApp.killAudio();
+                        showRadio = false;
+                        startMenuMusic();
+                    }
+                    if (showRoutines) {
+                        showRoutines = false;
+                        startMenuMusic();
+                    }
+                }
+                // NUEVO COMANDO: Interceptamos la solicitud de Python para abrir la RadioApp
+                else if (msg->data.rfind("play_radio_song:", 0) == 0) {
+                    int songIdx = std::stoi(msg->data.substr(16));
+                    stopMenuMusic();
+                    showRadio = true; // Forzamos mostrar la interfaz
+                    radioApp.playSong(songIdx); // Ejecuta SDL2_Mixer, danza de motores y GUI
+                    
+                    activeMode = "radio_musica";
+                    activeStopCmd = "ros2 topic pub --once /yaren_mode std_msgs/msg/String \"{data: 'idle'}\"";
+                } 
+                else {
                     activeMode = msg->data;
                     if (activeMode == "yaren_chat") first_listen_done = false;
                 }
@@ -1514,7 +1562,15 @@ public:
         rclcpp::QoS qos_profile(1);
         qos_profile.transient_local();
         languagePublisher = this->create_publisher<std_msgs::msg::Bool>("/yaren/is_english", qos_profile);
+        rclcpp::QoS qos_profile_idle(1);
+        qos_profile_idle.transient_local(); 
+        idleStatePublisher = this->create_publisher<std_msgs::msg::Bool>("/yaren/face_idle", qos_profile_idle);
         
+        wakeEventSubscription = this->create_subscription<std_msgs::msg::Bool>(
+            "/yaren/wake_event", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
+                (void)msg;
+            }
+        );
         // Publicar el estado inicial (Inglés/Español) apenas arranca la pantalla
         auto initial_msg = std_msgs::msg::Bool();
         initial_msg.data = this->isEnglish;
@@ -1565,8 +1621,24 @@ public:
         buildMenus();
         renderThread = std::thread(&VideoSynchronizer::renderLoop, this);
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
-    }
 
+        // ── Lanzar nodos Python al arrancar ──────────────────────────
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node.py|yaren_voice_menu.py|gestor_idioma.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");        const char* home = std::getenv("HOME");
+        if (home) {
+            std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
+            std::string ws      = std::string(home) + "/robotis_ws";
+            std::string setup   = ws + "/install/setup.bash";
+            std::string wake    = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/wake_word_node.py";
+            std::string voice   = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/yaren_voice_menu.py";
+            std::string lang    = ws + "/src/YAREN2/yaren_idioma/yaren_idioma/gestor_idioma.py";
+            std::string cmd_wake  = "bash -c 'source " + setup + " && " + python + " " + wake  + "' &";
+            std::string cmd_voice = "bash -c 'source " + setup + " && " + python + " " + voice + "' &";
+            std::string cmd_lang  = "bash -c 'source " + setup + " && " + python + " " + lang  + "' &";
+            std::system(cmd_wake.c_str());
+            std::system(cmd_voice.c_str());
+            std::system(cmd_lang.c_str());
+        }
+    }
     ~VideoSynchronizer() {
         running = false;
         radioApp.killAudio();
@@ -1574,6 +1646,9 @@ public:
         if (testThread.joinable()) testThread.join();
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
+
+        // ── Matar nodos Python al cerrar ─────────────────────────────
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");    
     }
 
     void drawWindow() {
@@ -1583,8 +1658,13 @@ public:
             int key = cv::waitKey(1);
             if (key == 27) {
                 if (showSettings) { showSettings = false; return; }
-                if (showRadio) { radioApp.killAudio(); showRadio = false; return; }
-                if (showRoutines) { showRoutines = false; return; }
+                if (showRadio) {
+                    // En lugar de enviar "idle", ejecutamos la misma lógica que "VOLVER"
+                    radioApp.killAudio();
+                    showRadio = false;
+                    startMenuMusic();
+                    return; // Salimos sin enviar "idle" para no salir del menú
+                }
                 std::lock_guard<std::mutex> nlock(navMutex);
                 if (!navStack.empty()) {
                     if (navStack.size() > 1) navStack.pop_back();
@@ -2148,7 +2228,13 @@ private:
         }
         const int btnH = 40, btnY = SY+TH+40, gap = 16, stopW = 300, navW = 150;
         bool hasStop = !activeMode.empty() && !activeStopCmd.empty() &&
-                       activeMode != "yaren_emotions" && activeMode != "yaren_animales" && activeMode != "yaren_accesorios"&& activeMode != "yaren_fondo"&& activeMode != "yaren_radio";
+                       activeMode != "yaren_emotions" && 
+                       activeMode != "yaren_animales" && 
+                       activeMode != "yaren_accesorios" && 
+                       activeMode != "yaren_fondo" && 
+                       activeMode != "yaren_radio" && 
+                       activeMode != "radio_musica" && 
+                       activeMode.rfind("vid_", 0) != 0; // Excluye todos los modos de video
         bool hasBack = (navStack.size() > 1);
         int totalW = navW;
         if (hasBack) totalW += navW + gap;
@@ -2320,6 +2406,20 @@ private:
                     renderPowerButton(frame);
                 }
             }
+            bool currentIdle = false;{
+                std::lock_guard<std::mutex> lock(navMutex);
+                currentIdle = navStack.empty() && !showSettings && !showRadio && !showRoutines && activeMode.empty();
+            }
+            
+            // Si el estado cambió (entró o salió de un menú), publicamos el aviso
+            if (currentIdle != lastIdleState) {
+                lastIdleState = currentIdle;
+                auto idleMsg = std_msgs::msg::Bool();
+                idleMsg.data = currentIdle;
+                idleStatePublisher->publish(idleMsg);
+                RCLCPP_INFO(this->get_logger(), "Estado de escucha de Yaren cambiado a: %s", currentIdle ? "ACTIVO" : "PAUSADO");
+            }
+
             if (!frame.empty()) {
                 { std::lock_guard<std::mutex> lk(frameMutex); latestFrame = frame.clone(); }
                 auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
@@ -2397,6 +2497,9 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr faceScreenPublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   modePublisher;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     languagePublisher; // <--- Añade esto
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr idleStatePublisher;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr wakeEventSubscription;
+    bool lastIdleState = false;
     std::thread renderThread;
     std::thread testThread;
     std::mutex  frameMutex, navMutex;

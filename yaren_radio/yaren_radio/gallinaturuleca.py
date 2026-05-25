@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import vlc
 import sys
 import tkinter as tk
@@ -36,7 +37,13 @@ def play_video():
     player.set_media_player(inner_player)
 
     # 6. Cargar el video
-    ruta_video = "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/videos/vidssave.com La Gallina Turuleca - Canciones de la Granja de Zenón 1 720P.mp4"
+    workspace_dir = os.getcwd()
+
+    ruta_video = os.path.join(
+        workspace_dir, 
+        'src', 'YAREN2', 'yaren_radio', 'videos', 
+        'vidssave.com La Gallina Turuleca - Canciones de la Granja de Zenón 1 720P.mp4'
+    )
     media_list = vlc_instance.media_list_new([ruta_video])
     player.set_media_list(media_list)
     player.set_playback_mode(vlc.PlaybackMode.loop)

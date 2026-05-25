@@ -4,7 +4,7 @@
   <name>yaren_arm_mimic</name>
   <version>0.0.0</version>
   <description>Package to mimic arm positions</description>
-  <maintainer email="raestrad@espol.edu.ec">Iesus Davila</maintainer>
+  <maintainer email="raestrad@espol.edu.ec">roberto</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

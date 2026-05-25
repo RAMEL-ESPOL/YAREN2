@@ -85,7 +85,12 @@ class EmotionDetectionNode(Node):
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN: 
             self.get_logger().info('Clic detectado. Cerrando ventana y matando procesos de cámara/emociones...')
+            from std_msgs.msg import String
+            idle_pub = self.create_publisher(String, '/yaren_mode', 1)
+            idle_pub.publish(String(data='idle'))
             
+            import time
+            time.sleep(0.1)
             cv2.destroyAllWindows()
             for i in range(5): 
                 cv2.waitKey(1)

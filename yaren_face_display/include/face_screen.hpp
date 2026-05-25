@@ -56,7 +56,7 @@ private:
     cv::Mat currentFrame;
     std::mutex frameMutex;
     
-    const std::string WINDOW_NAME = "Coco Face Screen";
+    const std::string WINDOW_NAME = "Yaren Face Screen";
     
     std::thread renderThread;
     

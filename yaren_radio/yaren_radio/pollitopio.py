@@ -2,6 +2,7 @@
 import vlc
 import sys
 import tkinter as tk
+import os
 
 def play_video():
     # 1. Crear ventana principal a pantalla completa
@@ -36,7 +37,13 @@ def play_video():
     player.set_media_player(inner_player)
 
     # 6. Cargar el video
-    ruta_video = "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/videos/El Pollito Pío 3D - Canciones de la Granja de Zenón 2.mp4"
+    workspace_dir = os.getcwd()
+
+    ruta_video = os.path.join(
+        workspace_dir, 
+        'src', 'YAREN2', 'yaren_radio', 'videos', 
+        'El Pollito Pío 3D - Canciones de la Granja de Zenón 2.mp4'
+    )
     media_list = vlc_instance.media_list_new([ruta_video])
     player.set_media_list(media_list)
     player.set_playback_mode(vlc.PlaybackMode.loop)
