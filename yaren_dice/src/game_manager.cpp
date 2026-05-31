@@ -1,5 +1,6 @@
 #include "game_manager.hpp"
-
+#include <thread>
+#include <cstdlib>
 using namespace std::chrono_literals;
 
 YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
@@ -86,7 +87,9 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
 
     // FIX: NO llamamos select_challenge() ni start_detection() aquí.
     // El juego arranca en handle_language_change() cuando llega el idioma correcto.
-    
+    std::thread([]() {
+        std::system("ros2 run yaren_dice pose_detector &");
+    }).detach();
     RCLCPP_INFO(this->get_logger(), "Game manager ready, waiting for language topic...");
 }
 

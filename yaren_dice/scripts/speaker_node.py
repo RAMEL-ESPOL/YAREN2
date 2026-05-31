@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn
 from std_msgs.msg import Bool, String
 import os
 from piper import PiperVoice
@@ -13,119 +12,137 @@ from playsound import playsound
 import threading
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 
-class YarenSpeakerNode(Node):
+
+class YarenSpeakerNode(LifecycleNode):
+
     def __init__(self):
         super().__init__('yaren_speaker_node')
-
-        self.audio_playing_publisher = self.create_publisher(
-            Bool, '/audio_playing', 10)
-        
-        self.create_subscription(
-            String, '/game_feedback', self.speak_game_feedback, 10)
-        
-        # 1. Variable de estado inicial
-        self.is_english = False
-        
-        # 2. Configurar QoS Transient Local para ESCUCHAR a la pantalla
-        qos_profile = QoSProfile(
-            depth=1,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
-        )
-        
-        # 3. Suscribirse al tópico de idioma que publica face_screen.cpp
-        self.create_subscription(
-            Bool, '/yaren/is_english', self.language_callback, qos_profile)
-        
-        pkg_share_dir_tts = get_package_share_directory('yaren_dice')
-        
-        # Rutas del modelo en Español
-        self.tts_model_path_es = os.path.join(pkg_share_dir_tts, 'models', 'es_MX-claude-high.onnx')
-        self.tts_config_path_es = os.path.join(pkg_share_dir_tts, 'models', 'es_MX-claude-high.onnx.json')
-        
-        # Rutas del modelo en Inglés
-        self.tts_model_path_en = os.path.join(pkg_share_dir_tts, 'models', 'en_US-lessac-medium.onnx')
-        self.tts_config_path_en = os.path.join(pkg_share_dir_tts, 'models', 'en_US-lessac-medium.onnx.json')
-        
-        # Diccionario para almacenar ambas voces cargadas
-        self.voices = {}
-
-        self.init_tts()
-        
+        self.voices        = {}
+        self.is_english    = False
         self.speaking_lock = threading.Lock()
-        
-        self.get_logger().info('Yaren Speaker Node started successfully (Bilingual Mode)')
-    
-    def init_tts(self):
-        # Cargar modelo en Español
-        try:
-            self.voices['es'] = PiperVoice.load(
-                model_path=self.tts_model_path_es,
-                config_path=self.tts_config_path_es,
-                use_cuda=False
-            )
-            self.get_logger().info("Motor TTS (Español) inicializado correctamente")
-        except Exception as e:
-            self.get_logger().error(f"Fallo al inicializar TTS (Español): {str(e)}")
+        self._active       = False
+        self.audio_playing_publisher = None
+        self.feedback_subscription   = None
+        self.language_subscription   = None
+        # Rutas de modelos (solo strings, sin cargar nada)
+        pkg = get_package_share_directory('yaren_dice')
+        self.tts_model_path_es  = os.path.join(pkg, 'models', 'es_MX-claude-high.onnx')
+        self.tts_config_path_es = os.path.join(pkg, 'models', 'es_MX-claude-high.onnx.json')
+        self.tts_model_path_en  = os.path.join(pkg, 'models', 'en_US-lessac-medium.onnx')
+        self.tts_config_path_en = os.path.join(pkg, 'models', 'en_US-lessac-medium.onnx.json')
 
-        # Cargar modelo en Inglés
+    # ──────────────────────────────────────────────
+    # Lifecycle callbacks
+    # ──────────────────────────────────────────────
+
+    def on_configure(self, state):
+        """Carga ambos modelos TTS una sola vez."""
+        self.get_logger().info('Cargando modelos TTS...')
         try:
-            self.voices['en'] = PiperVoice.load(
-                model_path=self.tts_model_path_en,
-                config_path=self.tts_config_path_en,
-                use_cuda=False
-            )
-            self.get_logger().info("Motor TTS (Inglés) inicializado correctamente")
+            self._load_tts()
+            self.audio_playing_publisher = self.create_publisher(Bool, '/audio_playing', 10)
+            # Idioma: escuchar siempre aunque el nodo esté en pausa
+            qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+            self.language_subscription = self.create_subscription(
+                Bool, '/yaren/is_english', self.language_callback, qos)
+            self.get_logger().info('Modelos TTS listos ✓')
+            return TransitionCallbackReturn.SUCCESS
         except Exception as e:
-            self.get_logger().error(f"Fallo al inicializar TTS (Inglés): Error: {str(e)}")
+            self.get_logger().error(f'Error en configure: {e}')
+            return TransitionCallbackReturn.FAILURE
+
+    def on_activate(self, state):
+        """Empieza a escuchar feedback del juego."""
+        self.get_logger().info('YarenSpeaker ACTIVO')
+        self._active = True
+        self.feedback_subscription = self.create_subscription(
+            String, '/game_feedback', self.speak_game_feedback, 10)
+        return super().on_activate(state)
+
+    def on_deactivate(self, state):
+        """Deja de hablar — modelos siguen en RAM."""
+        self.get_logger().info('YarenSpeaker en PAUSA')
+        self._active = False
+        if self.feedback_subscription is not None:
+            self.destroy_subscription(self.feedback_subscription)
+            self.feedback_subscription = None
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state):
+        self.voices = {}
+        if self.audio_playing_publisher is not None:
+            self.destroy_publisher(self.audio_playing_publisher)
+            self.audio_playing_publisher = None
+        if self.language_subscription is not None:
+            self.destroy_subscription(self.language_subscription)
+            self.language_subscription = None
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state):
+        self._active = False
+        self.voices  = {}
+        return TransitionCallbackReturn.SUCCESS
+
+    # ──────────────────────────────────────────────
+    # Helpers privados
+    # ──────────────────────────────────────────────
+
+    def _load_tts(self):
+        for lang, model, config in [
+            ('es', self.tts_model_path_es, self.tts_config_path_es),
+            ('en', self.tts_model_path_en, self.tts_config_path_en),
+        ]:
+            try:
+                self.voices[lang] = PiperVoice.load(
+                    model_path=model, config_path=config, use_cuda=False)
+                self.get_logger().info(f'TTS ({lang}) cargado ✓')
+            except Exception as e:
+                self.get_logger().error(f'Fallo TTS ({lang}): {e}')
+
+    # ──────────────────────────────────────────────
+    # Callbacks (lógica idéntica al original)
+    # ──────────────────────────────────────────────
 
     def language_callback(self, msg):
-        """Callback que se ejecuta cuando la pantalla (C++) publica un cambio de idioma"""
         self.is_english = msg.data
-        lang_str = "English" if self.is_english else "Español"
-        
-        self.get_logger().info(f"Speaker actualizado al idioma: {lang_str}")
-    
-    def speak_game_feedback(self, msg):
-        if msg.data:
-            info_data = msg.data
-            threading.Thread(target=self.speak_text, args=(info_data,)).start()
-    
-    def speak_text(self, text):
-        # Seleccionar la voz dependiendo del idioma activo
-        current_lang = 'en' if self.is_english else 'es'
-        active_voice = self.voices.get(current_lang)
+        self.get_logger().info(f"Idioma: {'English' if self.is_english else 'Español'}")
 
-        if active_voice is None:
-            self.get_logger().error(f"El motor TTS para el idioma '{current_lang}' no está cargado.")
+    def speak_game_feedback(self, msg):
+        if not self._active or not msg.data:
             return
-        
+        threading.Thread(target=self.speak_text, args=(msg.data,), daemon=True).start()
+
+    def speak_text(self, text):
+        if not self._active:
+            return
+        lang  = 'en' if self.is_english else 'es'
+        voice = self.voices.get(lang)
+        if voice is None:
+            self.get_logger().error(f"TTS '{lang}' no está cargado.")
+            return
         syn_config = SynthesisConfig(
-            length_scale=1.2,
-            noise_scale=0.5,
-            noise_w_scale=0.8
-        )
-            
+            length_scale=1.2, noise_scale=0.5, noise_w_scale=0.8)
         with self.speaking_lock:
-            audio_status_msg = Bool()
-            audio_status_msg.data = True
-            self.audio_playing_publisher.publish(audio_status_msg)
-            
+            self._publish_audio_status(True)
             try:
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as fp:
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as fp:
                     with wave.open(fp.name, 'wb') as wav_file:
                         wav_file.setnchannels(1)
                         wav_file.setsampwidth(2)
-                        wav_file.setframerate(active_voice.config.sample_rate)
-                        
-                        # Usar la voz activa (Español o Inglés) para sintetizar
-                        active_voice.synthesize_wav(text, wav_file, syn_config=syn_config)
-                    
+                        wav_file.setframerate(voice.config.sample_rate)
+                        voice.synthesize_wav(text, wav_file, syn_config=syn_config)
                     playsound(fp.name)
             except Exception as e:
-                self.get_logger().error(f"Error generando o reproduciendo audio: {str(e)}")
+                self.get_logger().error(f'Error en audio: {e}')
             finally:
-                audio_status_msg.data = False
-                self.audio_playing_publisher.publish(audio_status_msg)
+                self._publish_audio_status(False)
+
+    def _publish_audio_status(self, playing: bool):
+        if self.audio_playing_publisher is not None:
+            msg = Bool()
+            msg.data = playing
+            self.audio_playing_publisher.publish(msg)
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -136,7 +153,9 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

@@ -12,6 +12,7 @@ find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(std_srvs REQUIRED) 
+find_package(lifecycle_msgs REQUIRED)
 # Usamos PkgConfig para SDL2 y SDL2_mixer (Evita el error de CMake de Ubuntu)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
@@ -54,6 +55,7 @@ set(ROS_DEPENDENCIES
   OpenCV
   ament_index_cpp
   std_srvs
+  lifecycle_msgs
 )
 ament_target_dependencies(face_screen ${ROS_DEPENDENCIES})
 ament_target_dependencies(face_barney ${ROS_DEPENDENCIES})
@@ -119,6 +121,7 @@ ament_export_dependencies(
   ament_index_cpp
   cv_bridge
   std_srvs
+  lifecycle_msgs
 )
 ament_export_include_directories(include)
 

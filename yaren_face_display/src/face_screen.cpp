@@ -1,6 +1,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <lifecycle_msgs/srv/change_state.hpp>
+#include <lifecycle_msgs/msg/transition.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <cv_bridge/cv_bridge.hpp>
@@ -18,23 +20,16 @@
 #include <ctime>
 #include <array>
 #include <functional>
-// 🎵 SDL2 y SDL_mixer para audio profesional
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
 
 namespace fs = std::filesystem;
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Estructura de dispositivo ALSA
-// ─────────────────────────────────────────────────────────────────────────────
 struct AlsaDevice {
-    std::string hwId;   // e.g. "plughw:2,0"
-    std::string label;  // e.g. "USB Audio [USB Audio], device 0"
+    std::string hwId;
+    std::string label;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Parsea la salida de arecord -l / aplay -l
-// ─────────────────────────────────────────────────────────────────────────────
 static std::vector<AlsaDevice> parsePulseDevices(bool isSink) {
     std::vector<AlsaDevice> result;
     std::string cmd = isSink
@@ -111,9 +106,6 @@ static std::string getPulseDefault(bool isSink) {
     return r;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Helper: dibuja texto centrado horizontalmente
-// ─────────────────────────────────────────────────────────────────────────────
 static void drawCenteredText(cv::Mat& frame, const std::string& txt,
                              int totalW, int y,
                              int font, double scale,
@@ -152,7 +144,7 @@ static void drawArrow(cv::Mat& frame, cv::Point center, bool up,
 }
 
 // =============================================================================
-//  SettingsMenu  —  panel completo de configuración
+//  SettingsMenu
 // =============================================================================
 class SettingsMenu {
 public:
@@ -212,7 +204,8 @@ public:
         initialSpkId = selectedSpkId;
         initDay  = editDay;  initMon  = editMon;
         editYear_init = editYear;
-        initHour = editHour; initMin  = editMin;
+        initHour = editHour;
+        initMin = editMin;
     }
 
     void render(cv::Mat& frame) {
@@ -283,6 +276,9 @@ public:
         cv::circle(frame, {knobX, knobY}, knobR, hovSlider ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 229, 255), cv::FILLED, cv::LINE_AA);
     }
 
+    // FIX-E: audioMutex protege todas las llamadas a SDL_mixer desde SettingsMenu
+    void setAudioMutex(std::mutex* m) { audioMutex_ = m; }
+
     void handleMouse(int event, int x, int y) {
         cv::Point pt{x, y};
         if (event == cv::EVENT_MOUSEMOVE) {
@@ -292,7 +288,13 @@ public:
                 int relX = std::max(0, std::min(sliderTrackRect.width, x - sliderTrackRect.x));
                 volumeLevel = (relX * 128) / sliderTrackRect.width;
                 isMuted = (volumeLevel == 0);
-                Mix_VolumeMusic(volumeLevel);
+                // FIX-E: proteger Mix_VolumeMusic con mutex
+                if (audioMutex_) {
+                    std::lock_guard<std::mutex> lk(*audioMutex_);
+                    Mix_VolumeMusic(volumeLevel);
+                } else {
+                    Mix_VolumeMusic(volumeLevel);
+                }
             }
             return;
         }
@@ -304,8 +306,7 @@ public:
 
         if (btnLang.contains(pt)) {
             if (isEnglish != nullptr) {
-                *isEnglish = !(*isEnglish); // Esto cambia el bool del VideoSynchronizer
-                // IMPORTANTE: Asegúrate de que el log muestre el valor DESPUÉS del cambio
+                *isEnglish = !(*isEnglish);
                 RCLCPP_INFO(rclcpp::get_logger("SettingsMenu"), "Idioma cambiado a: %s", *isEnglish ? "English" : "Español");
             }
             if (onLanguageChanged) onLanguageChanged();
@@ -319,7 +320,13 @@ public:
             } else {
                 volumeLevel = (previousVolume == 0) ? 64 : previousVolume;
             }
-            Mix_VolumeMusic(volumeLevel);
+            // FIX-E: proteger Mix_VolumeMusic con mutex
+            if (audioMutex_) {
+                std::lock_guard<std::mutex> lk(*audioMutex_);
+                Mix_VolumeMusic(volumeLevel);
+            } else {
+                Mix_VolumeMusic(volumeLevel);
+            }
             return;
         }
         cv::Rect sliderHitbox = {sliderTrackRect.x, sliderTrackRect.y - 15, sliderTrackRect.width, sliderTrackRect.height + 30};
@@ -328,7 +335,13 @@ public:
             int relX = std::max(0, std::min(sliderTrackRect.width, x - sliderTrackRect.x));
             volumeLevel = (relX * 128) / sliderTrackRect.width;
             isMuted = (volumeLevel == 0);
-            Mix_VolumeMusic(volumeLevel);
+            // FIX-E: proteger Mix_VolumeMusic con mutex
+            if (audioMutex_) {
+                std::lock_guard<std::mutex> lk(*audioMutex_);
+                Mix_VolumeMusic(volumeLevel);
+            } else {
+                Mix_VolumeMusic(volumeLevel);
+            }
             return;
         }
         if (btnMicUp.contains({x,y})) { if (micScroll > 0) micScroll--; return; }
@@ -376,7 +389,8 @@ public:
             initialMicId = selectedMicId;
             initialSpkId = selectedSpkId;
             initDay = editDay; initMon = editMon; editYear_init = editYear;
-            initHour = editHour; initMin = initMin;
+            initHour = editHour;
+            initMin = editMin;
             return;
         }
         if (btnBack.contains({x,y})) { if (onBack) onBack(); return; }
@@ -411,6 +425,8 @@ private:
     cv::Rect btnMinUp,  btnMinDown;
     cv::Rect btnRefresh, btnSaveAll, btnBack;
     cv::Rect hoveredRect {0,0,0,0};
+    // FIX-E: puntero a mutex de audio compartido
+    std::mutex* audioMutex_ {nullptr};
 
     void renderAudioPanel(cv::Mat& frame, int top, int panelH, bool isMic) {
         const int MARGIN = 20;
@@ -619,6 +635,7 @@ private:
     cv::Rect findHovered(int x, int y) { return {x, y, 1, 1}; }
     void clampDate() {
         editMon = std::max(1, std::min(12, editMon));
+        // FIX-L: usar editYear para el cálculo de bisiesto
         int daysInMonth[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
         if (editYear % 400 == 0 || (editYear % 4 == 0 && editYear % 100 != 0)) daysInMonth[1] = 29;
         int maxDay = daysInMonth[editMon - 1];
@@ -627,11 +644,13 @@ private:
     void applyDateTime() {
         clampDate();
         char buf[128];
+        // FIX-H: usar editYear real en lugar de hardcodear 2026
         snprintf(buf, sizeof(buf),
-                 "sudo timedatectl set-time '%04d-%02d-%02d' 2>/dev/null",
-                 2026, editMon, editDay);
+                 "sudo timedatectl set-time '%04d-%02d-%02d %02d:%02d:00' 2>/dev/null",
+                 editYear, editMon, editDay, editHour, editMin);
         int ret = std::system(buf);
-        if (ret == 0) setFeedback((eng() ? "Date applied: " : "Fecha aplicada: ") + std::to_string(editDay) + "/" + std::to_string(editMon) + "/2026");
+        if (ret == 0) setFeedback((eng() ? "Date applied: " : "Fecha aplicada: ") +
+                                  std::to_string(editDay) + "/" + std::to_string(editMon) + "/" + std::to_string(editYear));
         else setFeedback(eng() ? "Error: check sudo NOPASSWD for timedatectl" : "Error: verifica sudo NOPASSWD para timedatectl");
     }
     void saveAudioConfig() {
@@ -662,7 +681,7 @@ private:
 };
 
 // =============================================================================
-//  RadioApp — Reproductor de música con SDL2_mixer 🎵
+//  RadioApp
 // =============================================================================
 struct SongInfo {
     std::string id;
@@ -682,6 +701,9 @@ public:
     int currentSong { -1 };
     bool* isEnglish = nullptr;
     bool eng() const { return isEnglish != nullptr && *isEnglish; }
+
+    // FIX-E: puntero a mutex de audio compartido
+    void setAudioMutex(std::mutex* m) { audioMutex_ = m; }
 
     void drawNavArrow(cv::Mat& frame, const cv::Rect& r, bool left, bool hovered) {
         cv::Scalar color = hovered ? cv::Scalar(255, 100, 255) : cv::Scalar(150, 80, 180);
@@ -714,7 +736,6 @@ public:
         pkgDir = pkg;
         logger_ = log;
         currentPage = 0;
-        RCLCPP_INFO(logger_, "🔄 Ciclo de caras: original → money → open → ready → tongue → ...");
         eyesOpen    = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/7.png",  cv::IMREAD_UNCHANGED);
         eyesClosed  = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/3.png",  cv::IMREAD_UNCHANGED);
         mouthClosed = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/13.png", cv::IMREAD_UNCHANGED);
@@ -730,18 +751,16 @@ public:
         };
         for (const auto& path : altFacePaths) {
             cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
-            if (!img.empty()) {
-                altFaces.push_back(img);
-            }
+            if (!img.empty()) altFaces.push_back(img);
         }
         songs = {
             { "aramsamsam",    "ARA RAM SAM SAM",  "Luli Pampin",   "Luli Pampín - ARAM SAM SAM 2021.mp3",    {220, 100, 255}, 3.0 },
             { "gorila",        "BAILE DE GORILA",  "CantaJuego",    "CantaJuego - El Baile del Gorila.mp3", {180,  60, 255}, 2.5 },
-            { "barney",        "BARNEY ES UN DINOSAURIO",           "Barney y sus amigos",       "Intro de Barney y sus amigos.mp3",        {200, 100, 100}, 2.0 },
-            { "chipichapa",    "CHOPI CHOPI",      "Christell", "Chipi chipi chapa chapa dubi dubi daba daba Christell - Dubidubidu Subtitulada en español.mp3",    {50,  200, 255}, 3.5 },
-            { "libresoy",      "LIBRE SOY",        "Martina Stoessel",    "Martina Stoessel_ Libre Soy - Frozen_ Una Aventura Congelada.mp3",      {255, 180,  50}, 1.8 },
-            { "sasa",          "SA SA",            "Luli Pampin",  "Luli Pampín - SASA LA SERPIENTE (Official Video).mp3",          {80,  255, 180}, 2.8 },
-            { "sitienesganas", "SI TIENES GANAS",  "Luli Pampin",           "Luli Pampín - SI TÚ TIENES MUCHAS GANAS DE APLAUDIR - Official Video.mp3", {60,  180, 255}, 3.2 },
+            { "barney",        "BARNEY ES UN DINOSAURIO", "Barney y sus amigos", "Intro de Barney y sus amigos.mp3", {200, 100, 100}, 2.0 },
+            { "chipichapa",    "CHOPI CHOPI",      "Christell", "Chipi chipi chapa chapa dubi dubi daba daba Christell - Dubidubidu Subtitulada en español.mp3", {50,  200, 255}, 3.5 },
+            { "libresoy",      "LIBRE SOY",        "Martina Stoessel", "Martina Stoessel_ Libre Soy - Frozen_ Una Aventura Congelada.mp3", {255, 180,  50}, 1.8 },
+            { "sasa",          "SA SA",            "Luli Pampin",  "Luli Pampín - SASA LA SERPIENTE (Official Video).mp3", {80,  255, 180}, 2.8 },
+            { "sitienesganas", "SI TIENES GANAS",  "Luli Pampin",  "Luli Pampín - SI TÚ TIENES MUCHAS GANAS DE APLAUDIR - Official Video.mp3", {60,  180, 255}, 3.2 },
         };
         if (SDL_Init(SDL_INIT_AUDIO) < 0) {
             RCLCPP_ERROR(logger_, "No se pudo inicializar SDL: %s", SDL_GetError());
@@ -768,19 +787,14 @@ public:
         }
     }
 
+    // FIX-E: killAudio protegido con audioMutex_
     void killAudio() {
-        if (audioInitialized && Mix_PlayingMusic()) {
-            Mix_FadeOutMusic(300);
-            SDL_Delay(350);
-            Mix_HaltMusic();
+        if (audioMutex_) {
+            std::lock_guard<std::mutex> lk(*audioMutex_);
+            killAudioImpl();
+        } else {
+            killAudioImpl();
         }
-        if (currentMusic) {
-            Mix_FreeMusic(currentMusic);
-            currentMusic = nullptr;
-        }
-        currentSongIndex = -1;
-        std::system("for pid in $(ps aux | grep -E 'yaren_dance_radio.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");
-        std::system("ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
     }
 
     void reset() {
@@ -808,12 +822,32 @@ public:
             return;
         }
         if (audioInitialized) {
-            currentMusic = Mix_LoadMUS(audioPath.c_str());
-            if (currentMusic) {
-                if (Mix_FadeInMusic(currentMusic, -1, 500) == 0) {
+            Mix_Music* music = Mix_LoadMUS(audioPath.c_str());
+            if (music) {
+                // FIX-E: proteger operaciones SDL con mutex
+                bool started = false;
+                if (audioMutex_) {
+                    std::lock_guard<std::mutex> lk(*audioMutex_);
+                    currentMusic = music;
+                    started = (Mix_FadeInMusic(currentMusic, -1, 500) == 0);
+                } else {
+                    currentMusic = music;
+                    started = (Mix_FadeInMusic(currentMusic, -1, 500) == 0);
+                }
+                if (started) {
                     std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
                     return;
                 }
+                if (audioMutex_) {
+                    std::lock_guard<std::mutex> lk(*audioMutex_);
+                    Mix_FreeMusic(currentMusic);
+                    currentMusic = nullptr;
+                } else {
+                    Mix_FreeMusic(currentMusic);
+                    currentMusic = nullptr;
+                }
+            } else {
+                RCLCPP_ERROR(logger_, "Mix_LoadMUS falló para: %s — %s", audioPath.c_str(), Mix_GetError());
             }
         }
         std::string cmd = "mpg123 -q \"" + audioPath + "\" &";
@@ -904,6 +938,22 @@ private:
     cv::Rect stopBtn {0,0,0,0};
     cv::Rect backBtn {0,0,0,0};
     cv::Rect mousePos {0,0,1,1};
+    // FIX-E: mutex de audio compartido
+    std::mutex* audioMutex_ {nullptr};
+
+    // FIX-E: implementación interna de killAudio (sin lock, el caller lo gestiona)
+    void killAudioImpl() {
+        if (audioInitialized && Mix_PlayingMusic()) {
+            Mix_HaltMusic();
+        }
+        if (currentMusic) {
+            Mix_FreeMusic(currentMusic);
+            currentMusic = nullptr;
+        }
+        currentSongIndex = -1;
+        std::system("for pid in $(ps aux | grep -E 'yaren_dance_radio.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+        std::system("ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
+    }
 
     void renderSelector(cv::Mat& frame) {
         int W = frame.cols, H = frame.rows;
@@ -916,7 +966,6 @@ private:
         drawCenteredText(frame, "YAREN  RADIO", W, 34, cv::FONT_HERSHEY_DUPLEX, 0.90, cv::Scalar(200, 60, 255), 2);
         cv::line(frame, {W/2-240, 50}, {W/2-20, 50}, cv::Scalar(120, 30, 160), 1, cv::LINE_AA);
         cv::line(frame, {W/2+20, 50}, {W/2+240, 50}, cv::Scalar(120, 30, 160), 1, cv::LINE_AA);
-        // 🔹 TRADUCCIÓN AGREGADA
         drawCenteredText(frame, eng() ? "Choose a song" : "Elige una cancion", W, 68, cv::FONT_HERSHEY_PLAIN, 0.90, cv::Scalar(100, 50, 130), 1);
         const int COLS = 2;
         const int N = (int)songs.size();
@@ -955,7 +1004,6 @@ private:
             } else { nextPageBtn = {0,0,0,0}; }
         }
         backBtn = {W/2 - 65, H - 46, 130, 34};
-        // 🔹 TRADUCCIÓN AGREGADA
         drawFlatButton(frame, backBtn, eng() ? "BACK" : "VOLVER", cv::Scalar(120,120,120), hovBack);
     }
 
@@ -1000,7 +1048,6 @@ private:
         drawSongInfoBar(frame, s, t, beat);
         drawEqualizer(frame, s, t, beat);
         stopBtn = {W/2 - 75, H - 46, 150, 34};
-        // 🔹 TRADUCCIÓN AGREGADA
         drawFlatButton(frame, stopBtn, eng() ? "STOP" : "DETENER", s.color, hovStop);
         double alpha = 0.55 + 0.45 * std::sin(t * 2.0);
         cv::Scalar nc(s.color[0]*alpha, s.color[1]*alpha, s.color[2]*alpha);
@@ -1014,7 +1061,6 @@ private:
         cv::addWeighted(ov, 0.65, frame, 0.35, 0, frame);
         double p = 0.5 + 0.5 * std::sin(t * beat * CV_PI);
         cv::circle(frame, {22, 22}, 7, cv::Scalar(s.color[0]*p, s.color[1]*p, s.color[2]*p), cv::FILLED, cv::LINE_AA);
-        // 🔹 TRADUCCIÓN AGREGADA
         cv::putText(frame, eng() ? "NOW PLAYING" : "REPRODUCIENDO", {36, 27}, cv::FONT_HERSHEY_PLAIN, 0.82, cv::Scalar(140, 140, 155), 1, cv::LINE_AA);
         drawCenteredText(frame, s.title, W, 52, cv::FONT_HERSHEY_DUPLEX, 0.78, s.color, 2);
         drawCenteredText(frame, s.subtitle, W, 72, cv::FONT_HERSHEY_PLAIN, 0.82, cv::Scalar(90, 100, 120), 1);
@@ -1059,10 +1105,7 @@ private:
             cv::warpAffine(faceResized, faceRot, rot, {fW, fH});
             int fx = (W - fW)/2 + (int)bounceX;
             int fy = (H - fH)/2 - 10 + (int)bounceY;
-            int rectW = fW + 40;
-            int rectH = fH + 40;
-            int rectX = fx - 20;
-            int rectY = fy - 20;
+            int rectW = fW + 40, rectH = fH + 40, rectX = fx - 20, rectY = fy - 20;
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(0, 0, 0), cv::FILLED);
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(40, 40, 40), 2, cv::LINE_AA);
             cv::Rect dst(fx, fy, fW, fH);
@@ -1092,10 +1135,7 @@ private:
             cv::resize(altFaces[altIdx], faceResized, {fW, fH}, 0, 0, cv::INTER_LINEAR);
             int fx = (W - fW)/2 + (int)bounceX;
             int fy = (H - fH)/2 - 10 + (int)bounceY;
-            int rectW = fW + 40;
-            int rectH = fH + 40;
-            int rectX = fx - 20;
-            int rectY = fy - 20;
+            int rectW = fW + 40, rectH = fH + 40, rectX = fx - 20, rectY = fy - 20;
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(0, 0, 0), cv::FILLED);
             cv::rectangle(frame, {rectX, rectY, rectW, rectH}, cv::Scalar(40, 40, 40), 2, cv::LINE_AA);
             if (faceResized.channels() == 4) {
@@ -1105,9 +1145,8 @@ private:
                         float a = px[3] / 255.f * alpha;
                         if (a > 0.f) {
                             cv::Vec3b& bg = frame.at<cv::Vec3b>(y + fy, x + fx);
-                            for (int c = 0; c < 3; ++c) {
+                            for (int c = 0; c < 3; ++c)
                                 bg[c] = cv::saturate_cast<uchar>(px[c]*a + bg[c]*(1.f-a));
-                            }
                         }
                     }
                 }
@@ -1139,10 +1178,7 @@ private:
 
     void drawEqualizer(cv::Mat& frame, const SongInfo& s, double t, double beat) {
         int W = frame.cols, H = frame.rows;
-        int eqY  = H - 88;
-        int eqH  = 32;
-        int eqX  = 30;
-        int eqW  = W - 60;
+        int eqY  = H - 88, eqH  = 32, eqX  = 30, eqW  = W - 60;
         cv::rectangle(frame, {eqX - 4, eqY - eqH - 4, eqW + 8, eqH + 8}, cv::Scalar(4, 6, 14), cv::FILLED);
         cv::rectangle(frame, {eqX - 4, eqY - eqH - 4, eqW + 8, eqH + 8}, cv::Scalar(s.color[0]*0.25, s.color[1]*0.25, s.color[2]*0.25), 1, cv::LINE_AA);
         const int BARS = 48;
@@ -1153,8 +1189,7 @@ private:
             double f3 = t * 1.1 + i * 0.15;
             double amp = std::abs(std::sin(f1) * 0.5 + std::sin(f2) * 0.3 + std::sin(f3) * 0.2);
             int bH = (int)(4 + (eqH - 4) * amp);
-            int bx = eqX + i * (barW + 1);
-            int by = eqY - bH;
+            int bx = eqX + i * (barW + 1), by = eqY - bH;
             float ratio = (float)i / BARS;
             cv::Scalar c((uchar)(s.color[0] * (0.4 + 0.6*ratio)), (uchar)(s.color[1] * (0.8 - 0.4*ratio)), (uchar)(s.color[2] * (0.6 + 0.3*std::sin(ratio * CV_PI))));
             cv::rectangle(frame, {bx, by, barW, bH}, c, cv::FILLED);
@@ -1218,7 +1253,7 @@ private:
 };
 
 // =============================================================================
-//  RoutinesApp — Interfaz gráfica para gestionar rutinas personales
+//  RoutinesApp
 // =============================================================================
 class RoutinesApp {
 public:
@@ -1236,10 +1271,17 @@ public:
     bool* isEnglish = nullptr;
     bool eng() const { return isEnglish != nullptr && *isEnglish; }
 
-    void launchRoutine(const std::string& scriptPath, const std::string& routineName) {
+    void launchRoutine(const std::string& /*scriptPath*/, const std::string& routineName) {
         state = RadioState::PLAYING;
-        std::thread([this, scriptPath, routineName]() {
-            std::string cmd = "python3 src/YAREN2/yaren_movements/yaren_movements/" + routineName + " &";
+        std::thread([this, routineName]() {
+            std::string absCwd = std::filesystem::current_path().string();
+            std::string absCmd = "python3 " + absCwd +
+                                 "/src/YAREN2/yaren_movements/yaren_movements/" + routineName;
+            int ret = std::system(absCmd.c_str());
+            if (ret != 0) {
+                RCLCPP_WARN(rclcpp::get_logger("RoutinesApp"),
+                            "Rutina terminó con código %d: %s", ret, absCmd.c_str());
+            }
             state = RadioState::SELECTING;
             refresh();
         }).detach();
@@ -1247,7 +1289,8 @@ public:
 
     void refresh() {
         routines.clear();
-        std::string dirPath = "src/YAREN2/yaren_movements/yaren_movements";
+        std::string absCwd = std::filesystem::current_path().string();
+        std::string dirPath = absCwd + "/src/YAREN2/yaren_movements/yaren_movements";
         std::vector<std::string> exclude = {
             "__init__.py", "yaren_dance_radio.py", "yaren_fullmovement.py",
             "yaren_movement.py", "yaren_rutinanueva.py", "yaren_rutina1.py"
@@ -1269,17 +1312,14 @@ public:
     void render(cv::Mat& frame) {
         if (state == RadioState::PLAYING) {
             cv::rectangle(frame, {0,0,frame.cols, frame.rows}, cv::Scalar(0,0,0), -1);
-            // 🔹 TRADUCCIÓN AGREGADA
             drawCenteredText(frame, eng() ? "PLAYING ROUTINE..." : "REPRODUCIENDO RUTINA...", frame.cols, frame.rows/2, cv::FONT_HERSHEY_DUPLEX, 1.0, cv::Scalar(0,255,0), 2);
             return;
         }
         int W = frame.cols, H = frame.rows;
         cv::rectangle(frame, {0,0,W,H}, cv::Scalar(20, 15, 30), cv::FILLED);
-        // 🔹 TRADUCCIÓN AGREGADA
         drawCenteredText(frame, eng() ? "PERSONAL ROUTINES" : "RUTINAS PERSONALES", W, 40, cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 150, 255), 2);
         cv::line(frame, {W/2-200, 55}, {W/2+200, 55}, cv::Scalar(150, 50, 150), 1, cv::LINE_AA);
         if (routines.empty()) {
-            // 🔹 TRADUCCIÓN AGREGADA
             drawCenteredText(frame, eng() ? "No routine created yet, create one now." : "No existe ninguna rutina creada, creala ya.", W, H/2 - 30, cv::FONT_HERSHEY_PLAIN, 1.2, cv::Scalar(200,200,200), 1);
             continueBtn = {W/2 - 120, H/2 + 30, 240, 50};
             drawFlatButton(frame, continueBtn, eng() ? "CONTINUE" : "CONTINUAR", cv::Scalar(130, 80, 255), hovContinue);
@@ -1350,19 +1390,18 @@ public:
             if (hovBack && onBack) onBack();
             if (hovContinue || hovNew) {
                 if (onLaunchSubprocess) {
-                    std::system("for pid in $(ps aux | grep -E 'yaren_rutinanueva' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");
-                    onLaunchSubprocess("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_rutinanueva.py &");
+                    std::system("for pid in $(ps aux | grep -E 'yaren_rutinanueva' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+                    std::string absCwd = std::filesystem::current_path().string();
+                    onLaunchSubprocess("python3 " + absCwd +
+                                       "/src/YAREN2/yaren_movements/yaren_movements/yaren_rutinanueva.py &");
                 }
             }
             if (hovPrev && currentPage > 0) currentPage--;
             if (hovNext) currentPage++;
             if (hovCard >= 0) {
                 int realIdx = currentPage * 4 + hovCard;
-                if (realIdx < (int)routines.size() && onLaunchSubprocess) {
-                    std::string r = routines[realIdx];
+                if (realIdx < (int)routines.size()) {
                     launchRoutine("...", routines[realIdx]);
-                    std::system(("for pid in $(ps aux | grep -E '" + r + "' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done").c_str());
-                    onLaunchSubprocess("python3 src/YAREN2/yaren_movements/yaren_movements/" + r + " &");
                 }
             }
         }
@@ -1404,11 +1443,12 @@ struct MenuItem {
     bool        hasSubMenu { false };
     std::string subMenuKey;
     std::string iconKey;
+    std::vector<std::string> lifecycle_nodes;
     MenuItem() = default;
     MenuItem(std::string id_, std::string label_, std::string sublabel_, cv::Scalar color_,
-             std::string cmd_, std::string stopCmd_, bool hasSubMenu_, std::string subMenuKey_, std::string iconKey_)
+             std::string cmd_, std::string stopCmd_, bool hasSubMenu_, std::string subMenuKey_, std::string iconKey_, std::vector<std::string> lc_nodes = {})
         : id(std::move(id_)), label(std::move(label_)), sublabel(std::move(sublabel_)), color(color_), rect(0, 0, 0, 0)
-        , cmd(std::move(cmd_)), stopCmd(std::move(stopCmd_)), hasSubMenu(hasSubMenu_), subMenuKey(std::move(subMenuKey_)), iconKey(std::move(iconKey_)) {}
+        , cmd(std::move(cmd_)), stopCmd(std::move(stopCmd_)), hasSubMenu(hasSubMenu_), subMenuKey(std::move(subMenuKey_)), iconKey(std::move(iconKey_)), lifecycle_nodes(std::move(lc_nodes)) {}
 };
 struct NavLevel {
     std::string           title;
@@ -1429,11 +1469,13 @@ public:
         eyesClosedImg  = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/3.png",  cv::IMREAD_UNCHANGED);
         mouthClosedImg = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/13.png", cv::IMREAD_UNCHANGED);
         mouthOpenImg   = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/8.png",  cv::IMREAD_UNCHANGED);
+        lastInteractionTime = std::chrono::system_clock::now();
         auto checkImg = [&](const cv::Mat& m, const std::string& name) {
             if (m.empty()) RCLCPP_WARN(get_logger(), "IMAGEN NO CARGADA: %s", name.c_str());
         };
         checkImg(eyesOpenImg, "eyes_open"); checkImg(eyesClosedImg, "eyes_closed");
         checkImg(mouthClosedImg, "mouth_closed"); checkImg(mouthOpenImg, "mouth_open");
+        yarenSplashImg = cv::imread(pkgDir + "/icons/yaren.png", cv::IMREAD_UNCHANGED);
         loadFrames(pkgDir + "/faces/transitions/blinking_frames", eyesFrames);
         loadFrames(pkgDir + "/faces/transitions/blinking_frames", mouthFrames);
         auto loadIcon = [&](const std::string& key, const std::string& file) {
@@ -1449,27 +1491,54 @@ public:
         loadIcon("chat", "chat_bot.png"); loadIcon("dice", "simon_dice.png"); loadIcon("movements", "movements.png");
         loadIcon("emotions", "emociones.png"); loadIcon("filtros", "filtros_menu.png"); loadIcon("rutina1", "yaren2.png");
         loadIcon("rutina2", "yaren3.png"); loadIcon("rutina3", "yaren4.png"); loadIcon("animales", "animales.png");
-        loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png");loadIcon("piopio", "piopio.png");
-        loadIcon("gallinaturuleca", "gallinaturuleca.png"); loadIcon("susanita", "susanita.png");loadIcon("vacalola", "vacalola.png");
-        loadIcon("video", "video.png"); loadIcon("musica", "musica.png");loadIcon("radio", "radio.png");
+        loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png"); loadIcon("piopio", "piopio.png");
+        loadIcon("gallinaturuleca", "gallinaturuleca.png"); loadIcon("susanita", "susanita.png"); loadIcon("vacalola", "vacalola.png");
+        loadIcon("video", "video.png"); loadIcon("musica", "musica.png"); loadIcon("radio", "radio.png");
         loadIcon("rutina_nueva", "rutina_nueva.png");
         ttsActive = false; isBlinking = false; hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
         activeMode = ""; activeStopCmd = ""; running = true;
-        showSettings = false; showRadio = false; showRoutines = false;
+        showSettings_ = false; showRadio_ = false; showRoutines_ = false;
         lastBlinkTime = std::chrono::system_clock::now();
+
+        // 1. Inicializar el tiempo de inactividad
+        lastInteractionTime = std::chrono::system_clock::now();
         faceOverlay = FaceOverlay::NONE; overlayMessage = ""; micCountdownSecs = 0;
-        settingsMenu.onBack = [this]() { showSettings = false; };
+        
+        settingsMenu.onBack = [this]() {
+            std::lock_guard<std::mutex> lk(modeFlagMutex);
+            showSettings_ = false;
+        };
         radioApp.init(pkgDir, this->get_logger());
-        // 🔹 VINCULACIÓN DE IDIOMA A SUB-APPS
         radioApp.isEnglish = &isEnglish;
         routinesApp.isEnglish = &isEnglish;
 
+        radioApp.setAudioMutex(&audioMutex_);
+        settingsMenu.setAudioMutex(&audioMutex_);
+
         std::srand(std::time(nullptr));
-        // 🔹 RUTAS DINÁMICAS PARA LA PLAYLIST DEL MENÚ
-        // Se obtiene el directorio actual de ejecución (raíz del workspace)
-        std::string ws_dir = std::filesystem::current_path().string();
         
+        // 2. Definir ws_dir ANTES de usarla
+        std::string ws_dir = std::filesystem::current_path().string();
+
+        // 3. Asignar rutas a las variables (sin re-declararlas)
+        idleVideoPaths = {
+            ws_dir + "/src/YAREN2/yaren_radio/videos/carro.mp4",
+            ws_dir + "/src/YAREN2/yaren_radio/videos/gatito.mp4",
+            ws_dir + "/src/YAREN2/yaren_radio/videos/jake.mp4",
+            ws_dir + "/src/YAREN2/yaren_radio/videos/bart.mp4"
+        };
+        
+        idleMusicPaths = {
+            ws_dir + "/src/YAREN2/yaren_radio/audios/The One That Got Away.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Ghost.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Un Beso Y Una Flor.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/The Winner Takes It All.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Love Me Again.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Balada.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/Spiderman.mp3"
+        };
+
         menuPlaylist = {
             ws_dir + "/src/YAREN2/yaren_radio/audios/Intro1.mp3",
             ws_dir + "/src/YAREN2/yaren_radio/audios/Intro2.mp3",
@@ -1477,24 +1546,18 @@ public:
         };
         radioApp.onBack = [this]() {
             std::lock_guard<std::mutex> lock(navMutex);
-            
-            // 1. Detener audio de la radio
             radioApp.killAudio();
-            
-            // 2. Ocultar interfaz de radio
-            showRadio = false;
-            
-            // 3. No publicamos "idle" (porque eso nos saca de los menús)
-            // En su lugar, simplemente nos aseguramos de que el stack 
-            // esté posicionado donde queremos.
-            
-            // 4. Si el stack no tiene la radio, la volvemos a poner
-            // (O simplemente, al no publicar idle, el VideoSynchronizer 
-            // se mantendrá en el último estado de navegación activo).
-            
-            startMenuMusic(); // Reactiva la música de menú
+            {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                showRadio_ = false;
+            }
+            startMenuMusic();
         };
         routinesApp.onBack = [this]() {
+            {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                showRoutines_ = false;
+            }
             auto msg = std_msgs::msg::String();
             msg.data = "idle";
             modePublisher->publish(msg);
@@ -1512,39 +1575,102 @@ public:
             "/audio_playing", 10, std::bind(&VideoSynchronizer::audioPlayingCallback, this, std::placeholders::_1));
         faceScreenPublisher = this->create_publisher<sensor_msgs::msg::Image>("/face_screen", 10);
         modePublisher       = this->create_publisher<std_msgs::msg::String>("/yaren_mode", 10);
+
         modeSubscription_ = this->create_subscription<std_msgs::msg::String>(
             "/yaren_mode", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
-                std::lock_guard<std::mutex> lock(navMutex);
-                
-                if (msg->data == "idle" || msg->data.empty()) {
-                    if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-                    activeMode.clear(); activeStopCmd.clear();
-                    
-                    if (showRadio) {
-                        radioApp.killAudio();
-                        showRadio = false;
-                        startMenuMusic();
+                // FIX-I: copiar datos y publicar fuera del lock de navMutex
+                // FIX-D: no retener navMutex mientras se hacen std::system() bloqueantes
+                std::string modeData = msg->data;
+                std::string stopCmdToRun;
+                std::string modeToPublish;
+                MenuItem targetItem;
+                bool clearNav   = false;
+                bool stopRadio  = false;
+                bool stopRouts  = false;
+                bool doRadioReset = false;
+                int playSongIdx = -1;
+
+                {
+                    std::lock_guard<std::mutex> lock(navMutex);
+                    if (modeData == "idle" || modeData.empty()) {
+                        for (const auto& node : active_lifecycle_nodes) {
+                            change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
+                        }
+                        active_lifecycle_nodes.clear();
+                        stopCmdToRun = activeStopCmd;
+                        activeMode.clear(); activeStopCmd.clear();
+                        bool radioShowing, routinesShowing;
+                        {
+                            std::lock_guard<std::mutex> lk(modeFlagMutex);
+                            radioShowing    = showRadio_;
+                            routinesShowing = showRoutines_;
+                        }
+                        stopRadio = radioShowing;
+                        stopRouts = routinesShowing;
+                    } else if (modeData.rfind("play_radio_song:", 0) == 0) {
+                        navStack.clear();
+                        hoveredItem = -1;
+                        hoveredBack = hoveredStop = hoveredExit = false;
+                        playSongIdx = std::stoi(modeData.substr(16));
+                        doRadioReset = true;
+                        activeMode = "radio_musica";
+                        activeStopCmd = "ros2 topic pub --once /yaren_mode std_msgs/msg/String \"{data: 'idle'}\"";
+                        clearNav = true;
+                    } else if (modeData == "radio_musica") {
+                        navStack.clear();
+                        hoveredItem = -1;
+                        hoveredBack = hoveredStop = hoveredExit = false;
+                        doRadioReset = true;
+                        activeMode = "radio_musica";
+                        activeStopCmd = "ros2 topic pub --once /yaren_mode std_msgs/msg/String \"{data: 'idle'}\"";
+                        clearNav = true;
+                    }else {
+                        navStack.clear();
+                        hoveredItem = -1;
+                        hoveredBack = hoveredStop = hoveredExit = false;
+                        if (activeMode != modeData) {
+                            targetItem = findMenuItem(modeData);
+                            activeMode = modeData; // ✅ FIX: Actualizar el modo ANTES de soltar el lock
+                        }
+                        if (activeMode == "yaren_chat") first_listen_done = false;
+                        clearNav = true;
                     }
-                    if (showRoutines) {
-                        showRoutines = false;
-                        startMenuMusic();
-                    }
+                } // navMutex released
+
+                // FIX-D: ejecutar std::system FUERA del lock
+                if (!stopCmdToRun.empty()) {
+                    std::thread([stopCmdToRun]() { std::system(stopCmdToRun.c_str()); }).detach();
                 }
-                // NUEVO COMANDO: Interceptamos la solicitud de Python para abrir la RadioApp
-                else if (msg->data.rfind("play_radio_song:", 0) == 0) {
-                    int songIdx = std::stoi(msg->data.substr(16));
+                if (stopRadio) {
+                    radioApp.killAudio();
+                    {
+                        std::lock_guard<std::mutex> lk(modeFlagMutex);
+                        showRadio_ = false;
+                    }
+                    startMenuMusic();
+                }
+                if (stopRouts) {
+                    {
+                        std::lock_guard<std::mutex> lk(modeFlagMutex);
+                        showRoutines_ = false;
+                    }
+                    startMenuMusic();
+                }
+                if (clearNav && (modeData.rfind("play_radio_song:", 0) == 0 || modeData == "radio_musica")) {
                     stopMenuMusic();
-                    showRadio = true; // Forzamos mostrar la interfaz
-                    radioApp.playSong(songIdx); // Ejecuta SDL2_Mixer, danza de motores y GUI
-                    
-                    activeMode = "radio_musica";
-                    activeStopCmd = "ros2 topic pub --once /yaren_mode std_msgs/msg/String \"{data: 'idle'}\"";
-                } 
-                else {
-                    activeMode = msg->data;
-                    if (activeMode == "yaren_chat") first_listen_done = false;
+                    {
+                        std::lock_guard<std::mutex> lk(modeFlagMutex);
+                        showRadio_ = true;
+                    }
+                    radioApp.reset();
+                    if (playSongIdx >= 0) radioApp.playSong(playSongIdx);
+                }
+                // FIX-I: executeMode llama publish FUERA de navMutex
+                if (!targetItem.id.empty()) {
+                    executeMode(targetItem, false);
                 }
             });
+
         sttListeningSubscription_ = this->create_subscription<std_msgs::msg::Bool>(
             "/stt_listening", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
                 if (msg->data && activeMode == "yaren_chat" && !first_listen_done) {
@@ -1558,112 +1684,251 @@ public:
         cv::setWindowProperty("Yaren Face", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
         cv::moveWindow("Yaren Face", 0, 0);
         cv::setMouseCallback("Yaren Face", VideoSynchronizer::mouseCallbackStatic, this);
-        // 🔹 NUEVO PUBLICADOR TRANSIENT LOCAL PARA IDIOMA
+
         rclcpp::QoS qos_profile(1);
         qos_profile.transient_local();
         languagePublisher = this->create_publisher<std_msgs::msg::Bool>("/yaren/is_english", qos_profile);
         rclcpp::QoS qos_profile_idle(1);
-        qos_profile_idle.transient_local(); 
+        qos_profile_idle.transient_local();
         idleStatePublisher = this->create_publisher<std_msgs::msg::Bool>("/yaren/face_idle", qos_profile_idle);
-        
+
         wakeEventSubscription = this->create_subscription<std_msgs::msg::Bool>(
             "/yaren/wake_event", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                (void)msg;
+                resetIdleTimer(); // Despertar a Yaren si escucha su nombre
+                RCLCPP_INFO(this->get_logger(), "¡Wake Word detectado! Despertando a Yaren...");
             }
         );
-        // Publicar el estado inicial (Inglés/Español) apenas arranca la pantalla
         auto initial_msg = std_msgs::msg::Bool();
         initial_msg.data = this->isEnglish;
-        languagePublisher->publish(initial_msg);        
-        settingsMenu.isEnglish = &this->isEnglish; // Apunta al bool del nodo
+        languagePublisher->publish(initial_msg);
+        settingsMenu.isEnglish = &this->isEnglish;
         settingsMenu.onLanguageChanged = [this]() {
             std::lock_guard<std::mutex> lock(navMutex);
-            
-            // 1. Reconstruir los menús base (buildMenus usará el valor actual de 'this->isEnglish')
-            this->buildMenus(); 
-
-            // 2. Si hay un submenú abierto, restauramos la jerarquía
+            this->buildMenus();
             if (navStack.size() > 1) {
-                // Guardamos las claves de los niveles actuales
                 std::vector<std::string> keys;
-                for(size_t i = 1; i < navStack.size(); ++i) {
-                    keys.push_back(navStack[i].key);
-                }
-                
-                // Limpiamos y ponemos el nuevo root
+                for(size_t i = 1; i < navStack.size(); ++i) keys.push_back(navStack[i].key);
                 navStack.clear();
                 NavLevel root;
                 root.title = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
                 root.items = rootMenuItems;
                 navStack.push_back(root);
-                
-                // Restauramos los submenús basándonos en las claves
                 for(const auto& key : keys) {
                     if(subMenuMap.count(key)) {
                         NavLevel lvl = subMenuMap.at(key);
-                        lvl.key = key; // Mantenemos la clave para futuras navegaciones
+                        lvl.key = key;
                         navStack.push_back(lvl);
                     }
                 }
             } else {
-                // Si estábamos en el root, solo actualizamos el título
                 navStack[0].title = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
                 navStack[0].items = rootMenuItems;
             }
-
-            // 3. Publicar el estado actualizado para que el resto del sistema (AnimalFaceNode, etc.) reaccione
             auto msg = std_msgs::msg::Bool();
             msg.data = this->isEnglish;
             this->languagePublisher->publish(msg);
-            
             RCLCPP_INFO(this->get_logger(), "Pantalla: Idioma publicado -> %s", msg.data ? "English" : "Español");
         };
         buildMenus();
-        renderThread = std::thread(&VideoSynchronizer::renderLoop, this);
+        // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        // ── Lanzar nodos Python al arrancar ──────────────────────────
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node.py|yaren_voice_menu.py|gestor_idioma.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");        const char* home = std::getenv("HOME");
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|llm_lifecycle_node|stt_lifecycle_node|tts_lifecycle_node|detector|face_filter_node| animal_filter_mask|body_points_detector_node|yaren_speaker_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+        const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
             std::string ws      = std::string(home) + "/robotis_ws";
             std::string setup   = ws + "/install/setup.bash";
+            std::string venv    = ws + "/venv_yaren/bin/activate";
+
             std::string wake    = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/wake_word_node.py";
             std::string voice   = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/yaren_voice_menu.py";
             std::string lang    = ws + "/src/YAREN2/yaren_idioma/yaren_idioma/gestor_idioma.py";
+
             std::string cmd_wake  = "bash -c 'source " + setup + " && " + python + " " + wake  + "' &";
             std::string cmd_voice = "bash -c 'source " + setup + " && " + python + " " + voice + "' &";
             std::string cmd_lang  = "bash -c 'source " + setup + " && " + python + " " + lang  + "' &";
+
+            std::string cmd_llm = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat llm_lifecycle_node.py' &";
+            std::string cmd_stt = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat stt_lifecycle_node.py' &";
+            std::string cmd_tts = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat tts_lifecycle_node.py' &";
+            std::string cmd_det = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_emotions detect_emotion.py' &";
+            std::string cmd_filter = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters face_filter_node' &";
+            std::string cmd_animal = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters animal_filter_mask' &";
+            std::string cmd_landmarks = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters face_landmark_detector.py' &";
+            std::string cmd_body = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice body_landmarks.py' &";
+            std::string cmd_speak = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice speaker_node.py' &";
+            std::string cmd_fondo = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters fondo_virtual.py' &";
+            std::string cmd_camara = "bash -c 'source " + setup + " && ros2 run camara_usb_csi csi_cam_pub.py' &";
             std::system(cmd_wake.c_str());
             std::system(cmd_voice.c_str());
             std::system(cmd_lang.c_str());
+            std::system(cmd_llm.c_str());
+            std::system(cmd_stt.c_str());
+            std::system(cmd_tts.c_str());
+            std::system(cmd_det.c_str());
+            std::system(cmd_filter.c_str());
+            std::system(cmd_animal.c_str());
+            std::system(cmd_landmarks.c_str());
+            std::system(cmd_body.c_str());
+            std::system(cmd_speak.c_str());
+            std::system(cmd_fondo.c_str());
+            std::system(cmd_camara.c_str());
+
+            std::thread([this, setup]() {
+                std::this_thread::sleep_for(std::chrono::seconds(6));
+                auto configure_node = [&](const std::string& name, const std::string& display) {
+                    {
+                        std::lock_guard<std::mutex> lk(configStatusMutex);
+                        configStatus = "Cargando " + display + "...";
+                    }
+                    bool ok = false;
+                    for (int intento = 0; intento < 3 && !ok; intento++) {
+                        if (intento > 0) {
+                            RCLCPP_WARN(this->get_logger(), "Reintentando configurar %s (intento %d/3)...", name.c_str(), intento + 1);
+                            std::this_thread::sleep_for(std::chrono::seconds(3));
+                        }
+                        int ret = std::system(("bash -c 'source " + setup +
+                                    " && ros2 lifecycle set /" + name +
+                                    " configure' > /dev/null 2>&1").c_str());
+                        ok = (ret == 0);
+                    }
+                    if (!ok) RCLCPP_ERROR(this->get_logger(), "❌ No se pudo configurar: %s", name.c_str());
+                    // FIX-B: configProgress es atomic<int>, incremento seguro
+                    configProgress++;
+                };
+                configure_node("llm_lifecycle_node",       "Inteligencia Artificial");
+                configure_node("stt_lifecycle_node",        "Reconocimiento de Voz");
+                configure_node("tts_lifecycle_node",        "Sintesis de Voz");
+                configure_node("detector",                  "Deteccion de Emociones");
+                configure_node("face_filter_node",          "Filtros de Cara");
+                configure_node("body_points_detector_node", "Deteccion Corporal");
+                configure_node("yaren_speaker_node",        "Altavoz");
+                configure_node("virtual_background_node",   "Fondo Virtual");
+                std::this_thread::sleep_for(std::chrono::seconds(6));
+                configure_node("filtro_animales",        "Filtro de Animales");
+                configure_node("face_landmark_publisher", "Landmarks Faciales");
+                configure_node("csi_cam_node",             "Camara Principal");
+                {
+                    std::lock_guard<std::mutex> lk(configStatusMutex);
+                    configStatus  = isEnglish ? "Yaren is ready!" : "Yaren listo!";
+                    configProgress = configTotal; // forzar 100% aunque hubo fallos
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                resetIdleTimer();
+                configuring = false;
+            }).detach();
+        }
+    }
+
+    // FIX: startRenderThread se llama desde main() post-construcción
+    void startRenderThread() {
+        renderThread = std::thread(&VideoSynchronizer::renderLoop, this);
+    }
+    void startIdleScreen() {
+        isIdleScreenActive = true;
+        stopMenuMusic(); // Pausar la música habitual del menú
+
+        // Iniciar Video Aleatorio
+        if (!idleVideoPaths.empty()) {
+            std::string vidPath = idleVideoPaths[std::rand() % idleVideoPaths.size()];
+            idleVideo.open(vidPath);
+        }
+
+        // Iniciar Música Relajante Aleatoria
+        if (!idleMusicPaths.empty()) {
+            std::lock_guard<std::mutex> lk(audioMutex_);
+            if (idleMusic) { Mix_FreeMusic(idleMusic); idleMusic = nullptr; }
+            std::string audPath = idleMusicPaths[std::rand() % idleMusicPaths.size()];
+            idleMusic = Mix_LoadMUS(audPath.c_str());
+            if (idleMusic) {
+                Mix_PlayMusic(idleMusic, -1); // -1 para loop infinito
+                Mix_VolumeMusic(settingsMenu.volumeLevel);
+            }
+        }
+    }
+
+    void stopIdleScreen() {
+        if (!isIdleScreenActive) return;
+        isIdleScreenActive = false;
+        lastInteractionTime = std::chrono::system_clock::now();
+
+        if (idleVideo.isOpened()) idleVideo.release();
+
+        {
+            std::lock_guard<std::mutex> lk(audioMutex_);
+            if (idleMusic) {
+                Mix_HaltMusic();
+                Mix_FreeMusic(idleMusic);
+                idleMusic = nullptr;
+            }
+        }
+
+        // Si volvemos y estábamos en el menú principal, reanudar su música
+        if (navStack.size() == 1 && !showSettings_ && !showRadio_ && !showRoutines_) {
+            startMenuMusic();
+        }
+    }
+
+    void resetIdleTimer() {
+        lastInteractionTime = std::chrono::system_clock::now();
+        if (isIdleScreenActive) {
+            stopIdleScreen(); // Despertar a Yaren
         }
     }
     ~VideoSynchronizer() {
         running = false;
-        radioApp.killAudio();
+        {
+            // FIX-E: killAudio ya es thread-safe vía audioMutex_
+            radioApp.killAudio();
+        }
+        // FIX-G: liberar menuMusic en destructor
+        {
+            std::lock_guard<std::mutex> lk(audioMutex_);
+            if (menuMusic) {
+                Mix_HaltMusic();
+                Mix_FreeMusic(menuMusic);
+                menuMusic = nullptr;
+            }
+        }
         if (renderThread.joinable()) renderThread.join();
+        // FIX-F: verificar joinable antes de join en testThread
         if (testThread.joinable()) testThread.join();
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-
-        // ── Matar nodos Python al cerrar ─────────────────────────────
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done");    
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
     }
 
     void drawWindow() {
-        std::lock_guard<std::mutex> lock(frameMutex);
-        if (!latestFrame.empty()) {
-            cv::imshow("Yaren Face", latestFrame);
+        // FIX-C: copiar frame con lock, luego mostrar fuera del lock
+        cv::Mat frameToDraw;
+        {
+            std::lock_guard<std::mutex> lock(frameMutex);
+            if (!latestFrame.empty()) frameToDraw = latestFrame.clone();
+        }
+        if (!frameToDraw.empty()) {
+            cv::imshow("Yaren Face", frameToDraw);
             int key = cv::waitKey(1);
             if (key == 27) {
-                if (showSettings) { showSettings = false; return; }
-                if (showRadio) {
-                    // En lugar de enviar "idle", ejecutamos la misma lógica que "VOLVER"
+                bool sSettings, sRadio;
+                {
+                    std::lock_guard<std::mutex> lk(modeFlagMutex);
+                    sSettings = showSettings_;
+                    sRadio    = showRadio_;
+                }
+                if (sSettings) {
+                    std::lock_guard<std::mutex> lk(modeFlagMutex);
+                    showSettings_ = false;
+                    return;
+                }
+                if (sRadio) {
                     radioApp.killAudio();
-                    showRadio = false;
+                    {
+                        std::lock_guard<std::mutex> lk(modeFlagMutex);
+                        showRadio_ = false;
+                    }
                     startMenuMusic();
-                    return; // Salimos sin enviar "idle" para no salir del menú
+                    return;
                 }
                 std::lock_guard<std::mutex> nlock(navMutex);
                 if (!navStack.empty()) {
@@ -1687,56 +1952,89 @@ public:
 private:
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr modeSubscription_;
     SettingsMenu settingsMenu;
-    bool         showSettings { false };
+
+    mutable std::mutex modeFlagMutex;
+    bool showSettings_  { false };
+    bool showRadio_     { false };
+    bool showRoutines_  { false };
+
     RadioApp     radioApp;
-    bool         showRadio { false };
     RoutinesApp  routinesApp;
-    bool         showRoutines { false };
     cv::Rect settingsButtonRect {0,0,0,0};
-    bool     hoveredSettings    {false};
+
+    // FIX-M: hoveredSettings y hoveredPower como atomic para acceso cross-thread seguro
+    std::atomic<bool> hoveredSettings {false};
+    std::atomic<bool> hoveredPower    {false};
+
     cv::Rect leftNavArrowRect  {0,0,0,0};
     cv::Rect rightNavArrowRect {0,0,0,0};
     bool hoveredLeftNav  {false};
     bool hoveredRightNav {false};
     cv::Rect powerButtonRect    {0,0,0,0};
-    bool     hoveredPower       {false};
+
     bool isEnglish = false;
     rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr languageClient;
     static MenuItem MI(const char* id, const char* label, const char* sublabel, cv::Scalar color,
-                       const char* cmd, const char* stop, bool hasSub, const char* subKey, const char* iconKey) {
-        return MenuItem(id, label, sublabel, color, cmd, stop, hasSub, subKey, iconKey);
+                       const char* cmd, const char* stop, bool hasSub, const char* subKey, const char* iconKey, std::vector<std::string> lc_nodes = {}) {
+        return MenuItem(id, label, sublabel, color, cmd, stop, hasSub, subKey, iconKey, std::move(lc_nodes));
     }
     std::vector<std::string> menuPlaylist;
     Mix_Music* menuMusic { nullptr };
     bool isMenuMusicPlaying { false };
+    // FIX-E: mutex compartido para todas las operaciones SDL_mixer
+    std::mutex audioMutex_;
 
     void startMenuMusic() {
+        std::lock_guard<std::mutex> lk(audioMutex_);
         if (menuPlaylist.empty()) return;
-        if (menuMusic) { Mix_FreeMusic(menuMusic); menuMusic = nullptr; }
+        // FIX-G: siempre detener y liberar música anterior antes de cargar nueva
+        if (menuMusic) {
+            Mix_HaltMusic();
+            Mix_FreeMusic(menuMusic);
+            menuMusic = nullptr;
+        }
         int idx = std::rand() % menuPlaylist.size();
         if (fs::exists(menuPlaylist[idx])) {
             menuMusic = Mix_LoadMUS(menuPlaylist[idx].c_str());
-            if (menuMusic) {
-                Mix_PlayMusic(menuMusic, -1);
-                Mix_VolumeMusic(settingsMenu.volumeLevel);
-                isMenuMusicPlaying = true;
+            if (!menuMusic) {
+                RCLCPP_ERROR(get_logger(), "Mix_LoadMUS falló para música de menú: %s — %s",
+                             menuPlaylist[idx].c_str(), Mix_GetError());
+                return;
             }
+            Mix_PlayMusic(menuMusic, -1);
+            Mix_VolumeMusic(settingsMenu.volumeLevel);
+            isMenuMusicPlaying = true;
         }
     }
+
     void stopMenuMusic() {
+        std::lock_guard<std::mutex> lk(audioMutex_);
         if (isMenuMusicPlaying) {
             Mix_FadeOutMusic(500);
             isMenuMusicPlaying = false;
+            // FIX-G: lanzar hilo que libera menuMusic tras el fade
+            std::thread([this]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(600));
+                std::lock_guard<std::mutex> lk2(audioMutex_);
+                if (menuMusic && !Mix_PlayingMusic()) {
+                    Mix_FreeMusic(menuMusic);
+                    menuMusic = nullptr;
+                }
+            }).detach();
         }
     }
 
     void buildMenus() {
+        std::string absCwd = std::filesystem::current_path().string();
+        std::string mvDir  = absCwd + "/src/YAREN2/yaren_movements/yaren_movements/";
+        std::string rdDir  = absCwd + "/src/YAREN2/yaren_radio/yaren_radio/";
+
         rootMenuItems = {
             MI("modo_prueba", isEnglish ? "TEST MODE" : "MODO PRUEBA", isEnglish ? "diagnostics and tests" : "diagnostico y tests", {255,140,0}, "", "", true, "sub_modo_prueba", "test"),
             MI("yaren", "YAREN", isEnglish ? "main modes" : "modos principales", {0,229,255}, "", "", true, "sub_yaren", "yaren"),
         };
         subMenuMap["sub_modo_prueba"] = { isEnglish ? "TEST MODE" : "MODO PRUEBA", {255,140,0}, {
-            MI("test_camara", isEnglish ? "CAMERA" : "CAMARA", isEnglish ? "test camera" : "probar camara", {0,200,255}, "python src/YAREN2/CSI-Camera/simple_camera.py &", "", false, "", "camera"),
+            MI("test_camara", isEnglish ? "CAMERA" : "CAMARA", isEnglish ? "test camera" : "probar camara", {0,200,255}, ("python3 " + absCwd + "/src/YAREN2/CSI-Camera/simple_camera.py &").c_str(), "", false, "", "camera"),
             MI("test_mic", isEnglish ? "MICROPHONE" : "MICROFONO", isEnglish ? "test microphone" : "probar microfono", {0,255,128}, "", "", false, "", "microfono"),
             MI("test_motores", isEnglish ? "MOTORS" : "MOTORES", isEnglish ? "test motors" : "probar motores", {255,140,0}, "", "", true, "sub_motores", "motores"),
         }};
@@ -1768,23 +2066,23 @@ private:
             MI("cabeza_orig", isEnglish ? "HOME POS." : "POS. ORIGINAL", isEnglish ? "original position" : "posicion original", {140,60,80}, "timeout 5 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"", "", false, "", "yaren"),
         }};
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
-            MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "mimic"),
-            MI("yaren_chat", "CHAT", isEnglish ? "Talk with Yaren" : "Conversar con Yaren", {29,233,22}, "ros2 launch yaren_chat yaren_chat.launch.py &", "for pid in $(ps aux | grep -E 'yaren_chat' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "chat"),
-            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "ros2 launch yaren_dice yaren_dice.launch.py &", "for pid in $(ps aux | grep -E 'yaren_dice' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "dice"),
+            MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
+            MI("yaren_chat", "CHAT", isEnglish ? "Talk with Yaren" : "Conversar con Yaren", {29,233,22}, "", "", false, "", "chat", {"llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node"}),
+            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "ros2 run yaren_dice game_manager &", "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "dice", {"csi_cam_node","body_points_detector_node", "yaren_speaker_node"}),
             MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
-            MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emocion", {82,82,255}, "ros2 launch yaren_emotions yaren_emotions.launch.py &", "for pid in $(ps aux | grep -E 'yaren_emotions' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "emotions"),
+            MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emocion", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
             MI("yaren_filtros", isEnglish ? "FILTERS" : "FILTROS", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
         }};
         subMenuMap["sub_yaren"].key = "sub_yaren";
         subMenuMap["sub_yaren_movements"] = { isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", {251,64,224}, {
-            MI("yaren_rutina1", isEnglish ? "ROUTINE 1" : "RUTINA 1", isEnglish ? "Routines" : "Rutinas", {251,64,224}, "python3 src/YAREN2/yaren_movements/yaren_movements/yaren_rutina1.py &", "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina1"),
-            MI("yaren_rutina2", isEnglish ? "ROUTINE 2" : "RUTINA 2", isEnglish ? "Infinite routine" : "Rutina infinita", {220,80,200}, "python3 src/YAREN2/yaren_movements/yaren_movements/yaren_fullmovement.py &", "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "rutina2"),
+            MI("yaren_rutina1", isEnglish ? "ROUTINE 1" : "RUTINA 1", isEnglish ? "Routines" : "Rutinas", {251,64,224}, ("python3 " + mvDir + "yaren_rutina1.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina1"),
+            MI("yaren_rutina2", isEnglish ? "ROUTINE 2" : "RUTINA 2", isEnglish ? "Infinite routine" : "Rutina infinita", {220,80,200}, ("python3 " + mvDir + "yaren_fullmovement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina2"),
             MI("yaren_rutinanueva", isEnglish ? "PERSONAL ROUTINES" : "RUTINAS PERSONALES", isEnglish ? "manage and record" : "gestionar y grabar", {130, 80, 255}, "INTERNAL_ROUTINES", "", false, "", "rutina_nueva"),
         }};
         subMenuMap["sub_yaren_filtros"] = { isEnglish ? "FILTERS" : "FILTROS", {105,240,174}, {
-            MI("yaren_animales", isEnglish ? "ANIMALS" : "ANIMALES", isEnglish ? "animal filter" : "filtro animal", {105,240,174}, "ros2 launch yaren_filters yaren_animales.launch.py &", "for pid in $(ps aux | grep -E 'yaren_animales|AnimalFaceNode|animal_filter|face_landmark|csi_cam' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "animales"),
-            MI("yaren_accesorios", isEnglish ? "ACCESSORIES" : "ACCESORIOS", isEnglish ? "accessories filter" : "filtro accesorios", {60,200,130}, "ros2 launch yaren_filters yaren_accesorios.launch.py &", "for pid in $(ps aux | grep -E 'yaren_accesorios|face_filter|face_landmark|csi_cam' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "accesorios"),
-            MI("yaren_fondo", isEnglish ? "VIRT. BACKGROUNDS" : "FONDOS VIRTUAL", isEnglish ? "virtual background" : "filtro fondo virtual", {60,200,130}, "ros2 launch yaren_filters yaren_fondo.launch.py &", "for pid in $(ps aux | grep -E 'yaren_fondo|fondo_virtual|csi_cam' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "accesorios"),
+            MI("yaren_animales", isEnglish ? "ANIMALS" : "ANIMALES", isEnglish ? "animal filter" : "filtro animal", {105,240,174}, "", "", false, "", "animales", {"csi_cam_node","face_landmark_publisher", "filtro_animales"}),
+            MI("yaren_accesorios", isEnglish ? "ACCESSORIES" : "ACCESORIOS", isEnglish ? "accessories filter" : "filtro accesorios", {60,200,130}, "", "", false, "", "accesorios", {"csi_cam_node","face_landmark_publisher", "face_filter_node"}),
+            MI("yaren_fondo", isEnglish ? "VIRT. BACKGROUNDS" : "FONDOS VIRTUAL", isEnglish ? "virtual background" : "filtro fondo virtual", {60,200,130}, "", "", false, "", "accesorios", {"csi_cam_node","virtual_background_node"}),
         }};
         subMenuMap["sub_yaren_p2"] = { "YAREN", {0,229,255}, {
             MI("yaren_radio", "YAREN RADIO", isEnglish ? "music and animation" : "musica y animacion", {255,80,160}, "", "", true, "sub_yaren_radio", "radio"),
@@ -1796,10 +2094,10 @@ private:
         }};
         subMenuMap["sub_yaren_radio"].key = "sub_yaren_radio";
         subMenuMap["sub_yaren_videos"] = { "VIDEOS", {200,60,140}, {
-            MI("vid_pollito", isEnglish ? "LITTLE CHICK PIO" : "POLLITO PIO", isEnglish ? "Farm Songs" : "Canciones de la Granja", {0, 200, 255}, "python3 src/YAREN2/yaren_radio/yaren_radio/pollitopio.py &", "for pid in $(ps aux | grep -E 'pollitopio.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "piopio"),
-            MI("vid_gallina", isEnglish ? "TURULECA HEN" : "GALLINA TURULECA", isEnglish ? "Yaren Songs" : "Canciones de Yaren", {255, 150, 50}, "python3 src/YAREN2/yaren_radio/yaren_radio/gallinaturuleca.py &", "for pid in $(ps aux | grep -E 'gallinaturuleca.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "gallinaturuleca"),
-            MI("vid_vaca", isEnglish ? "LOLA THE COW" : "LA VACA LOLA", isEnglish ? "Kids Songs" : "Canciones Infantiles", {100, 255, 100}, "python3 src/YAREN2/yaren_radio/yaren_radio/vacalola.py &", "for pid in $(ps aux | grep -E 'vacalola.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "vacalola"),
-            MI("vid_susanita", isEnglish ? "LITTLE SUSAN" : "SUSANITA", isEnglish ? "Zenon's Farm" : "La Granja de Zenon", {255, 100, 200}, "python3 src/YAREN2/yaren_radio/yaren_radio/susanita.py &", "for pid in $(ps aux | grep -E 'susanita.py' | grep -v grep | awk '{print $2}'); do kill -9 $pid; done", false, "", "susanita"),
+            MI("vid_pollito", isEnglish ? "LITTLE CHICK PIO" : "POLLITO PIO", isEnglish ? "Farm Songs" : "Canciones de la Granja", {0, 200, 255}, ("python3 " + rdDir + "pollitopio.py &").c_str(), "for pid in $(ps aux | grep -E 'pollitopio.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "piopio"),
+            MI("vid_gallina", isEnglish ? "TURULECA HEN" : "GALLINA TURULECA", isEnglish ? "Yaren Songs" : "Canciones de Yaren", {255, 150, 50}, ("python3 " + rdDir + "gallinaturuleca.py &").c_str(), "for pid in $(ps aux | grep -E 'gallinaturuleca.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "gallinaturuleca"),
+            MI("vid_vaca", isEnglish ? "LOLA THE COW" : "LA VACA LOLA", isEnglish ? "Kids Songs" : "Canciones Infantiles", {100, 255, 100}, ("python3 " + rdDir + "vacalola.py &").c_str(), "for pid in $(ps aux | grep -E 'vacalola.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "vacalola"),
+            MI("vid_susanita", isEnglish ? "LITTLE SUSAN" : "SUSANITA", isEnglish ? "Zenon's Farm" : "La Granja de Zenon", {255, 100, 200}, ("python3 " + rdDir + "susanita.py &").c_str(), "for pid in $(ps aux | grep -E 'susanita.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "susanita"),
         }};
     }
 
@@ -1833,119 +2131,145 @@ private:
         if (micTestRunning.load()) return;
         micTestRunning = true;
         stopMenuMusic();
-        navStack.clear();
-        hoveredItem = -1;
-        hoveredBack = hoveredStop = hoveredExit = false;
-        if (testThread.joinable()) testThread.join();
-        testThread = std::thread([this]() {
-            std::string micId = settingsMenu.selectedMicId;
-            std::string spkId = settingsMenu.selectedSpkId;
-            std::string envMic = micId.empty() ? "" : "PULSE_SOURCE='" + micId + "' ";
-            std::string recordCmd = envMic + "arecord -D pulse -f S16_LE -r 44100 -c 1 -d 5 /tmp/yaren_mic_test.wav > /tmp/yaren_arecord.log 2>&1";
-            RCLCPP_INFO(get_logger(), "[MIC TEST] Iniciando grabacion con comando: %s", recordCmd.c_str());
-            int recRet = -1;
-            std::thread recordingThread([&]() { recRet = std::system(recordCmd.c_str()); });
-            for (int i = 5; i >= 1; --i) {
+        {
+            std::lock_guard<std::mutex> nlock(navMutex);
+            navStack.clear();
+            hoveredItem = -1;
+            hoveredBack = hoveredStop = hoveredExit = false;
+        }
+        // FIX-F: detach del hilo wrapper, join del testThread correctamente
+        std::thread([this]() {
+            // FIX-F: esperar a que el testThread anterior termine si está activo
+            if (testThread.joinable()) {
+                testThread.join();
+            }
+            testThread = std::thread([this]() {
+                std::string micId = settingsMenu.selectedMicId;
+                std::string spkId = settingsMenu.selectedSpkId;
+                std::string envMic = micId.empty() ? "" : "PULSE_SOURCE='" + micId + "' ";
+                std::string recordCmd = envMic + "arecord -D pulse -f S16_LE -r 44100 -c 1 -d 5 /tmp/yaren_mic_test.wav > /tmp/yaren_arecord.log 2>&1";
+                RCLCPP_INFO(get_logger(), "[MIC TEST] Iniciando grabacion: %s", recordCmd.c_str());
+                int recRet = -1;
+                std::thread recordingThread([&]() { recRet = std::system(recordCmd.c_str()); });
+                for (int i = 5; i >= 1; --i) {
+                    {
+                        std::lock_guard<std::mutex> lock(overlayMutex);
+                        faceOverlay      = FaceOverlay::MIC_COUNTDOWN;
+                        micCountdownSecs = i;
+                        overlayMessage   = (isEnglish ? "Speak for the next " : "Habla por los siguientes ") + std::to_string(i) + (isEnglish ? (i == 1 ? " second" : " seconds") : (i == 1 ? " segundo" : " segundos"));
+                    }
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+                recordingThread.join();
+                if (recRet != 0) {
+                    RCLCPP_ERROR(get_logger(), "[MIC TEST] Fallo grabacion (exit %d)", recRet);
+                    showErrorOverlay(isEnglish ? "Failed to record audio.\nCheck the microphone." : "Fallo al grabar audio.\nRevisa el microfono.", 4.0);
+                    {
+                        std::lock_guard<std::mutex> lock(overlayMutex);
+                        faceOverlay = FaceOverlay::NONE;
+                    }
+                    micTestRunning = false;
+                    return;
+                }
                 {
                     std::lock_guard<std::mutex> lock(overlayMutex);
-                    faceOverlay      = FaceOverlay::MIC_COUNTDOWN;
-                    micCountdownSecs = i;
-                    // 🔹 TRADUCCIÓN AGREGADA
-                    overlayMessage   = (isEnglish ? "Speak for the next " : "Habla por los siguientes ") + std::to_string(i) + (isEnglish ? (i == 1 ? " second" : " seconds") : (i == 1 ? " segundo" : " segundos"));
+                    faceOverlay    = FaceOverlay::NONE;
+                    overlayMessage = "";
                 }
                 std::this_thread::sleep_for(std::chrono::seconds(1));
-            }
-            recordingThread.join();
-            if (recRet != 0) {
-                RCLCPP_ERROR(get_logger(), "[MIC TEST] Fallo grabacion (exit %d)", recRet);
-                showErrorOverlay(isEnglish ? "Failed to record audio.\nCheck the microphone." : "Fallo al grabar audio.\nRevisa el microfono.", 4.0);
                 {
                     std::lock_guard<std::mutex> lock(overlayMutex);
-                    faceOverlay = FaceOverlay::NONE;
+                    faceOverlay    = FaceOverlay::MIC_PLAYING;
+                    overlayMessage = isEnglish ? "Playing audio..." : "Reproduciendo audio...";
+                }
+                std::string envSpk = spkId.empty() ? "" : "PULSE_SINK='" + spkId + "' ";
+                std::string playCmd = envSpk + "aplay -D pulse /tmp/yaren_mic_test.wav > /tmp/yaren_aplay.log 2>&1";
+                int playRet = std::system(playCmd.c_str());
+                if (playRet != 0) {
+                    RCLCPP_ERROR(get_logger(), "[MIC TEST] Fallo reproduccion (exit %d)", playRet);
+                    showErrorOverlay(isEnglish ? "Failed to play audio.\nCheck the speaker." : "Fallo al reproducir audio.\nRevisa el parlante.", 4.0);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(overlayMutex);
+                    faceOverlay      = FaceOverlay::NONE;
+                    overlayMessage   = "";
+                    micCountdownSecs = 0;
+                }
+                {
+                    std::lock_guard<std::mutex> nlock(navMutex);
+                    navStack.clear();
+                    NavLevel root;
+                    root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
+                    root.accentColor = { 0, 200, 200 };
+                    root.items       = rootMenuItems;
+                    navStack.push_back(root);
+                    auto it = subMenuMap.find("sub_modo_prueba");
+                    if (it != subMenuMap.end()) {
+                        NavLevel lvl = it->second;
+                        lvl.key = "sub_modo_prueba";
+                        navStack.push_back(lvl);
+                    }
+                    hoveredItem = -1;
+                    hoveredBack = false;
+                    hoveredStop = false;
+                    hoveredExit = false;
+                    startMenuMusic();
                 }
                 micTestRunning = false;
-                return;
-            }
-            {
-                std::lock_guard<std::mutex> lock(overlayMutex);
-                faceOverlay    = FaceOverlay::NONE;
-                overlayMessage = "";
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            {
-                std::lock_guard<std::mutex> lock(overlayMutex);
-                faceOverlay    = FaceOverlay::MIC_PLAYING;
-                overlayMessage = isEnglish ? "Playing audio..." : "Reproduciendo audio...";
-            }
-            std::string envSpk = spkId.empty() ? "" : "PULSE_SINK='" + spkId + "' ";
-            std::string playCmd = envSpk + "aplay -D pulse /tmp/yaren_mic_test.wav > /tmp/yaren_aplay.log 2>&1";
-            int playRet = std::system(playCmd.c_str());
-            if (playRet != 0) {
-                RCLCPP_ERROR(get_logger(), "[MIC TEST] Fallo reproduccion (exit %d)", playRet);
-                showErrorOverlay(isEnglish ? "Failed to play audio.\nCheck the speaker." : "Fallo al reproducir audio.\nRevisa el parlante.", 4.0);
-            }
-            {
-                std::lock_guard<std::mutex> lock(overlayMutex);
-                faceOverlay      = FaceOverlay::NONE;
-                overlayMessage   = "";
-                micCountdownSecs = 0;
-            }
-            {
-                std::lock_guard<std::mutex> nlock(navMutex);
-                navStack.clear();
-                NavLevel root;
-                root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
-                root.accentColor = { 0, 200, 200 };
-                root.items       = rootMenuItems;
-                navStack.push_back(root);
-                auto it = subMenuMap.find("sub_modo_prueba");
-                if (it != subMenuMap.end()) {
-                    NavLevel lvl = it->second;
-                    lvl.key = "sub_modo_prueba"; // <-- Asignar clave
-                    navStack.push_back(lvl);
-                }
-                hoveredItem = -1;
-                hoveredBack = false;
-                hoveredStop = false;
-                hoveredExit = false;
-                startMenuMusic();
-            }
-            micTestRunning = false;
-        });
+            });
+        }).detach();
     }
 
     void handleMouse(int event, int x, int y) {
-        if (showSettings) {
+        resetIdleTimer();
+        bool sSettings, sRadio, sRoutines;
+        {
+            std::lock_guard<std::mutex> lk(modeFlagMutex);
+            sSettings  = showSettings_;
+            sRadio     = showRadio_;
+            sRoutines  = showRoutines_;
+        }
+        if (sSettings) {
             settingsMenu.handleMouse(event, x, y);
             return;
         }
-        if (showRadio) {
+        if (sRadio) {
             radioApp.handleMouse(event, x, y);
             return;
         }
-        if (showRoutines) {
+        if (sRoutines) {
             routinesApp.handleMouse(event, x, y);
             return;
         }
+
+        // FIX-M: hoveredSettings/hoveredPower son atomic<bool>, safe sin lock adicional
+        if (event == cv::EVENT_MOUSEMOVE) {
+            hoveredSettings = settingsButtonRect.contains({x, y});
+            hoveredPower    = powerButtonRect.contains({x, y});
+        }
+
         std::lock_guard<std::mutex> lock(navMutex);
+
+        if (event == cv::EVENT_LBUTTONDOWN) {
+            if (settingsButtonRect.contains({x, y})) {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                showSettings_ = true;
+                settingsMenu.refresh();
+                return;
+            }
+            if (powerButtonRect.contains({x, y})) {
+                showErrorOverlay(isEnglish ? "Shutting down robot..." : "Apagando robot...", 5.0);
+                std::system("sudo poweroff &");
+                return;
+            }
+        }
+
         if (!navStack.empty()) {
             if (event == cv::EVENT_MOUSEMOVE) {
-                hoveredSettings = settingsButtonRect.contains({x, y});
-                hoveredPower    = powerButtonRect.contains({x, y});
                 hoveredLeftNav  = (leftNavArrowRect.area()  > 0) && leftNavArrowRect.contains({x,y});
                 hoveredRightNav = (rightNavArrowRect.area() > 0) && rightNavArrowRect.contains({x,y});
             }
             if (event == cv::EVENT_LBUTTONDOWN) {
-                if (settingsButtonRect.contains({x, y})) {
-                    showSettings = true;
-                    settingsMenu.refresh();
-                    return;
-                }
-                if (powerButtonRect.contains({x, y})) {
-                    showErrorOverlay(isEnglish ? "Shutting down robot..." : "Apagando robot...", 5.0);
-                    std::system("sudo poweroff &");
-                    return;
-                }
                 if (rightNavArrowRect.area() > 0 && rightNavArrowRect.contains({x,y})) {
                     auto it = subMenuMap.find("sub_yaren_p2");
                     if (it != subMenuMap.end()) {
@@ -1963,6 +2287,7 @@ private:
                 }
             }
         }
+
         if (navStack.empty()) {
             if (event == cv::EVENT_LBUTTONDOWN) {
                 NavLevel root;
@@ -1997,12 +2322,21 @@ private:
             }
             if (!activeMode.empty() && stopButtonRect.contains({ x, y })) {
                 std::string prevMode = activeMode;
-                if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
+                for (const auto& node : active_lifecycle_nodes) {
+                    change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
+                }
+                active_lifecycle_nodes.clear();
+                std::string stopCmd = activeStopCmd;
                 activeMode = ""; activeStopCmd = "";
                 navStack.clear();
                 hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
+                // FIX-I: publicar y ejecutar stop fuera del lock no es posible aquí
+                // porque estamos bajo navMutex. Lanzamos en thread para el system call.
                 auto msg = std_msgs::msg::String(); msg.data = "idle";
                 modePublisher->publish(msg);
+                if (!stopCmd.empty()) {
+                    std::thread([stopCmd]() { std::system(stopCmd.c_str()); }).detach();
+                }
                 if (prevMode.rfind("vid_", 0) == 0) {
                     NavLevel root; root.title = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
                     root.accentColor = {0,200,200}; root.items = rootMenuItems;
@@ -2011,7 +2345,7 @@ private:
                         auto it = subMenuMap.find(key);
                         if (it != subMenuMap.end()) {
                             NavLevel lvl = it->second;
-                            lvl.key = key; // <-- Asignar clave
+                            lvl.key = key;
                             navStack.push_back(lvl);
                         }
                     }
@@ -2024,9 +2358,8 @@ private:
                     if (level.items[i].hasSubMenu) {
                         auto it = subMenuMap.find(level.items[i].subMenuKey);
                         if (it != subMenuMap.end()) {
-                            // Creamos una copia para poder modificar su campo 'key'
-                            NavLevel lvl = it->second; 
-                            lvl.key = level.items[i].subMenuKey; // <-- IMPORTANTE: Guardar la clave
+                            NavLevel lvl = it->second;
+                            lvl.key = level.items[i].subMenuKey;
                             navStack.push_back(lvl);
                             hoveredItem = -1;
                         }
@@ -2039,16 +2372,34 @@ private:
         }
     }
 
-    void executeMode(MenuItem item) {
+    MenuItem findMenuItem(const std::string& target_id) {
+        for (const auto& item : rootMenuItems) {
+            if (item.id == target_id) return item;
+        }
+        for (const auto& pair : subMenuMap) {
+            for (const auto& item : pair.second.items) {
+                if (item.id == target_id) return item;
+            }
+        }
+        return MenuItem();
+    }
+
+    void executeMode(MenuItem item, bool publish_mode = true) {
         if (item.id == "test_mic") { executeMicTest(); return; }
         if (item.cmd == "INTERNAL_RADIO") {
-            showRadio = true;
+            {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                showRadio_ = true;
+            }
             radioApp.reset();
             hoveredItem = -1;
             return;
         }
         if (item.cmd == "INTERNAL_ROUTINES") {
-            showRoutines = true;
+            {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                showRoutines_ = true;
+            }
             routinesApp.refresh();
             hoveredItem = -1;
             stopMenuMusic();
@@ -2058,18 +2409,57 @@ private:
         stopMenuMusic();
         hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
-        if (!activeMode.empty() && !activeStopCmd.empty()) {
-            std::system(activeStopCmd.c_str());
+
+        if (!activeMode.empty() && (!activeStopCmd.empty() || !active_lifecycle_nodes.empty())) {
+            std::vector<std::string> to_keep, to_deactivate;
+            for (const auto& node : active_lifecycle_nodes) {
+                if (std::find(item.lifecycle_nodes.begin(), item.lifecycle_nodes.end(), node) != item.lifecycle_nodes.end())
+                    to_keep.push_back(node);
+                else
+                    to_deactivate.push_back(node);
+            }
+            for (const auto& node : to_deactivate)
+                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
+            for (const auto& node : to_keep)
+                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
+
+            if (!active_lifecycle_nodes.empty())
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+            active_lifecycle_nodes.clear();
+            // FIX-D: lanzar stop command en thread separado
+            std::string prevStop = activeStopCmd;
+            if (!prevStop.empty()) {
+                std::thread([prevStop]() { std::system(prevStop.c_str()); }).detach();
+            }
             activeMode = ""; activeStopCmd = "";
-            auto msg = std_msgs::msg::String(); msg.data = "idle";
-            modePublisher->publish(msg);
+            if (publish_mode) {
+                auto msg = std_msgs::msg::String(); msg.data = "idle";
+                modePublisher->publish(msg);
+            }
+
+            activeMode    = item.id;
+            activeStopCmd = item.stopCmd;
+            active_lifecycle_nodes = item.lifecycle_nodes;
+            for (const auto& node : item.lifecycle_nodes)
+                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
+        } else {
+            activeMode    = item.id;
+            activeStopCmd = item.stopCmd;
+            active_lifecycle_nodes = item.lifecycle_nodes;
+            for (const auto& node : active_lifecycle_nodes)
+                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
         }
+
         std::string cleanCmd = item.cmd;
         size_t pos = cleanCmd.find_last_not_of(" \t&");
         if (pos != std::string::npos) cleanCmd = cleanCmd.substr(0, pos + 1);
-        if (item.stopCmd.empty()) {
-            auto msg = std_msgs::msg::String(); msg.data = item.id;
-            modePublisher->publish(msg);
+
+        if (item.stopCmd.empty() && item.lifecycle_nodes.empty()) {
+            if (publish_mode) {
+                auto msg = std_msgs::msg::String(); msg.data = item.id;
+                modePublisher->publish(msg);
+            }
             if (!cleanCmd.empty()) {
                 std::thread([this, cleanCmd]() {
                     int ret = std::system(cleanCmd.c_str());
@@ -2081,10 +2471,12 @@ private:
             }
             return;
         }
-        activeMode    = item.id;
-        activeStopCmd = item.stopCmd;
-        auto msg = std_msgs::msg::String(); msg.data = activeMode;
-        modePublisher->publish(msg);
+
+        if (publish_mode) {
+            auto msg = std_msgs::msg::String(); msg.data = activeMode;
+            modePublisher->publish(msg);
+        }
+
         if (!cleanCmd.empty()) {
             std::thread([this, cleanCmd, prevMode = item.id]() {
                 auto start = std::chrono::steady_clock::now();
@@ -2125,8 +2517,9 @@ private:
     void renderSettingsButton(cv::Mat& frame) {
         int W = frame.cols, btnSz = 38, margin = 10;
         settingsButtonRect = {W - btnSz - margin, margin, btnSz, btnSz};
-        cv::Scalar bg   = hoveredSettings ? cv::Scalar(30,50,70) : cv::Scalar(12,20,35);
-        cv::Scalar bord = hoveredSettings ? cv::Scalar(0,200,255) : cv::Scalar(40,70,100);
+        bool hs = hoveredSettings.load(); // FIX-M: leer atomic
+        cv::Scalar bg   = hs ? cv::Scalar(30,50,70) : cv::Scalar(12,20,35);
+        cv::Scalar bord = hs ? cv::Scalar(0,200,255) : cv::Scalar(40,70,100);
         cv::rectangle(frame, settingsButtonRect, bg, cv::FILLED);
         cv::rectangle(frame, settingsButtonRect, bord, 1, cv::LINE_AA);
         auto iconIt = iconMap.find("settings");
@@ -2150,7 +2543,7 @@ private:
                             float a = px[3] / 255.f;
                             if (a > 0.f) {
                                 cv::Vec3b& bg2 = roi.at<cv::Vec3b>(ry, rx);
-                                cv::Scalar tint = hoveredSettings ? cv::Scalar(0,220,255) : cv::Scalar(180,190,200);
+                                cv::Scalar tint = hs ? cv::Scalar(0,220,255) : cv::Scalar(180,190,200);
                                 for (int c = 0; c < 3; ++c)
                                     bg2[c] = cv::saturate_cast<uchar>(
                                         (px[c] * (tint[c]/255.f)) * a + bg2[c] * (1.f - a));
@@ -2162,7 +2555,7 @@ private:
             }
         } else {
             int cx = settingsButtonRect.x + btnSz/2, cy = settingsButtonRect.y + btnSz/2;
-            cv::Scalar ic = hoveredSettings ? cv::Scalar(0,220,255) : cv::Scalar(80,130,160);
+            cv::Scalar ic = hs ? cv::Scalar(0,220,255) : cv::Scalar(80,130,160);
             cv::circle(frame, {cx,cy}, 8, ic, cv::FILLED, cv::LINE_AA);
         }
     }
@@ -2187,12 +2580,13 @@ private:
     void renderPowerButton(cv::Mat& frame) {
         int btnSz = 38, margin = 10;
         powerButtonRect = {margin, margin, btnSz, btnSz};
-        cv::Scalar bg   = hoveredPower ? cv::Scalar(30, 30, 180) : cv::Scalar(20, 20, 100);
-        cv::Scalar bord = hoveredPower ? cv::Scalar(80, 80, 255) : cv::Scalar(50, 50, 200);
+        bool hp = hoveredPower.load(); // FIX-M: leer atomic
+        cv::Scalar bg   = hp ? cv::Scalar(30, 30, 180) : cv::Scalar(20, 20, 100);
+        cv::Scalar bord = hp ? cv::Scalar(80, 80, 255) : cv::Scalar(50, 50, 200);
         cv::rectangle(frame, powerButtonRect, bg, cv::FILLED);
         cv::rectangle(frame, powerButtonRect, bord, 1, cv::LINE_AA);
         int cx = powerButtonRect.x + btnSz/2, cy = powerButtonRect.y + btnSz/2;
-        cv::Scalar ic = hoveredPower ? cv::Scalar(255, 255, 255) : cv::Scalar(200, 200, 200);
+        cv::Scalar ic = hp ? cv::Scalar(255, 255, 255) : cv::Scalar(200, 200, 200);
         cv::ellipse(frame, {cx, cy}, {10, 10}, -90, 30, 330, ic, 2, cv::LINE_AA);
         cv::line(frame, {cx, cy - 10}, {cx, cy + 2}, ic, 2, cv::LINE_AA);
     }
@@ -2227,14 +2621,14 @@ private:
             drawCard(frame, level.items[i], hoveredItem == i, level.items[i].hasSubMenu);
         }
         const int btnH = 40, btnY = SY+TH+40, gap = 16, stopW = 300, navW = 150;
-        bool hasStop = !activeMode.empty() && !activeStopCmd.empty() &&
-                       activeMode != "yaren_emotions" && 
-                       activeMode != "yaren_animales" && 
-                       activeMode != "yaren_accesorios" && 
-                       activeMode != "yaren_fondo" && 
-                       activeMode != "yaren_radio" && 
-                       activeMode != "radio_musica" && 
-                       activeMode.rfind("vid_", 0) != 0; // Excluye todos los modos de video
+        bool hasStop = !activeMode.empty() && (!activeStopCmd.empty() || !active_lifecycle_nodes.empty()) &&
+                       activeMode != "yaren_emotions" &&
+                       activeMode != "yaren_animales" &&
+                       activeMode != "yaren_accesorios" &&
+                       activeMode != "yaren_fondo" &&
+                       activeMode != "yaren_radio" &&
+                       activeMode != "radio_musica" &&
+                       activeMode.rfind("vid_", 0) != 0;
         bool hasBack = (navStack.size() > 1);
         int totalW = navW;
         if (hasBack) totalW += navW + gap;
@@ -2245,7 +2639,6 @@ private:
             cv::Scalar c = hoveredStop ? cv::Scalar(40,40,220) : cv::Scalar(20,20,180);
             cv::rectangle(frame, stopButtonRect, c, cv::FILLED);
             cv::rectangle(frame, stopButtonRect, cv::Scalar(100,100,255), 1, cv::LINE_AA);
-            // 🔹 TRADUCCIÓN AGREGADA
             drawTextInRect(frame, (isEnglish ? "STOP: " : "DETENER: ") + activeMode, stopButtonRect, cv::FONT_HERSHEY_DUPLEX, 0.5, cv::Scalar(255,255,255), 1);
             cx += stopW + gap;
         } else { stopButtonRect = {0,0,0,0}; }
@@ -2387,17 +2780,480 @@ private:
         return res;
     }
 
+    // =============================================================================
+//  renderLoadingScreen — NUEVA VERSIÓN ESTÉTICA
+//  Reemplaza completamente la función renderLoadingScreen() en face_screen.cpp
+//  Estética: Cyberpunk-Industrial, cyan/ámbar sobre negro profundo
+// =============================================================================
+
+    void renderLoadingScreen(cv::Mat& frame) {
+        int W = frame.cols, H = frame.rows;
+        frame.setTo(cv::Scalar(3, 6, 12));
+
+        double t = std::chrono::duration<double>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        std::string status;
+        int prog;
+        {
+            std::lock_guard<std::mutex> lk(configStatusMutex);
+            status = configStatus;
+            prog   = configProgress.load();
+        }
+        float pct = std::min(1.0f, (float)prog / configTotal);
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 1. FONDO: REJILLA HEXAGONAL ANIMADA
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            int hexR = 28;
+            double hexW = hexR * 1.732;
+            double hexH = hexR * 2.0;
+            int cols2 = (int)(W / hexW) + 3;
+            int rows2 = (int)(H / (hexH * 0.75)) + 3;
+            for (int row = -1; row < rows2; ++row) {
+                for (int col = -1; col < cols2; ++col) {
+                    double cx = col * hexW + ((row % 2 == 0) ? 0 : hexW * 0.5);
+                    double cy = row * hexH * 0.75;
+                    double dist = std::sqrt((cx - W/2.0)*(cx - W/2.0) + (cy - H/2.0)*(cy - H/2.0));
+                    double maxD = std::sqrt(W*W + H*H) * 0.5;
+                    double wave = std::sin(dist * 0.045 - t * 1.4) * 0.5 + 0.5;
+                    double alpha = wave * (1.0 - dist / maxD) * 0.55;
+                    if (alpha < 0.015) continue;
+                    // Vértices del hexágono
+                    std::vector<cv::Point> hex(6);
+                    for (int v = 0; v < 6; ++v) {
+                        double ang = CV_PI / 180.0 * (60.0 * v - 30.0);
+                        hex[v] = {(int)(cx + hexR * std::cos(ang)),
+                                (int)(cy + hexR * std::sin(ang))};
+                    }
+                    int b = (int)(alpha * 28);
+                    int g = (int)(alpha * 55 + wave * 10);
+                    int r2 = (int)(alpha * 18);
+                    cv::polylines(frame, hex, true, cv::Scalar(b, g, r2), 1, cv::LINE_AA);
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 2. PARTÍCULAS FLOTANTES (puntos de circuito)
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            struct Particle { float x, y, phase, speed, size; };
+            static const Particle particles[] = {
+                {0.10f, 0.20f, 0.0f,  0.7f, 2.0f}, {0.85f, 0.15f, 1.2f, 0.9f, 1.5f},
+                {0.05f, 0.70f, 2.3f,  0.5f, 2.5f}, {0.92f, 0.65f, 3.1f, 0.8f, 1.8f},
+                {0.50f, 0.08f, 4.4f,  1.0f, 1.2f}, {0.22f, 0.88f, 5.2f, 0.6f, 2.0f},
+                {0.75f, 0.82f, 0.8f,  1.1f, 1.5f}, {0.40f, 0.92f, 1.9f, 0.7f, 1.3f},
+                {0.15f, 0.45f, 3.7f,  0.8f, 1.8f}, {0.88f, 0.40f, 2.6f, 0.9f, 1.4f},
+                {0.60f, 0.05f, 1.4f,  1.2f, 1.0f}, {0.30f, 0.55f, 4.9f, 0.6f, 2.2f},
+            };
+            for (const auto& p : particles) {
+                double a = 0.25 + 0.55 * (0.5 + 0.5 * std::sin(t * p.speed + p.phase));
+                float oy = (float)(8.0 * std::sin(t * p.speed * 0.6 + p.phase));
+                int px2 = (int)(p.x * W);
+                int py2 = (int)(p.y * H + oy);
+                cv::circle(frame, {px2, py2}, (int)p.size,
+                        cv::Scalar(0, (int)(210*a), (int)(255*a)), cv::FILLED, cv::LINE_AA);
+                // Líneas de circuito cortas emanando
+                if (a > 0.4) {
+                    int len = (int)(12 * a);
+                    cv::line(frame, {px2, py2}, {px2 + len, py2},
+                            cv::Scalar(0, (int)(80*a), (int)(120*a)), 1, cv::LINE_AA);
+                    cv::line(frame, {px2, py2}, {px2, py2 - len},
+                            cv::Scalar(0, (int)(80*a), (int)(120*a)), 1, cv::LINE_AA);
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 3. BORDE DECORATIVO EXTERIOR
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            double pulse = 0.6 + 0.4 * std::sin(t * 1.8);
+            // Borde principal cyan
+            cv::rectangle(frame, {3, 3, W-6, H-6},
+                        cv::Scalar(0, (int)(160*pulse), (int)(220*pulse)), 1, cv::LINE_AA);
+            // Borde interior sutil
+            cv::rectangle(frame, {8, 8, W-16, H-16},
+                        cv::Scalar(0, (int)(40*pulse), (int)(60*pulse)), 1, cv::LINE_AA);
+            // Esquinas decorativas — grosor 2
+            int cornerLen = 22, cornerThick = 2;
+            cv::Scalar cornerColor(0, (int)(220*pulse), (int)(255*pulse));
+            // Esquina sup-izq
+            cv::line(frame, {3, 3}, {3 + cornerLen, 3}, cornerColor, cornerThick, cv::LINE_AA);
+            cv::line(frame, {3, 3}, {3, 3 + cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
+            // Esquina sup-der
+            cv::line(frame, {W-3, 3}, {W-3-cornerLen, 3}, cornerColor, cornerThick, cv::LINE_AA);
+            cv::line(frame, {W-3, 3}, {W-3, 3 + cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
+            // Esquina inf-izq
+            cv::line(frame, {3, H-3}, {3 + cornerLen, H-3}, cornerColor, cornerThick, cv::LINE_AA);
+            cv::line(frame, {3, H-3}, {3, H-3-cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
+            // Esquina inf-der
+            cv::line(frame, {W-3, H-3}, {W-3-cornerLen, H-3}, cornerColor, cornerThick, cv::LINE_AA);
+            cv::line(frame, {W-3, H-3}, {W-3, H-3-cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 4. TÍTULO "YAREN" CON EFECTO GLITCH + SOMBRA CYAN
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            const std::string title = "YAREN";
+            double fontScale = 2.4;
+            int fontFace = cv::FONT_HERSHEY_DUPLEX;
+            int thickness = 3;
+            int titleY = 72;
+            int bl = 0;
+            cv::Size ts = cv::getTextSize(title, fontFace, fontScale, thickness, &bl);
+            int titleX = (W - ts.width) / 2;
+
+            // Sombra difusa (múltiples capas)
+            for (int s = 6; s >= 1; --s) {
+                double a = 0.12 * (7 - s);
+                cv::putText(frame, title, {titleX + s, titleY + s},
+                            fontFace, fontScale, cv::Scalar(0, (int)(180*a), (int)(255*a)),
+                            thickness + s * 2, cv::LINE_AA);
+            }
+
+            // Glitch sutil: offset rojo/azul en momentos aleatorios
+            double glitchPhase = std::sin(t * 0.3) * std::sin(t * 7.1);
+            if (std::abs(glitchPhase) > 0.85) {
+                int gOff = (int)(3 * glitchPhase);
+                cv::putText(frame, title, {titleX + gOff, titleY},
+                            fontFace, fontScale, cv::Scalar(0, 0, 120), thickness, cv::LINE_AA);
+                cv::putText(frame, title, {titleX - gOff, titleY},
+                            fontFace, fontScale, cv::Scalar(60, 0, 0), thickness, cv::LINE_AA);
+            }
+
+            // Texto principal blanco-cyan
+            double tPulse = 0.85 + 0.15 * std::sin(t * 2.2);
+            cv::putText(frame, title, {titleX, titleY},
+                        fontFace, fontScale,
+                        cv::Scalar((int)(180*tPulse), (int)(230*tPulse), (int)(255*tPulse)),
+                        thickness, cv::LINE_AA);
+
+            // Subtítulo "ROBOT SOCIAL"
+            const std::string sub = "ROBOT SOCIAL";
+            cv::Size ss = cv::getTextSize(sub, cv::FONT_HERSHEY_PLAIN, 1.0, 1, &bl);
+            cv::putText(frame, sub, {(W - ss.width)/2, titleY + 28},
+                        cv::FONT_HERSHEY_PLAIN, 1.0,
+                        cv::Scalar(30, 80, 110), 1, cv::LINE_AA);
+
+            // Línea decorativa bajo subtítulo
+            int lineY = titleY + 40;
+            int lineLen = 200;
+            int lx = (W - lineLen) / 2;
+            cv::line(frame, {lx, lineY}, {lx + lineLen, lineY},
+                    cv::Scalar(0, 60, 90), 1, cv::LINE_AA);
+            // Punto central brillante en la línea
+            double linePulse = 0.5 + 0.5 * std::sin(t * 3.0);
+            cv::circle(frame, {W/2, lineY}, 3,
+                    cv::Scalar(0, (int)(200*linePulse), (int)(255*linePulse)),
+                    cv::FILLED, cv::LINE_AA);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 5. IMAGEN CENTRAL CON REVELADO DE ABAJO → ARRIBA + SCAN LINE
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            int imageAreaY = 128;          // donde empieza la zona de imagen
+            int targetH    = 195;
+            int targetW    = 0;
+            cv::Mat resizedImg;
+
+            if (!yarenSplashImg.empty()) {
+                float aspect = (float)yarenSplashImg.cols / yarenSplashImg.rows;
+                targetW = (int)(targetH * aspect);
+                cv::resize(yarenSplashImg, resizedImg, {targetW, targetH}, 0, 0, cv::INTER_AREA);
+            } else {
+                // Placeholder si no hay imagen
+                targetW = 140;
+                resizedImg = cv::Mat::zeros(targetH, targetW, CV_8UC3);
+                cv::putText(resizedImg, "YAREN", {10, targetH/2},
+                            cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(0,200,255), 1);
+            }
+
+            int startX = (W - targetW) / 2;
+            int startY = imageAreaY;
+
+            // Línea de scan: cuántos píxeles de la imagen se han revelado (de abajo a arriba)
+            int revealedPx   = (int)(targetH * pct);           // píxeles ya revelados
+            int scanLineY    = targetH - revealedPx;            // fila en coords de imagen donde está el borde
+
+            // Halo de fondo detrás de la imagen (círculo radial)
+            {
+                double haloA = 0.06 + 0.04 * std::sin(t * 1.5);
+                for (int r = 110; r >= 20; r -= 8) {
+                    double a2 = haloA * (1.0 - (double)r / 110.0);
+                    cv::circle(frame, {startX + targetW/2, startY + targetH/2}, r,
+                            cv::Scalar(0, (int)(180*a2), (int)(255*a2)), 1, cv::LINE_AA);
+                }
+            }
+
+            // Dibujar imagen con revelado pixel a pixel
+            for (int y = 0; y < targetH; ++y) {
+                for (int x = 0; x < targetW; ++x) {
+                    int fy = startY + y, fx = startX + x;
+                    if (fy < 0 || fy >= H || fx < 0 || fx >= W) continue;
+
+                    cv::Vec3b srcPixel(0, 0, 0);
+                    float srcAlpha = 1.0f;
+                    if (!resizedImg.empty()) {
+                        if (resizedImg.channels() == 4) {
+                            cv::Vec4b px = resizedImg.at<cv::Vec4b>(y, x);
+                            srcPixel  = cv::Vec3b(px[0], px[1], px[2]);
+                            srcAlpha  = px[3] / 255.0f;
+                        } else {
+                            srcPixel = resizedImg.at<cv::Vec3b>(y, x);
+                            srcAlpha = 1.0f;
+                        }
+                    }
+                    if (srcAlpha < 0.04f) continue;
+
+                    cv::Vec3b& bg = frame.at<cv::Vec3b>(fy, fx);
+
+                    if (y > scanLineY) {
+                        // ── ZONA REVELADA: color original ──
+                        for (int c = 0; c < 3; ++c)
+                            bg[c] = cv::saturate_cast<uchar>(
+                                srcPixel[c] * srcAlpha + bg[c] * (1.0f - srcAlpha));
+
+                    } else if (y >= scanLineY - 4 && pct > 0.01f && pct < 0.995f) {
+                        // ── SCAN LINE: resplandor cyan intenso ──
+                        float scanFade = 1.0f - (float)(scanLineY - y) / 5.0f;
+                        scanFade = std::max(0.0f, scanFade);
+                        double scanPulse = 0.75 + 0.25 * std::sin(t * 12.0);
+                        cv::Vec3b scanColor(
+                            (uchar)(100 * scanFade * scanPulse),
+                            (uchar)(230 * scanFade * scanPulse),
+                            (uchar)(255 * scanFade * scanPulse));
+                        for (int c = 0; c < 3; ++c)
+                            bg[c] = cv::saturate_cast<uchar>(
+                                scanColor[c] * srcAlpha + bg[c] * (1.0f - srcAlpha));
+
+                    } else {
+                        // ── ZONA SIN REVELAR: silueta ámbar oscuro ──
+                        // Tono ámbar muy tenue que se oscurece hacia arriba
+                        float darken = 0.15f + 0.25f * ((float)(y) / targetH);
+                        cv::Vec3b silhouette(
+                            (uchar)(srcPixel[0] * darken * 0.3f),   // B
+                            (uchar)(srcPixel[1] * darken * 0.4f),   // G
+                            (uchar)(srcPixel[2] * darken * 0.15f)); // R (ámbar: más R y G, menos B)
+                        // Invertir: queremos ámbar = alta R y G, baja B
+                        uchar ambR = (uchar)(60 * darken * srcAlpha);
+                        uchar ambG = (uchar)(38 * darken * srcAlpha);
+                        uchar ambB = (uchar)(8  * darken * srcAlpha);
+                        (void)silhouette;
+                        for (int c = 0; c < 3; ++c) {
+                            uchar amb = (c == 2) ? ambR : (c == 1) ? ambG : ambB;
+                            bg[c] = cv::saturate_cast<uchar>(amb + bg[c] * (1.0f - srcAlpha * 0.5f));
+                        }
+                    }
+                }
+            }
+
+            // Marco de la imagen: bordes brillantes
+            if (pct > 0.02f) {
+                double framePulse = 0.6 + 0.4 * std::sin(t * 2.0);
+                int fx0 = startX - 3, fy0 = startY - 3;
+                int fw2  = targetW + 6, fh2  = targetH + 6;
+                cv::rectangle(frame, {fx0, fy0, fw2, fh2},
+                            cv::Scalar(0, (int)(100*framePulse*pct), (int)(150*framePulse*pct)),
+                            1, cv::LINE_AA);
+                // Esquinas del marco de imagen
+                int cl = 14;
+                cv::Scalar fc2(0, (int)(200*framePulse*pct), (int)(255*framePulse*pct));
+                cv::line(frame, {fx0, fy0},      {fx0+cl, fy0},      fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0, fy0},      {fx0, fy0+cl},      fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0+fw2, fy0},  {fx0+fw2-cl, fy0},  fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0+fw2, fy0},  {fx0+fw2, fy0+cl},  fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0, fy0+fh2},  {fx0+cl, fy0+fh2},  fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0, fy0+fh2},  {fx0, fy0+fh2-cl},  fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0+fw2, fy0+fh2},{fx0+fw2-cl,fy0+fh2}, fc2, 2, cv::LINE_AA);
+                cv::line(frame, {fx0+fw2, fy0+fh2},{fx0+fw2,fy0+fh2-cl}, fc2, 2, cv::LINE_AA);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 6. BARRA DE PROGRESO SEGMENTADA + ETIQUETAS
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            int barY    = H - 90;
+            int barW    = W * 68 / 100;
+            int barX    = (W - barW) / 2;
+            int barH    = 8;
+
+            // Fondo de la barra con borde
+            cv::rectangle(frame, {barX - 1, barY - 1, barW + 2, barH + 2},
+                        cv::Scalar(10, 22, 36), cv::FILLED);
+            cv::rectangle(frame, {barX - 1, barY - 1, barW + 2, barH + 2},
+                        cv::Scalar(20, 50, 75), 1, cv::LINE_AA);
+
+            // Segmentos de la barra (hace que se vea más técnica)
+            int segments = configTotal;
+            int segW = (barW - segments + 1) / segments;
+            for (int s = 0; s < segments; ++s) {
+                int sx = barX + s * (segW + 1);
+                float segFill = std::min(1.0f, std::max(0.0f,
+                    pct * segments - s));
+                if (segFill <= 0.0f) {
+                    // Segmento vacío
+                    cv::rectangle(frame, {sx, barY, segW, barH},
+                                cv::Scalar(8, 16, 26), cv::FILLED);
+                } else if (segFill >= 1.0f) {
+                    // Segmento lleno
+                    cv::rectangle(frame, {sx, barY, segW, barH},
+                                cv::Scalar(0, 180, 240), cv::FILLED);
+                    // Brillo superior
+                    cv::rectangle(frame, {sx, barY, segW, 2},
+                                cv::Scalar(100, 240, 255), cv::FILLED);
+                } else {
+                    // Segmento parcial (el activo, con pulso)
+                    int fillW2 = (int)(segW * segFill);
+                    cv::rectangle(frame, {sx, barY, segW, barH},
+                                cv::Scalar(8, 16, 26), cv::FILLED);
+                    double pulse = 0.7 + 0.3 * std::sin(t * 6.0);
+                    cv::rectangle(frame, {sx, barY, fillW2, barH},
+                                cv::Scalar(0, (int)(200*pulse), (int)(255*pulse)), cv::FILLED);
+                    // Halo en el borde activo
+                    if (fillW2 > 2) {
+                        for (int g = 1; g <= 4; ++g) {
+                            double ga = 0.25 * (5 - g) * pulse;
+                            cv::line(frame,
+                                {sx + fillW2 + g, barY},
+                                {sx + fillW2 + g, barY + barH},
+                                cv::Scalar(0, (int)(180*ga), (int)(255*ga)), 1, cv::LINE_AA);
+                        }
+                    }
+                }
+            }
+
+            // Porcentaje a la derecha
+            char pctBuf[8];
+            snprintf(pctBuf, sizeof(pctBuf), "%d%%", (int)(pct * 100));
+            int bl = 0;
+            cv::Size ps = cv::getTextSize(pctBuf, cv::FONT_HERSHEY_DUPLEX, 0.60, 1, &bl);
+            cv::putText(frame, pctBuf,
+                        {barX + barW + 12, barY + barH - 1},
+                        cv::FONT_HERSHEY_DUPLEX, 0.60,
+                        cv::Scalar(0, 200, 255), 1, cv::LINE_AA);
+            (void)ps;
+
+            // Marcadores de tick sobre la barra
+            for (int s = 0; s <= segments; ++s) {
+                int tx = barX + s * (segW + 1) - 1;
+                cv::line(frame, {tx, barY - 3}, {tx, barY - 1},
+                        cv::Scalar(20, 50, 70), 1, cv::LINE_AA);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 7. TEXTO DE ESTADO CON CURSOR PARPADEANTE
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            bool isReady = (status.find("listo") != std::string::npos ||
+                            status.find("ready") != std::string::npos);
+
+            cv::Scalar statusColor = isReady
+                ? cv::Scalar(40, 255, 120)
+                : cv::Scalar(120, 175, 210);
+
+            std::string prefix = isReady ? "> " : ">> ";
+            std::string displayText = prefix + status;
+
+            // Cursor parpadeante al final
+            double cursorPhase = std::fmod(t * 2.0, 1.0);
+            if (!isReady && cursorPhase < 0.55)
+                displayText += "_";
+
+            int bl2 = 0;
+            cv::Size ss2 = cv::getTextSize(displayText, cv::FONT_HERSHEY_PLAIN, 1.0, 1, &bl2);
+            int textX = (W - ss2.width) / 2;
+            int textY = H - 60;
+
+            // Sombra
+            cv::putText(frame, displayText, {textX + 1, textY + 1},
+                        cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+            // Texto
+            cv::putText(frame, displayText, {textX, textY},
+                        cv::FONT_HERSHEY_PLAIN, 1.0, statusColor, 1, cv::LINE_AA);
+
+            // Línea divisoria encima del texto de estado
+            int divY = textY - 14;
+            int divLen = 300;
+            int dx = (W - divLen) / 2;
+            cv::line(frame, {dx, divY}, {dx + divLen, divY},
+                    cv::Scalar(15, 40, 60), 1, cv::LINE_AA);
+            // Marcas de los extremos
+            cv::line(frame, {dx, divY - 3}, {dx, divY + 3},
+                    cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
+            cv::line(frame, {dx + divLen, divY - 3}, {dx + divLen, divY + 3},
+                    cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 8. INDICADOR "INICIALIZANDO" CON PUNTOS ANIMADOS (parte inferior)
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            if (pct < 0.99f) {
+                int dotCount  = 5;
+                int dotSpacing = 16;
+                int dotStartX = W/2 - (dotCount * dotSpacing) / 2;
+                int dotY      = H - 28;
+                for (int i = 0; i < dotCount; ++i) {
+                    double phase = t * 2.8 - i * 0.45;
+                    double a = 0.20 + 0.70 * (0.5 + 0.5 * std::sin(phase));
+                    int r2 = 3 + (int)(2 * std::max(0.0, std::sin(phase)));
+                    cv::circle(frame, {dotStartX + i * dotSpacing, dotY}, r2,
+                            cv::Scalar(0, (int)(180*a), (int)(255*a)),
+                            cv::FILLED, cv::LINE_AA);
+                }
+            } else {
+                // Al llegar a 100%: "SISTEMA LISTO" parpadeante
+                double readyPulse = 0.5 + 0.5 * std::sin(t * 4.0);
+                std::string readyTxt = isEnglish ? "SYSTEM READY" : "SISTEMA LISTO";
+                int bl3 = 0;
+                cv::Size rs = cv::getTextSize(readyTxt, cv::FONT_HERSHEY_DUPLEX, 0.7, 1, &bl3);
+                cv::putText(frame, readyTxt, {(W - rs.width)/2, H - 22},
+                            cv::FONT_HERSHEY_DUPLEX, 0.7,
+                            cv::Scalar(0, (int)(230*readyPulse), (int)(150*readyPulse)),
+                            1, cv::LINE_AA);
+            }
+        }
+    }
     void renderLoop() {
         rclcpp::Rate rate(30);
         while (running && rclcpp::ok()) {
             cv::Mat frame = getFaceFrame();
-            if (showSettings) {
+            
+            // 1. PANTALLA DE CARGA
+            if (configuring.load()) {
+                cv::Mat loadFrame(cv::Size(800, 480), CV_8UC3);
+                renderLoadingScreen(loadFrame);
+                { std::lock_guard<std::mutex> lk(frameMutex); latestFrame = loadFrame.clone(); }
+                auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", loadFrame).toImageMsg();
+                faceScreenPublisher->publish(*msg);
+                rate.sleep();
+                continue;
+            }
+
+            // 2. RENDERIZADO DE LA INTERFAZ PRINCIPAL
+            bool sSettings, sRadio, sRoutines;
+            {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                sSettings  = showSettings_;
+                sRadio     = showRadio_;
+                sRoutines  = showRoutines_;
+            }
+
+            if (sSettings) {
                 settingsMenu.render(frame);
-            } else if (showRadio) {
+            } else if (sRadio) {
                 radioApp.render(frame);
-            } else if (showRoutines) {
+            } else if (sRoutines) {
                 routinesApp.render(frame);
             } else {
+                // FIX: overlayMutex y navMutex se toman en órdenes separados sin anidamiento
                 renderFaceOverlay(frame);
                 std::lock_guard<std::mutex> lock(navMutex);
                 if (!navStack.empty()) {
@@ -2406,20 +3262,59 @@ private:
                     renderPowerButton(frame);
                 }
             }
-            bool currentIdle = false;{
+
+            // 3. DETERMINAR SI YAREN ESTÁ INACTIVO 
+            bool currentIdle = false;
+            {
                 std::lock_guard<std::mutex> lock(navMutex);
-                currentIdle = navStack.empty() && !showSettings && !showRadio && !showRoutines && activeMode.empty();
-            }
-            
-            // Si el estado cambió (entró o salió de un menú), publicamos el aviso
-            if (currentIdle != lastIdleState) {
-                lastIdleState = currentIdle;
-                auto idleMsg = std_msgs::msg::Bool();
-                idleMsg.data = currentIdle;
-                idleStatePublisher->publish(idleMsg);
-                RCLCPP_INFO(this->get_logger(), "Estado de escucha de Yaren cambiado a: %s", currentIdle ? "ACTIVO" : "PAUSADO");
+                // ESTRICTO: Solo es inactivo si la pila de navegación está completamente vacía
+                currentIdle = navStack.empty() && !sSettings && !sRadio && !sRoutines && activeMode.empty();
             }
 
+            // 4. LÓGICA DEL SCREENSAVER (PANTALLA DE INACTIVIDAD)
+            auto now = std::chrono::system_clock::now();
+            double elapsedIdle = std::chrono::duration<double>(now - lastInteractionTime).count();
+
+            // Transiciones de estado del Screensaver
+            if (currentIdle && elapsedIdle > idleTimeoutSecs) {
+                if (!isIdleScreenActive) startIdleScreen();
+            } else if (!currentIdle && isIdleScreenActive) {
+                stopIdleScreen();
+            }
+
+            // Si está activo, dibujamos el video sobre todo el frame
+            if (isIdleScreenActive && idleVideo.isOpened()) {
+                cv::Mat videoFrame;
+                idleVideo >> videoFrame; // Leer el siguiente fotograma
+                
+                if (videoFrame.empty()) {
+                    // Si el video termina, hacer loop reiniciando al fotograma 0
+                    idleVideo.set(cv::CAP_PROP_POS_FRAMES, 0);
+                    idleVideo >> videoFrame;
+                }
+                if (!videoFrame.empty()) {
+                    // Sobrescribir la interfaz con el video
+                    cv::resize(videoFrame, frame, frame.size(), 0, 0, cv::INTER_LINEAR);
+                    
+                    // Texto opcional sutil en la esquina inferior para estética
+                    cv::putText(frame, "Zzz...", {30, frame.rows - 30}, 
+                                cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+                }
+            }
+
+            // 5. PUBLICAR ESTADO A ROS 2 (Para que los otros nodos sepan si Yaren "escucha")
+            {
+                std::lock_guard<std::mutex> lock(idleStateMutex);
+                if (currentIdle != lastIdleState) {
+                    lastIdleState = currentIdle;
+                    auto idleMsg = std_msgs::msg::Bool();
+                    idleMsg.data = currentIdle;
+                    idleStatePublisher->publish(idleMsg);
+                    RCLCPP_INFO(this->get_logger(), "Estado de escucha de Yaren cambiado a: %s", currentIdle ? "ACTIVO" : "PAUSADO");
+                }
+            }
+
+            // 6. ACTUALIZAR LA PANTALLA
             if (!frame.empty()) {
                 { std::lock_guard<std::mutex> lk(frameMutex); latestFrame = frame.clone(); }
                 auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
@@ -2428,7 +3323,6 @@ private:
             rate.sleep();
         }
     }
-
     void loadFrames(const std::string& dir, std::vector<cv::Mat>& frames) {
         if (!fs::exists(dir)) return;
         std::vector<std::string> files;
@@ -2440,6 +3334,8 @@ private:
 
     void audioPlayingCallback(const std_msgs::msg::Bool::SharedPtr msg) {
         ttsActive = msg->data;
+        // FIX-E: proteger Mix_PauseMusic/ResumeMusic con audioMutex_
+        std::lock_guard<std::mutex> lk(audioMutex_);
         if (isMenuMusicPlaying) {
             if (ttsActive) Mix_PauseMusic();
             else Mix_ResumeMusic();
@@ -2468,17 +3364,43 @@ private:
     }
 
     cv::Mat eyesOpenImg, eyesClosedImg, mouthOpenImg, mouthClosedImg;
+    cv::Mat yarenSplashImg;
     std::vector<cv::Mat> eyesFrames, mouthFrames;
     std::map<std::string, cv::Mat> iconMap;
     std::atomic<bool> ttsActive  { false };
     std::atomic<bool> isBlinking { false };
     std::atomic<bool> running    { false };
+    std::atomic<bool> configuring{true};
+    // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
+    std::atomic<int>  configProgress{0};
+    // FIX-A: configTotal = 11 (coincide con los 11 configure_node() llamados)
+    static constexpr int configTotal{11};
+    std::string       configStatus{"Iniciando sistema..."};
+    std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };
     std::atomic<bool> hoveredBack { false };
     std::atomic<bool> hoveredStop { false };
     std::atomic<bool> hoveredExit { false };
     std::string activeMode {};
     std::string activeStopCmd {};
+    std::vector<std::string> active_lifecycle_nodes;
+    std::map<std::string, rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr> lifecycle_clients_;
+
+    void change_lifecycle_state(const std::string& node_name, uint8_t transition_id) {
+        std::string service = "/" + node_name + "/change_state";
+        if (lifecycle_clients_.find(node_name) == lifecycle_clients_.end()) {
+            lifecycle_clients_[node_name] = this->create_client<lifecycle_msgs::srv::ChangeState>(service);
+        }
+        auto& client = lifecycle_clients_[node_name];
+        if (!client->wait_for_service(std::chrono::milliseconds(1000))) {
+            RCLCPP_WARN(this->get_logger(), "Servicio Lifecycle no disponible para: %s", node_name.c_str());
+            return;
+        }
+        auto request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
+        request->transition.id = transition_id;
+        client->async_send_request(request);
+    }
+
     cv::Rect stopButtonRect {0,0,0,0};
     cv::Rect backButtonRect {0,0,0,0};
     cv::Rect exitButtonRect {0,0,0,0};
@@ -2496,20 +3418,34 @@ private:
     std::atomic<bool> first_listen_done { false };
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr faceScreenPublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   modePublisher;
-    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     languagePublisher; // <--- Añade esto
-    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr idleStatePublisher;
-    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr wakeEventSubscription;
-    bool lastIdleState = false;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     languagePublisher;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     idleStatePublisher;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  wakeEventSubscription;
+
+    std::mutex idleStateMutex;
+    bool lastIdleState { false };
+
     std::thread renderThread;
     std::thread testThread;
     std::mutex  frameMutex, navMutex;
     cv::Mat     latestFrame;
+
+    // --- VARIABLES DE PANTALLA DE INACTIVIDAD (AQUÍ DEBEN IR) ---
+    std::chrono::system_clock::time_point lastInteractionTime;
+    bool isIdleScreenActive { false };
+    double idleTimeoutSecs { 10.0 }; // Segundos de inactividad
+    cv::VideoCapture idleVideo;
+    Mix_Music* idleMusic { nullptr };
+    std::vector<std::string> idleVideoPaths;
+    std::vector<std::string> idleMusicPaths;
 };
 
 // =============================================================================
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<VideoSynchronizer>();
+    // FIX: arrancar renderThread DESPUÉS de la construcción completa del nodo
+    node->startRenderThread();
     rclcpp::Rate rate(30);
     while (rclcpp::ok()) {
         rclcpp::spin_some(node);

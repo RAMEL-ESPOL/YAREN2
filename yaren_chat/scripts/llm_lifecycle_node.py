@@ -109,6 +109,9 @@ class LLMLifecycleNode(LifecycleNode):
 
     def on_deactivate(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info('Deactivating LLM Node')
+        self.state_graph_llm = StateGraphLLM(self)
+        self.config = {"configurable": {"thread_id": 1}}
+        self.get_logger().info('🧹 Historial limpiado.')
         return TransitionCallbackReturn.SUCCESS
 
     def on_cleanup(self, state: LifecycleState) -> TransitionCallbackReturn:

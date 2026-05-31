@@ -28,7 +28,7 @@ find_package(cv_bridge REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(ament_index_cpp REQUIRED) 
 find_package(image_transport REQUIRED)
-
+find_package(rclcpp_lifecycle REQUIRED)
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 add_executable(face_filter_node 
@@ -66,6 +66,7 @@ ament_target_dependencies(face_filter_node
   message_filters
   ament_index_cpp
   image_transport
+  rclcpp_lifecycle
 )
 
 ament_target_dependencies(animal_filter_mask
@@ -78,6 +79,7 @@ ament_target_dependencies(animal_filter_mask
   message_filters
   ament_index_cpp
   image_transport
+  rclcpp_lifecycle
 )
 
 # INSTALAR LOS NODOS EJECUTABLES DE C++
@@ -113,6 +115,7 @@ ament_export_dependencies(
   message_filters
   ament_index_cpp
   image_transport
+  rclcpp_lifecycle
 )
 
 ament_export_include_directories(include)
