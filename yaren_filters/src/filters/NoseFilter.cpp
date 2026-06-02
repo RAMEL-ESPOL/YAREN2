@@ -20,7 +20,7 @@ std::pair<int, int> NoseFilter::calculatePosition(
     const cv::Mat& rotated_asset, 
     const std::vector<cv::Point2f>& landmarks
 ) const {
-    const int CENTER_NOSE = 5;
+    const int CENTER_NOSE = 1;
 
     int nose_x = static_cast<int>(landmarks[CENTER_NOSE].x);
     int nose_y = static_cast<int>(landmarks[CENTER_NOSE].y);

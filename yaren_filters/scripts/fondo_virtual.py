@@ -3,8 +3,8 @@
 fondo_virtual.py  —  LifecycleNode
 ─────────────────────────────────────────────
 on_configure  → carga fondos e inicializa MediaPipe (una sola vez en RAM)
-on_activate   → suscribe a la cámara, habilita render
-on_deactivate → desuscribe, para render, libera ventanas
+on_activate   → suscribe a la cámara, crea timer de render, habilita ventana
+on_deactivate → desuscribe, destruye timer, cierra ventanas
 on_cleanup    → libera MediaPipe y fondos
 """
 
@@ -56,6 +56,8 @@ class VirtualBackgroundNode(LifecycleNode):
         self._latest_frame = None
         self._frame_lock   = threading.Lock()
         self._window_name  = 'YAREN - Fondos Virtuales'
+        
+        self._render_timer = None  # Timer para el loop de OpenCV
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -81,21 +83,33 @@ class VirtualBackgroundNode(LifecycleNode):
         self._cam_sub = self.create_subscription(
             Image, '/csi_camera/image_raw',
             self._image_callback, qos_profile_sensor_data)
+        
         self._state    = 'MENU'
         self._scroll_y = 0
         self._active   = True
+        
+        # Creamos un timer a ~60Hz (0.016s) para actualizar la ventana de OpenCV
+        self._render_timer = self.create_timer(0.016, self._spin_render)
+        
         self.get_logger().info('ACTIVADO — mostrando menú de fondos.')
         return TransitionCallbackReturn.SUCCESS
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
         self._active = False
+        
+        if self._render_timer:
+            self.destroy_timer(self._render_timer)
+            self._render_timer = None
+            
         if self._cam_sub:
             self.destroy_subscription(self._cam_sub)
             self._cam_sub = None
+            
         try:
             cv2.destroyWindow(self._window_name)
         except Exception:
             pass
+            
         self.get_logger().info('DESACTIVADO.')
         return TransitionCallbackReturn.SUCCESS
 
@@ -113,6 +127,11 @@ class VirtualBackgroundNode(LifecycleNode):
 
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
         self._active = False
+        
+        if self._render_timer:
+            self.destroy_timer(self._render_timer)
+            self._render_timer = None
+            
         if self._segmentator:
             self._segmentator.close()
             self._segmentator = None
@@ -138,10 +157,10 @@ class VirtualBackgroundNode(LifecycleNode):
         except Exception as e:
             self.get_logger().error(f'image_callback: {e}')
 
-    # ── Render principal (llamado desde main loop) ──────────────────────
+    # ── Render principal (llamado desde el Timer) ──────────────────────
 
-    def spin_render(self):
-        """Llamar desde el hilo principal en cada iteración del spin."""
+    def _spin_render(self):
+        """Llamado automáticamente por el Timer a ~60Hz."""
         if not self._active:
             return
 
@@ -420,9 +439,9 @@ class VirtualBackgroundNode(LifecycleNode):
 
         if self._state == 'MENU':
             if event == cv2.EVENT_LBUTTONDOWN:
-                self._is_dragging     = True
-                self._drag_start_y    = y
-                self._click_start_pos = (x, y)
+                self._is_dragging      = True
+                self._drag_start_y     = y
+                self._click_start_pos  = (x, y)
 
             elif event == cv2.EVENT_MOUSEMOVE and self._is_dragging:
                 dy = self._drag_start_y - y
@@ -484,17 +503,16 @@ def main(args=None):
     node = VirtualBackgroundNode()
     executor = rclpy.executors.SingleThreadedExecutor()
     executor.add_node(node)
+    
     try:
-        while rclpy.ok():
-            executor.spin_once(timeout_sec=0.016)  # ~60 Hz
-            node.spin_render()                      # imshow en hilo principal
+        # Ahora usamos el spin nativo igual que en el otro script
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
