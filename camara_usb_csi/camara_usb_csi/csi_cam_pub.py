@@ -43,7 +43,7 @@ class CSICameraLifecycle(LifecycleNode):
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         # Se crea el publisher, pero aún no transmite nada
-        self.publisher_ = self.create_lifecycle_publisher(Image, 'csi_camera/image_raw', 10)
+        self.publisher_ = self.create_lifecycle_publisher(Image, '/csi_camera/image_raw', 10)
         self.get_logger().info('Cámara CONFIGURADA.')
         return TransitionCallbackReturn.SUCCESS
 

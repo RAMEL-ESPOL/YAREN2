@@ -1538,7 +1538,29 @@ public:
             ws_dir + "/src/YAREN2/yaren_radio/audios/Balada.mp3",
             ws_dir + "/src/YAREN2/yaren_radio/audios/Spiderman.mp3"
         };
+        bootMusicPaths = {
+            ws_dir + "/src/YAREN2/yaren_radio/audios/bringmetolife.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/cancionmundial2010.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/justthewayuare.mp3"
+        };
 
+        // Reproducir musica de arranque
+       // Reproducir musica de arranque
+        {
+            std::lock_guard<std::mutex> lk(audioMutex_);
+            std::string bootTrack = bootMusicPaths[std::rand() % bootMusicPaths.size()];
+            if (fs::exists(bootTrack)) {
+                bootMusic = Mix_LoadMUS(bootTrack.c_str());
+                if (bootMusic) {
+                    // El -1 hace que la canción haga loop infinito durante la carga
+                    Mix_PlayMusic(bootMusic, -1); 
+                    Mix_VolumeMusic(settingsMenu.volumeLevel);
+                }
+            } else {
+                // Esto te ayudará a saber si escribiste mal el nombre del .mp3
+                RCLCPP_WARN(this->get_logger(), "Música de arranque no encontrada: %s", bootTrack.c_str());
+            }
+        }
         menuPlaylist = {
             ws_dir + "/src/YAREN2/yaren_radio/audios/Intro1.mp3",
             ws_dir + "/src/YAREN2/yaren_radio/audios/Intro2.mp3",
@@ -1760,6 +1782,7 @@ public:
             std::string cmd_speak = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice speaker_node.py' &";
             std::string cmd_fondo = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters fondo_virtual.py' &";
             std::string cmd_camara = "bash -c 'source " + setup + " && ros2 run camara_usb_csi csi_cam_pub.py' &";
+
             std::system(cmd_wake.c_str());
             std::system(cmd_voice.c_str());
             std::system(cmd_lang.c_str());
@@ -1773,7 +1796,7 @@ public:
             std::system(cmd_body.c_str());
             std::system(cmd_speak.c_str());
             std::system(cmd_fondo.c_str());
-            std::system(cmd_camara.c_str());
+            std::system(cmd_camara.c_str()); 
 
             std::thread([this, setup]() {
                 std::this_thread::sleep_for(std::chrono::seconds(6));
@@ -1796,6 +1819,7 @@ public:
                     if (!ok) RCLCPP_ERROR(this->get_logger(), "❌ No se pudo configurar: %s", name.c_str());
                     // FIX-B: configProgress es atomic<int>, incremento seguro
                     configProgress++;
+                    std::this_thread::sleep_for(std::chrono::seconds(4));
                 };
                 configure_node("llm_lifecycle_node",       "Inteligencia Artificial");
                 configure_node("stt_lifecycle_node",        "Reconocimiento de Voz");
@@ -1816,7 +1840,18 @@ public:
                 }
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 resetIdleTimer();
-                configuring = false;
+                configuring = false; // Aquí termina la pantalla de carga y aparece la cara
+
+                // --- DETENER MÚSICA DE ARRANQUE Y QUEDAR EN SILENCIO ---
+                {
+                    std::lock_guard<std::mutex> lk(audioMutex_);
+                    if (bootMusic) {
+                        Mix_HaltMusic();           // Detiene la música actual
+                        Mix_FreeMusic(bootMusic);  // Libera la memoria
+                        bootMusic = nullptr;
+                    }
+                }
+                
             }).detach();
         }
     }
@@ -1889,6 +1924,14 @@ public:
                 Mix_HaltMusic();
                 Mix_FreeMusic(menuMusic);
                 menuMusic = nullptr;
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lk(audioMutex_);
+            if (bootMusic) {
+                Mix_HaltMusic();
+                Mix_FreeMusic(bootMusic);
+                bootMusic = nullptr;
             }
         }
         if (renderThread.joinable()) renderThread.join();
@@ -1986,6 +2029,12 @@ private:
 
     void startMenuMusic() {
         std::lock_guard<std::mutex> lk(audioMutex_);
+        // Detener musica de boot si aun suena
+        if (bootMusic) {
+            Mix_HaltMusic();
+            Mix_FreeMusic(bootMusic);
+            bootMusic = nullptr;
+        }
         if (menuPlaylist.empty()) return;
         // FIX-G: siempre detener y liberar música anterior antes de cargar nueva
         if (menuMusic) {
@@ -2221,8 +2270,15 @@ private:
     }
 
     void handleMouse(int event, int x, int y) {
-        resetIdleTimer();
-        bool sSettings, sRadio, sRoutines;
+        if (isIdleScreenActive) {
+            if (event == cv::EVENT_LBUTTONDOWN) {
+                resetIdleTimer(); // Esto despierta la pantalla
+            }
+            return; // Bloquea clics ciegos y hovers mientras Yaren duerme
+        }
+        // 2. Si la pantalla ya está despierta, cualquier interacción (movimiento o clic) 
+        // reinicia el temporizador para que no se duerma mientras la usas
+        resetIdleTimer();        bool sSettings, sRadio, sRoutines;
         {
             std::lock_guard<std::mutex> lk(modeFlagMutex);
             sSettings  = showSettings_;
@@ -2779,16 +2835,15 @@ private:
         }
         return res;
     }
-
     // =============================================================================
-//  renderLoadingScreen — NUEVA VERSIÓN ESTÉTICA
-//  Reemplaza completamente la función renderLoadingScreen() en face_screen.cpp
-//  Estética: Cyberpunk-Industrial, cyan/ámbar sobre negro profundo
-// =============================================================================
-
+    //  renderLoadingScreen — "ROBOT AWAKENING" v2
+    //  La imagen de Yaren se revela de abajo → arriba sincronizada con la barra
+    //  de progreso: 0% = imagen oculta, 100% = imagen completamente visible.
+    //  Reemplaza el bloque completo de renderLoadingScreen() en face_screen.cpp
+    // =============================================================================
     void renderLoadingScreen(cv::Mat& frame) {
         int W = frame.cols, H = frame.rows;
-        frame.setTo(cv::Scalar(3, 6, 12));
+        frame.setTo(cv::Scalar(4, 5, 10));
 
         double t = std::chrono::duration<double>(
             std::chrono::system_clock::now().time_since_epoch()).count();
@@ -2802,423 +2857,344 @@ private:
         }
         float pct = std::min(1.0f, (float)prog / configTotal);
 
+        const int cx = W / 2, cy = H / 2 - 15;
+
         // ─────────────────────────────────────────────────────────────────────────
-        // 1. FONDO: REJILLA HEXAGONAL ANIMADA
+        // 1. FONDO RADIAL CÁLIDO
         // ─────────────────────────────────────────────────────────────────────────
         {
-            int hexR = 28;
-            double hexW = hexR * 1.732;
-            double hexH = hexR * 2.0;
-            int cols2 = (int)(W / hexW) + 3;
-            int rows2 = (int)(H / (hexH * 0.75)) + 3;
-            for (int row = -1; row < rows2; ++row) {
-                for (int col = -1; col < cols2; ++col) {
-                    double cx = col * hexW + ((row % 2 == 0) ? 0 : hexW * 0.5);
-                    double cy = row * hexH * 0.75;
-                    double dist = std::sqrt((cx - W/2.0)*(cx - W/2.0) + (cy - H/2.0)*(cy - H/2.0));
-                    double maxD = std::sqrt(W*W + H*H) * 0.5;
-                    double wave = std::sin(dist * 0.045 - t * 1.4) * 0.5 + 0.5;
-                    double alpha = wave * (1.0 - dist / maxD) * 0.55;
-                    if (alpha < 0.015) continue;
-                    // Vértices del hexágono
-                    std::vector<cv::Point> hex(6);
-                    for (int v = 0; v < 6; ++v) {
-                        double ang = CV_PI / 180.0 * (60.0 * v - 30.0);
-                        hex[v] = {(int)(cx + hexR * std::cos(ang)),
-                                (int)(cy + hexR * std::sin(ang))};
+            float maxR = std::sqrt((float)(W*W + H*H)) * 0.55f;
+            for (int y = 0; y < H; y += 2) {
+                for (int x = 0; x < W; x += 2) {
+                    float dx = (float)(x - cx), dy = (float)(y - cy);
+                    float norm = std::min(1.0f, std::sqrt(dx*dx+dy*dy) / maxR);
+                    float heat = (1.0f - norm)*(1.0f - norm) * 0.20f;
+                    uchar r2 = (uchar)(heat * 245);
+                    uchar g2 = (uchar)(heat * 62);
+                    uchar b2 = (uchar)(heat * 10);
+                    for (int dy2 = 0; dy2 < 2 && y+dy2 < H; dy2++)
+                        for (int dx2 = 0; dx2 < 2 && x+dx2 < W; dx2++)
+                            frame.at<cv::Vec3b>(y+dy2, x+dx2) = cv::Vec3b(b2, g2, r2);
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 2. ONDAS DE SONAR
+        // ─────────────────────────────────────────────────────────────────────────
+        for (int w = 0; w < 4; ++w) {
+            double phase    = std::fmod(t * 0.55 + w * 0.5, 2.0) / 2.0;
+            int    radius   = (int)(phase * 260);
+            double alpha    = (1.0 - phase)*(1.0 - phase) * 0.45;
+            if (alpha < 0.015 || radius < 2) continue;
+            cv::Mat ov = frame.clone();
+            uchar r2 = (uchar)(200 * (1.0 - phase * 0.5));
+            uchar g2 = (uchar)(85  * (1.0 - phase * 0.6));
+            cv::circle(ov, {cx, cy}, radius, cv::Scalar(0, g2, r2),
+                    1 + (int)(2.0*(1.0-phase)), cv::LINE_AA);
+            cv::addWeighted(ov, alpha, frame, 1.0-alpha, 0, frame);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 3. NÚCLEO CENTRAL PULSANTE (Se dibuja antes para quedar en el fondo)
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            double beatFreq = 1.2 + pct * 2.8;
+            double beat = 0.68 + 0.32*std::sin(t * beatFreq * CV_PI * 2.0);
+            // Halo exterior
+            {
+                cv::Mat ov = frame.clone();
+                cv::circle(ov, {cx,cy}, (int)(40*beat),
+                        cv::Scalar(0,(int)(45*beat),(int)(200*beat)), cv::FILLED, cv::LINE_AA);
+                cv::addWeighted(ov, 0.18*beat, frame, 1.0-0.18*beat, 0, frame);
+            }
+            // Corona
+            {
+                cv::Mat ov = frame.clone();
+                cv::circle(ov, {cx,cy}, (int)(27*beat),
+                        cv::Scalar(0,(int)(100*beat),(int)(230*beat)), 2, cv::LINE_AA);
+                cv::addWeighted(ov, 0.55, frame, 0.45, 0, frame);
+            }
+            // Núcleo sólido
+            {
+                int coreR = 13 + (int)(pct*5);
+                uchar cr  = (uchar)(200 + 55*beat);
+                uchar cg  = (uchar)((80 + pct*130) * beat);
+                uchar cb  = (uchar)(pct * 25 * beat);
+                cv::circle(frame, {cx,cy}, coreR, cv::Scalar(cb,cg,cr), cv::FILLED, cv::LINE_AA);
+                cv::circle(frame, {cx-3,cy-3}, (int)(4*beat),
+                        cv::Scalar(180,220,255), cv::FILLED, cv::LINE_AA);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 4. IMAGEN DE YAREN (Más alta, tapando núcleo y recuperando color)
+        // ─────────────────────────────────────────────────────────────────────────
+        if (!yarenSplashImg.empty() && pct > 0.01f) {
+            const int imgH = 280; 
+            float aspect = (float)yarenSplashImg.cols / yarenSplashImg.rows;
+            const int imgW = (int)(imgH * aspect);
+            const int imgX = cx - imgW / 2;
+            const int imgY = cy - imgH / 2 - 50; // ¡Ajustado para subirlo y no chocar con el texto!
+
+            cv::Mat resized;
+            cv::resize(yarenSplashImg, resized, {imgW, imgH}, 0, 0, cv::INTER_AREA);
+
+            int revealedH = (int)(imgH * pct);
+            int revealStartRow = imgH - revealedH;
+            int revealStartY   = imgY + revealStartRow;
+
+            // Transición suave al color original al llegar al final
+            float colorBlend = 0.0f;
+            if (pct > 0.85f) { // Empieza a recuperar color del 85% al 100%
+                colorBlend = std::min(1.0f, (pct - 0.85f) / 0.15f);
+            }
+
+            for (int iy = 0; iy < imgH; ++iy) {
+                for (int ix = 0; ix < imgW; ++ix) {
+                    int fy = imgY + iy, fx = imgX + ix;
+                    if (fy < 0 || fy >= H || fx < 0 || fx >= W) continue;
+                    
+                    float srcA = 1.0f;
+                    cv::Vec3b srcPx(0,0,0);
+                    
+                    if (resized.channels() == 4) {
+                        cv::Vec4b p4 = resized.at<cv::Vec4b>(iy,ix);
+                        srcPx = cv::Vec3b(p4[0], p4[1], p4[2]);
+                        srcA = p4[3] / 255.f;
+                    } else {
+                        srcPx = resized.at<cv::Vec3b>(iy,ix);
                     }
-                    int b = (int)(alpha * 28);
-                    int g = (int)(alpha * 55 + wave * 10);
-                    int r2 = (int)(alpha * 18);
-                    cv::polylines(frame, hex, true, cv::Scalar(b, g, r2), 1, cv::LINE_AA);
+                    
+                    if (srcA < 0.04f) continue;
+
+                    cv::Vec3b& bg = frame.at<cv::Vec3b>(fy,fx);
+
+                    if (iy < revealStartRow) {
+                        // Zona NO revelada: Sombra casi invisible
+                        bg[0] = cv::saturate_cast<uchar>(bg[0]*(1.f-srcA*0.8f));
+                        bg[1] = cv::saturate_cast<uchar>(bg[1]*(1.f-srcA*0.8f) + 10 * srcA);
+                        bg[2] = cv::saturate_cast<uchar>(bg[2]*(1.f-srcA*0.8f) + 20 * srcA);
+                    } else {
+                        // Zona REVELADA: Silueta monocromática
+                        cv::Vec3b silColor(0, 160, 255); // BGR dorado/ámbar
+                        
+                        int distToEdge = iy - revealStartRow;
+                        if (distToEdge < 6 && pct < 0.99f) {
+                            double scanPulse = 0.65 + 0.35*std::sin(t*9.0);
+                            float scanStr = (1.0f - distToEdge/6.0f) * (float)scanPulse;
+                            silColor[0] = cv::saturate_cast<uchar>(silColor[0] + 50 * scanStr);
+                            silColor[1] = cv::saturate_cast<uchar>(silColor[1] + 95 * scanStr);
+                            silColor[2] = 255;
+                        }
+
+                        // Mezcla: empieza en 100% silueta y transiciona a 100% colores originales
+                        cv::Vec3b finalColor;
+                        for (int ch = 0; ch < 3; ++ch) {
+                            finalColor[ch] = cv::saturate_cast<uchar>(srcPx[ch] * colorBlend + silColor[ch] * (1.0f - colorBlend));
+                            bg[ch] = cv::saturate_cast<uchar>(finalColor[ch]*srcA + bg[ch]*(1.f-srcA));
+                        }
+                    }
+                }
+            }
+
+            // ── Línea del scanline (borde exacto) ──
+            if (pct < 0.99f && revealStartY >= imgY && revealStartY < imgY+imgH) {
+                double scanPulse = 0.65 + 0.35*std::sin(t*9.0);
+                cv::line(frame,
+                        {imgX - 4, revealStartY},
+                        {imgX + imgW + 4, revealStartY},
+                        cv::Scalar(0, (int)(200*scanPulse), (int)(255*scanPulse)),
+                        2, cv::LINE_AA);
+                for (int p = 0; p < 5; ++p) {
+                    double pPhase = std::fmod(t*1.8 + p*0.38, 1.0);
+                    int px2 = imgX + (int)(pPhase * imgW);
+                    int py2 = revealStartY - 1 - (p % 3);
+                    if (px2 >= 0 && px2 < W && py2 >= 0 && py2 < H)
+                        cv::circle(frame, {px2, py2}, 2,
+                                cv::Scalar(0,(int)(160*scanPulse),(int)(255*scanPulse)),
+                                cv::FILLED, cv::LINE_AA);
                 }
             }
         }
-
         // ─────────────────────────────────────────────────────────────────────────
-        // 2. PARTÍCULAS FLOTANTES (puntos de circuito)
-        // ─────────────────────────────────────────────────────────────────────────
-        {
-            struct Particle { float x, y, phase, speed, size; };
-            static const Particle particles[] = {
-                {0.10f, 0.20f, 0.0f,  0.7f, 2.0f}, {0.85f, 0.15f, 1.2f, 0.9f, 1.5f},
-                {0.05f, 0.70f, 2.3f,  0.5f, 2.5f}, {0.92f, 0.65f, 3.1f, 0.8f, 1.8f},
-                {0.50f, 0.08f, 4.4f,  1.0f, 1.2f}, {0.22f, 0.88f, 5.2f, 0.6f, 2.0f},
-                {0.75f, 0.82f, 0.8f,  1.1f, 1.5f}, {0.40f, 0.92f, 1.9f, 0.7f, 1.3f},
-                {0.15f, 0.45f, 3.7f,  0.8f, 1.8f}, {0.88f, 0.40f, 2.6f, 0.9f, 1.4f},
-                {0.60f, 0.05f, 1.4f,  1.2f, 1.0f}, {0.30f, 0.55f, 4.9f, 0.6f, 2.2f},
-            };
-            for (const auto& p : particles) {
-                double a = 0.25 + 0.55 * (0.5 + 0.5 * std::sin(t * p.speed + p.phase));
-                float oy = (float)(8.0 * std::sin(t * p.speed * 0.6 + p.phase));
-                int px2 = (int)(p.x * W);
-                int py2 = (int)(p.y * H + oy);
-                cv::circle(frame, {px2, py2}, (int)p.size,
-                        cv::Scalar(0, (int)(210*a), (int)(255*a)), cv::FILLED, cv::LINE_AA);
-                // Líneas de circuito cortas emanando
-                if (a > 0.4) {
-                    int len = (int)(12 * a);
-                    cv::line(frame, {px2, py2}, {px2 + len, py2},
-                            cv::Scalar(0, (int)(80*a), (int)(120*a)), 1, cv::LINE_AA);
-                    cv::line(frame, {px2, py2}, {px2, py2 - len},
-                            cv::Scalar(0, (int)(80*a), (int)(120*a)), 1, cv::LINE_AA);
-                }
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // 3. BORDE DECORATIVO EXTERIOR
-        // ─────────────────────────────────────────────────────────────────────────
-        {
-            double pulse = 0.6 + 0.4 * std::sin(t * 1.8);
-            // Borde principal cyan
-            cv::rectangle(frame, {3, 3, W-6, H-6},
-                        cv::Scalar(0, (int)(160*pulse), (int)(220*pulse)), 1, cv::LINE_AA);
-            // Borde interior sutil
-            cv::rectangle(frame, {8, 8, W-16, H-16},
-                        cv::Scalar(0, (int)(40*pulse), (int)(60*pulse)), 1, cv::LINE_AA);
-            // Esquinas decorativas — grosor 2
-            int cornerLen = 22, cornerThick = 2;
-            cv::Scalar cornerColor(0, (int)(220*pulse), (int)(255*pulse));
-            // Esquina sup-izq
-            cv::line(frame, {3, 3}, {3 + cornerLen, 3}, cornerColor, cornerThick, cv::LINE_AA);
-            cv::line(frame, {3, 3}, {3, 3 + cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
-            // Esquina sup-der
-            cv::line(frame, {W-3, 3}, {W-3-cornerLen, 3}, cornerColor, cornerThick, cv::LINE_AA);
-            cv::line(frame, {W-3, 3}, {W-3, 3 + cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
-            // Esquina inf-izq
-            cv::line(frame, {3, H-3}, {3 + cornerLen, H-3}, cornerColor, cornerThick, cv::LINE_AA);
-            cv::line(frame, {3, H-3}, {3, H-3-cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
-            // Esquina inf-der
-            cv::line(frame, {W-3, H-3}, {W-3-cornerLen, H-3}, cornerColor, cornerThick, cv::LINE_AA);
-            cv::line(frame, {W-3, H-3}, {W-3, H-3-cornerLen}, cornerColor, cornerThick, cv::LINE_AA);
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // 4. TÍTULO "YAREN" CON EFECTO GLITCH + SOMBRA CYAN
+        // 5. TÍTULO "YAREN" — letras que se escriben una a una
         // ─────────────────────────────────────────────────────────────────────────
         {
             const std::string title = "YAREN";
-            double fontScale = 2.4;
-            int fontFace = cv::FONT_HERSHEY_DUPLEX;
-            int thickness = 3;
-            int titleY = 72;
+            const int titleY = H - 128;
+            const int fontFace = cv::FONT_HERSHEY_DUPLEX;
+            const double fontScale = 1.95;
+            const int thickness = 2;
+            int lettersToShow = std::min(5, std::max(1, (int)(pct * 10.0f)));
+
             int bl = 0;
-            cv::Size ts = cv::getTextSize(title, fontFace, fontScale, thickness, &bl);
-            int titleX = (W - ts.width) / 2;
+            cv::Size fullSz = cv::getTextSize(title, fontFace, fontScale, thickness, &bl);
+            int startX = (W - fullSz.width) / 2;
 
-            // Sombra difusa (múltiples capas)
-            for (int s = 6; s >= 1; --s) {
-                double a = 0.12 * (7 - s);
-                cv::putText(frame, title, {titleX + s, titleY + s},
-                            fontFace, fontScale, cv::Scalar(0, (int)(180*a), (int)(255*a)),
-                            thickness + s * 2, cv::LINE_AA);
+            // Sombra naranja
+            for (int s = 4; s >= 1; --s) {
+                double a = 0.09*(5-s)*pct;
+                cv::putText(frame, title.substr(0, lettersToShow),
+                            {startX+s, titleY+s}, fontFace, fontScale,
+                            cv::Scalar(0,(int)(55*a),(int)(175*a)),
+                            thickness+s*2, cv::LINE_AA);
             }
-
-            // Glitch sutil: offset rojo/azul en momentos aleatorios
-            double glitchPhase = std::sin(t * 0.3) * std::sin(t * 7.1);
-            if (std::abs(glitchPhase) > 0.85) {
-                int gOff = (int)(3 * glitchPhase);
-                cv::putText(frame, title, {titleX + gOff, titleY},
-                            fontFace, fontScale, cv::Scalar(0, 0, 120), thickness, cv::LINE_AA);
-                cv::putText(frame, title, {titleX - gOff, titleY},
-                            fontFace, fontScale, cv::Scalar(60, 0, 0), thickness, cv::LINE_AA);
+            // Letras individuales con color
+            std::string prefix;
+            for (int i = 0; i < lettersToShow; ++i) {
+                bool isLast = (i==lettersToShow-1) && (lettersToShow<5);
+                double lp = isLast ? (0.55+0.45*std::sin(t*7.5)) : 1.0;
+                int pw = prefix.empty() ? 0
+                    : cv::getTextSize(prefix,fontFace,fontScale,thickness,&bl).width;
+                std::string letter(1, title[i]);
+                cv::putText(frame, letter,
+                            {startX+pw, titleY}, fontFace, fontScale,
+                            cv::Scalar((uchar)(12*lp),(uchar)((95+pct*110)*lp),(uchar)(200*lp)),
+                            thickness, cv::LINE_AA);
+                prefix += title[i];
             }
-
-            // Texto principal blanco-cyan
-            double tPulse = 0.85 + 0.15 * std::sin(t * 2.2);
-            cv::putText(frame, title, {titleX, titleY},
-                        fontFace, fontScale,
-                        cv::Scalar((int)(180*tPulse), (int)(230*tPulse), (int)(255*tPulse)),
-                        thickness, cv::LINE_AA);
-
-            // Subtítulo "ROBOT SOCIAL"
-            const std::string sub = "ROBOT SOCIAL";
-            cv::Size ss = cv::getTextSize(sub, cv::FONT_HERSHEY_PLAIN, 1.0, 1, &bl);
-            cv::putText(frame, sub, {(W - ss.width)/2, titleY + 28},
-                        cv::FONT_HERSHEY_PLAIN, 1.0,
-                        cv::Scalar(30, 80, 110), 1, cv::LINE_AA);
-
-            // Línea decorativa bajo subtítulo
-            int lineY = titleY + 40;
-            int lineLen = 200;
-            int lx = (W - lineLen) / 2;
-            cv::line(frame, {lx, lineY}, {lx + lineLen, lineY},
-                    cv::Scalar(0, 60, 90), 1, cv::LINE_AA);
-            // Punto central brillante en la línea
-            double linePulse = 0.5 + 0.5 * std::sin(t * 3.0);
-            cv::circle(frame, {W/2, lineY}, 3,
-                    cv::Scalar(0, (int)(200*linePulse), (int)(255*linePulse)),
-                    cv::FILLED, cv::LINE_AA);
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // 5. IMAGEN CENTRAL CON REVELADO DE ABAJO → ARRIBA + SCAN LINE
-        // ─────────────────────────────────────────────────────────────────────────
-        {
-            int imageAreaY = 128;          // donde empieza la zona de imagen
-            int targetH    = 195;
-            int targetW    = 0;
-            cv::Mat resizedImg;
-
-            if (!yarenSplashImg.empty()) {
-                float aspect = (float)yarenSplashImg.cols / yarenSplashImg.rows;
-                targetW = (int)(targetH * aspect);
-                cv::resize(yarenSplashImg, resizedImg, {targetW, targetH}, 0, 0, cv::INTER_AREA);
-            } else {
-                // Placeholder si no hay imagen
-                targetW = 140;
-                resizedImg = cv::Mat::zeros(targetH, targetW, CV_8UC3);
-                cv::putText(resizedImg, "YAREN", {10, targetH/2},
-                            cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(0,200,255), 1);
-            }
-
-            int startX = (W - targetW) / 2;
-            int startY = imageAreaY;
-
-            // Línea de scan: cuántos píxeles de la imagen se han revelado (de abajo a arriba)
-            int revealedPx   = (int)(targetH * pct);           // píxeles ya revelados
-            int scanLineY    = targetH - revealedPx;            // fila en coords de imagen donde está el borde
-
-            // Halo de fondo detrás de la imagen (círculo radial)
-            {
-                double haloA = 0.06 + 0.04 * std::sin(t * 1.5);
-                for (int r = 110; r >= 20; r -= 8) {
-                    double a2 = haloA * (1.0 - (double)r / 110.0);
-                    cv::circle(frame, {startX + targetW/2, startY + targetH/2}, r,
-                            cv::Scalar(0, (int)(180*a2), (int)(255*a2)), 1, cv::LINE_AA);
+            // Cursor
+            if (lettersToShow < 5) {
+                double cp = std::fmod(t*3.0, 1.0);
+                if (cp < 0.52) {
+                    int pw = cv::getTextSize(prefix,fontFace,fontScale,thickness,&bl).width;
+                    cv::line(frame, {startX+pw+5, titleY-32}, {startX+pw+5, titleY+6},
+                            cv::Scalar(0,140,220), 2, cv::LINE_AA);
                 }
             }
-
-            // Dibujar imagen con revelado pixel a pixel
-            for (int y = 0; y < targetH; ++y) {
-                for (int x = 0; x < targetW; ++x) {
-                    int fy = startY + y, fx = startX + x;
-                    if (fy < 0 || fy >= H || fx < 0 || fx >= W) continue;
-
-                    cv::Vec3b srcPixel(0, 0, 0);
-                    float srcAlpha = 1.0f;
-                    if (!resizedImg.empty()) {
-                        if (resizedImg.channels() == 4) {
-                            cv::Vec4b px = resizedImg.at<cv::Vec4b>(y, x);
-                            srcPixel  = cv::Vec3b(px[0], px[1], px[2]);
-                            srcAlpha  = px[3] / 255.0f;
-                        } else {
-                            srcPixel = resizedImg.at<cv::Vec3b>(y, x);
-                            srcAlpha = 1.0f;
-                        }
-                    }
-                    if (srcAlpha < 0.04f) continue;
-
-                    cv::Vec3b& bg = frame.at<cv::Vec3b>(fy, fx);
-
-                    if (y > scanLineY) {
-                        // ── ZONA REVELADA: color original ──
-                        for (int c = 0; c < 3; ++c)
-                            bg[c] = cv::saturate_cast<uchar>(
-                                srcPixel[c] * srcAlpha + bg[c] * (1.0f - srcAlpha));
-
-                    } else if (y >= scanLineY - 4 && pct > 0.01f && pct < 0.995f) {
-                        // ── SCAN LINE: resplandor cyan intenso ──
-                        float scanFade = 1.0f - (float)(scanLineY - y) / 5.0f;
-                        scanFade = std::max(0.0f, scanFade);
-                        double scanPulse = 0.75 + 0.25 * std::sin(t * 12.0);
-                        cv::Vec3b scanColor(
-                            (uchar)(100 * scanFade * scanPulse),
-                            (uchar)(230 * scanFade * scanPulse),
-                            (uchar)(255 * scanFade * scanPulse));
-                        for (int c = 0; c < 3; ++c)
-                            bg[c] = cv::saturate_cast<uchar>(
-                                scanColor[c] * srcAlpha + bg[c] * (1.0f - srcAlpha));
-
-                    } else {
-                        // ── ZONA SIN REVELAR: silueta ámbar oscuro ──
-                        // Tono ámbar muy tenue que se oscurece hacia arriba
-                        float darken = 0.15f + 0.25f * ((float)(y) / targetH);
-                        cv::Vec3b silhouette(
-                            (uchar)(srcPixel[0] * darken * 0.3f),   // B
-                            (uchar)(srcPixel[1] * darken * 0.4f),   // G
-                            (uchar)(srcPixel[2] * darken * 0.15f)); // R (ámbar: más R y G, menos B)
-                        // Invertir: queremos ámbar = alta R y G, baja B
-                        uchar ambR = (uchar)(60 * darken * srcAlpha);
-                        uchar ambG = (uchar)(38 * darken * srcAlpha);
-                        uchar ambB = (uchar)(8  * darken * srcAlpha);
-                        (void)silhouette;
-                        for (int c = 0; c < 3; ++c) {
-                            uchar amb = (c == 2) ? ambR : (c == 1) ? ambG : ambB;
-                            bg[c] = cv::saturate_cast<uchar>(amb + bg[c] * (1.0f - srcAlpha * 0.5f));
-                        }
-                    }
-                }
+            // Subtítulo
+            if (pct > 0.25f) {
+                float a2 = std::min(1.0f, (pct-0.25f)/0.18f);
+                cv::Mat ov = frame.clone();
+                const std::string sub = "ROBOT SOCIAL";
+                cv::Size ss = cv::getTextSize(sub,cv::FONT_HERSHEY_PLAIN,1.1,1,&bl);
+                cv::putText(ov, sub, {(W-ss.width)/2, titleY+26},
+                            cv::FONT_HERSHEY_PLAIN, 1.1, cv::Scalar(0,60,110), 1, cv::LINE_AA);
+                cv::addWeighted(ov, a2, frame, 1.0-a2, 0, frame);
             }
-
-            // Marco de la imagen: bordes brillantes
-            if (pct > 0.02f) {
-                double framePulse = 0.6 + 0.4 * std::sin(t * 2.0);
-                int fx0 = startX - 3, fy0 = startY - 3;
-                int fw2  = targetW + 6, fh2  = targetH + 6;
-                cv::rectangle(frame, {fx0, fy0, fw2, fh2},
-                            cv::Scalar(0, (int)(100*framePulse*pct), (int)(150*framePulse*pct)),
-                            1, cv::LINE_AA);
-                // Esquinas del marco de imagen
-                int cl = 14;
-                cv::Scalar fc2(0, (int)(200*framePulse*pct), (int)(255*framePulse*pct));
-                cv::line(frame, {fx0, fy0},      {fx0+cl, fy0},      fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0, fy0},      {fx0, fy0+cl},      fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0+fw2, fy0},  {fx0+fw2-cl, fy0},  fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0+fw2, fy0},  {fx0+fw2, fy0+cl},  fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0, fy0+fh2},  {fx0+cl, fy0+fh2},  fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0, fy0+fh2},  {fx0, fy0+fh2-cl},  fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0+fw2, fy0+fh2},{fx0+fw2-cl,fy0+fh2}, fc2, 2, cv::LINE_AA);
-                cv::line(frame, {fx0+fw2, fy0+fh2},{fx0+fw2,fy0+fh2-cl}, fc2, 2, cv::LINE_AA);
+            // Separador con diamante
+            if (pct > 0.32f) {
+                float sp = std::min(1.0f, (pct-0.32f)/0.22f);
+                int sepY = titleY+44, ll = (int)(155*sp);
+                double dp = 0.5+0.5*std::sin(t*2.8);
+                cv::line(frame,{cx-8,sepY},{cx-ll,sepY},cv::Scalar(0,45,85),1,cv::LINE_AA);
+                cv::line(frame,{cx+8,sepY},{cx+ll,sepY},cv::Scalar(0,45,85),1,cv::LINE_AA);
+                std::vector<cv::Point> diamond={{cx,sepY-5},{cx+5,sepY},{cx,sepY+5},{cx-5,sepY}};
+                cv::fillPoly(frame,diamond,cv::Scalar(0,(int)(95*dp),(int)(195*dp)));
             }
         }
 
         // ─────────────────────────────────────────────────────────────────────────
-        // 6. BARRA DE PROGRESO SEGMENTADA + ETIQUETAS
+        // 6. BARRA DE PROGRESO con partículas en el frente
         // ─────────────────────────────────────────────────────────────────────────
         {
-            int barY    = H - 90;
-            int barW    = W * 68 / 100;
-            int barX    = (W - barW) / 2;
-            int barH    = 8;
+            int barY = H - 72;
+            int barW = W * 72 / 100;
+            int barX = (W - barW) / 2;
+            int barH = 7;
 
-            // Fondo de la barra con borde
-            cv::rectangle(frame, {barX - 1, barY - 1, barW + 2, barH + 2},
-                        cv::Scalar(10, 22, 36), cv::FILLED);
-            cv::rectangle(frame, {barX - 1, barY - 1, barW + 2, barH + 2},
-                        cv::Scalar(20, 50, 75), 1, cv::LINE_AA);
+            cv::rectangle(frame, {barX, barY, barW, barH}, cv::Scalar(6,14,22), cv::FILLED);
 
-            // Segmentos de la barra (hace que se vea más técnica)
-            int segments = configTotal;
-            int segW = (barW - segments + 1) / segments;
-            for (int s = 0; s < segments; ++s) {
-                int sx = barX + s * (segW + 1);
-                float segFill = std::min(1.0f, std::max(0.0f,
-                    pct * segments - s));
-                if (segFill <= 0.0f) {
-                    // Segmento vacío
-                    cv::rectangle(frame, {sx, barY, segW, barH},
-                                cv::Scalar(8, 16, 26), cv::FILLED);
-                } else if (segFill >= 1.0f) {
-                    // Segmento lleno
-                    cv::rectangle(frame, {sx, barY, segW, barH},
-                                cv::Scalar(0, 180, 240), cv::FILLED);
-                    // Brillo superior
-                    cv::rectangle(frame, {sx, barY, segW, 2},
-                                cv::Scalar(100, 240, 255), cv::FILLED);
-                } else {
-                    // Segmento parcial (el activo, con pulso)
-                    int fillW2 = (int)(segW * segFill);
-                    cv::rectangle(frame, {sx, barY, segW, barH},
-                                cv::Scalar(8, 16, 26), cv::FILLED);
-                    double pulse = 0.7 + 0.3 * std::sin(t * 6.0);
-                    cv::rectangle(frame, {sx, barY, fillW2, barH},
-                                cv::Scalar(0, (int)(200*pulse), (int)(255*pulse)), cv::FILLED);
-                    // Halo en el borde activo
-                    if (fillW2 > 2) {
-                        for (int g = 1; g <= 4; ++g) {
-                            double ga = 0.25 * (5 - g) * pulse;
-                            cv::line(frame,
-                                {sx + fillW2 + g, barY},
-                                {sx + fillW2 + g, barY + barH},
-                                cv::Scalar(0, (int)(180*ga), (int)(255*ga)), 1, cv::LINE_AA);
-                        }
+            int fillW = (int)(barW * pct);
+            if (fillW > 0) {
+                // Relleno naranja con extremo brillante
+                for (int x = 0; x < fillW; ++x) {
+                    float r2 = (float)x / barW;
+                    uchar fc_r = (uchar)(110 + r2*90);
+                    uchar fc_g = (uchar)(42  + r2*65);
+                    uchar fc_b = 0;
+                    float edgeDist = (float)(fillW - x) / (barW * 0.07f);
+                    if (edgeDist < 1.0f) {
+                        double ep = 0.7+0.3*std::sin(t*8.0);
+                        fc_r = cv::saturate_cast<uchar>(fc_r + (255-fc_r)*(1.0f-edgeDist)*ep);
+                        fc_g = cv::saturate_cast<uchar>(fc_g + (155-fc_g)*(1.0f-edgeDist)*ep);
+                        fc_b = (uchar)((1.0f-edgeDist)*55*ep);
+                    }
+                    for (int yy = 0; yy < barH; ++yy)
+                        frame.at<cv::Vec3b>(barY+yy, barX+x) = cv::Vec3b(fc_b, fc_g, fc_r);
+                }
+                // Brillo superior
+                for (int x = 0; x < fillW; ++x)
+                    if (barX+x < W) {
+                        cv::Vec3b& px = frame.at<cv::Vec3b>(barY, barX+x);
+                        px[0] = std::min(255, px[0]+40);
+                        px[1] = std::min(255, px[1]+55);
+                        px[2] = std::min(255, px[2]+30);
+                    }
+                // Partículas escapando del frente
+                if (pct < 0.99f) {
+                    for (int p = 0; p < 3; ++p) {
+                        double pPhase = std::fmod(t*(2.0+p*0.6)+p*1.2, 1.5);
+                        if (pPhase > 1.0) continue;
+                        int px2 = barX + fillW + (int)(pPhase*14);
+                        int py2 = barY + barH/2 + (p-1)*2;
+                        double pa = 1.0 - pPhase;
+                        if (px2>=0 && px2<W && py2>=0 && py2<H)
+                            cv::circle(frame, {px2,py2}, 2,
+                                    cv::Scalar(0,(int)(100*pa),(int)(220*pa)),
+                                    cv::FILLED, cv::LINE_AA);
                     }
                 }
             }
 
-            // Porcentaje a la derecha
+            cv::rectangle(frame, {barX-1,barY-1,barW+2,barH+2}, cv::Scalar(0,35,65), 1, cv::LINE_AA);
+
+            for (int tick = 1; tick < 10; ++tick) {
+                int tx = barX + (int)(barW * tick / 10.0f);
+                uchar ta = (pct*10 >= tick) ? 55 : 22;
+                cv::line(frame,{tx,barY-2},{tx,barY-1},cv::Scalar(0,ta,ta*2),1,cv::LINE_AA);
+            }
+
             char pctBuf[8];
-            snprintf(pctBuf, sizeof(pctBuf), "%d%%", (int)(pct * 100));
+            snprintf(pctBuf, sizeof(pctBuf), "%d%%", (int)(pct*100));
+            cv::putText(frame, pctBuf, {barX+barW+14, barY+barH},
+                        cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(0,140,210), 1, cv::LINE_AA);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 7. TEXTO DE ESTADO estilo terminal
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            bool isReady = (status.find("listo")!=std::string::npos ||
+                            status.find("ready")!=std::string::npos);
+            
+            std::string displayText = status; 
+            
+            if (!isReady && std::fmod(t*2.2,1.0) < 0.5) displayText += "_";
+            cv::Scalar textColor = isReady ? cv::Scalar(40,210,100) : cv::Scalar(30,140,210);
             int bl = 0;
-            cv::Size ps = cv::getTextSize(pctBuf, cv::FONT_HERSHEY_DUPLEX, 0.60, 1, &bl);
-            cv::putText(frame, pctBuf,
-                        {barX + barW + 12, barY + barH - 1},
-                        cv::FONT_HERSHEY_DUPLEX, 0.60,
-                        cv::Scalar(0, 200, 255), 1, cv::LINE_AA);
-            (void)ps;
-
-            // Marcadores de tick sobre la barra
-            for (int s = 0; s <= segments; ++s) {
-                int tx = barX + s * (segW + 1) - 1;
-                cv::line(frame, {tx, barY - 3}, {tx, barY - 1},
-                        cv::Scalar(20, 50, 70), 1, cv::LINE_AA);
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // 7. TEXTO DE ESTADO CON CURSOR PARPADEANTE
-        // ─────────────────────────────────────────────────────────────────────────
-        {
-            bool isReady = (status.find("listo") != std::string::npos ||
-                            status.find("ready") != std::string::npos);
-
-            cv::Scalar statusColor = isReady
-                ? cv::Scalar(40, 255, 120)
-                : cv::Scalar(120, 175, 210);
-
-            std::string prefix = isReady ? "> " : ">> ";
-            std::string displayText = prefix + status;
-
-            // Cursor parpadeante al final
-            double cursorPhase = std::fmod(t * 2.0, 1.0);
-            if (!isReady && cursorPhase < 0.55)
-                displayText += "_";
-
-            int bl2 = 0;
-            cv::Size ss2 = cv::getTextSize(displayText, cv::FONT_HERSHEY_PLAIN, 1.0, 1, &bl2);
-            int textX = (W - ss2.width) / 2;
-            int textY = H - 60;
-
-            // Sombra
-            cv::putText(frame, displayText, {textX + 1, textY + 1},
-                        cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
-            // Texto
-            cv::putText(frame, displayText, {textX, textY},
-                        cv::FONT_HERSHEY_PLAIN, 1.0, statusColor, 1, cv::LINE_AA);
-
-            // Línea divisoria encima del texto de estado
-            int divY = textY - 14;
-            int divLen = 300;
-            int dx = (W - divLen) / 2;
-            cv::line(frame, {dx, divY}, {dx + divLen, divY},
-                    cv::Scalar(15, 40, 60), 1, cv::LINE_AA);
-            // Marcas de los extremos
-            cv::line(frame, {dx, divY - 3}, {dx, divY + 3},
-                    cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
-            cv::line(frame, {dx + divLen, divY - 3}, {dx + divLen, divY + 3},
-                    cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // 8. INDICADOR "INICIALIZANDO" CON PUNTOS ANIMADOS (parte inferior)
-        // ─────────────────────────────────────────────────────────────────────────
-        {
-            if (pct < 0.99f) {
-                int dotCount  = 5;
-                int dotSpacing = 16;
-                int dotStartX = W/2 - (dotCount * dotSpacing) / 2;
-                int dotY      = H - 28;
-                for (int i = 0; i < dotCount; ++i) {
-                    double phase = t * 2.8 - i * 0.45;
-                    double a = 0.20 + 0.70 * (0.5 + 0.5 * std::sin(phase));
-                    int r2 = 3 + (int)(2 * std::max(0.0, std::sin(phase)));
-                    cv::circle(frame, {dotStartX + i * dotSpacing, dotY}, r2,
-                            cv::Scalar(0, (int)(180*a), (int)(255*a)),
-                            cv::FILLED, cv::LINE_AA);
+            cv::Size ts = cv::getTextSize(displayText, cv::FONT_HERSHEY_PLAIN, 1.0, 1, &bl);
+            cv::putText(frame, displayText, {(W-ts.width)/2, H-36},
+                        cv::FONT_HERSHEY_PLAIN, 1.0, textColor, 1, cv::LINE_AA);
+            // Destello verde al terminar
+            if (isReady) {
+                double rp = 0.04*std::max(0.0,std::sin(t*5.0));
+                if (rp > 0.005) {
+                    cv::Mat ov = frame.clone();
+                    ov.setTo(cv::Scalar(20,80,160));
+                    cv::addWeighted(ov, rp, frame, 1.0-rp, 0, frame);
                 }
-            } else {
-                // Al llegar a 100%: "SISTEMA LISTO" parpadeante
-                double readyPulse = 0.5 + 0.5 * std::sin(t * 4.0);
-                std::string readyTxt = isEnglish ? "SYSTEM READY" : "SISTEMA LISTO";
-                int bl3 = 0;
-                cv::Size rs = cv::getTextSize(readyTxt, cv::FONT_HERSHEY_DUPLEX, 0.7, 1, &bl3);
-                cv::putText(frame, readyTxt, {(W - rs.width)/2, H - 22},
-                            cv::FONT_HERSHEY_DUPLEX, 0.7,
-                            cv::Scalar(0, (int)(230*readyPulse), (int)(150*readyPulse)),
-                            1, cv::LINE_AA);
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 8. BORDE EXTERIOR CON ESQUINAS DECORATIVAS
+        // ─────────────────────────────────────────────────────────────────────────
+        {
+            double bp = 0.38 + 0.18*std::sin(t*1.4);
+            cv::rectangle(frame, {2,2,W-4,H-4},
+                        cv::Scalar(0,(int)(48*bp),(int)(95*bp)), 1, cv::LINE_AA);
+            int cl = 18;
+            cv::Scalar cc(0,(int)(95*bp),(int)(175*bp));
+            cv::line(frame,{2,2},    {2+cl,2},    cc,2,cv::LINE_AA);
+            cv::line(frame,{2,2},    {2,2+cl},    cc,2,cv::LINE_AA);
+            cv::line(frame,{W-2,2},  {W-2-cl,2},  cc,2,cv::LINE_AA);
+            cv::line(frame,{W-2,2},  {W-2,2+cl},  cc,2,cv::LINE_AA);
+            cv::line(frame,{2,H-2},  {2+cl,H-2},  cc,2,cv::LINE_AA);
+            cv::line(frame,{2,H-2},  {2,H-2-cl},  cc,2,cv::LINE_AA);
+            cv::line(frame,{W-2,H-2},{W-2-cl,H-2},cc,2,cv::LINE_AA);
+            cv::line(frame,{W-2,H-2},{W-2,H-2-cl},cc,2,cv::LINE_AA);
         }
     }
     void renderLoop() {
@@ -3438,6 +3414,8 @@ private:
     Mix_Music* idleMusic { nullptr };
     std::vector<std::string> idleVideoPaths;
     std::vector<std::string> idleMusicPaths;
+    std::vector<std::string> bootMusicPaths;
+    Mix_Music* bootMusic { nullptr };
 };
 
 // =============================================================================

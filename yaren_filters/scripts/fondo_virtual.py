@@ -3,8 +3,8 @@
 fondo_virtual.py  —  LifecycleNode
 ─────────────────────────────────────────────
 on_configure  → carga fondos e inicializa MediaPipe (una sola vez en RAM)
-on_activate   → suscribe a la cámara, lanza hilo de UI
-on_deactivate → desuscribe, para hilo de UI, libera ventanas
+on_activate   → suscribe a la cámara, habilita render
+on_deactivate → desuscribe, para render, libera ventanas
 on_cleanup    → libera MediaPipe y fondos
 """
 
@@ -12,7 +12,7 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn, State
 from sensor_msgs.msg import Image
 from std_msgs.msg import String, Bool
-from rclpy.qos import qos_profile_sensor_data # <--- IMPORTANTE PARA LA CÁMARA
+from rclpy.qos import qos_profile_sensor_data
 from cv_bridge import CvBridge
 from ament_index_python.packages import get_package_share_directory
 import cv2
@@ -26,39 +26,38 @@ import threading
 TARGET_W = 800
 TARGET_H = 480
 
+
 class VirtualBackgroundNode(LifecycleNode):
 
     def __init__(self):
-        # Este nombre DEBE coincidir con el que pusiste en face_screen.cpp
-        super().__init__('virtual_background_node') 
-        self._bridge      = CvBridge()
-        self._segmentator = None   
-        self._bg_images   = []
-        self._thumbnails  = []
-        self._is_english  = False
+        super().__init__('virtual_background_node')
+        self._bridge       = CvBridge()
+        self._segmentator  = None
+        self._bg_images    = []
+        self._thumbnails   = []
+        self._is_english   = False
+        self._lang_sub     = None
 
-        self._lang_sub = None
+        self._state            = 'MENU'
+        self._bg_index         = 0
+        self._thumb_w          = 220
+        self._thumb_h          = 140
+        self._scroll_y         = 0
+        self._max_scroll       = 0
+        self._is_dragging      = False
+        self._drag_start_y     = 0
+        self._click_start_pos  = (0, 0)
+        self._thumbnail_rects  = []
+        self._back_btn_rect    = (TARGET_W - 160, 15, 145, 40)
+        self._exit_btn_rect    = (15, 10, 125, 45)
 
-        self._state           = 'MENU'
-        self._bg_index        = 0
-        self._thumb_w         = 240
-        self._thumb_h         = 180
-        self._scroll_y        = 0
-        self._max_scroll      = 0
-        self._is_dragging     = False
-        self._drag_start_y    = 0
-        self._click_start_pos = (0, 0)
-        self._thumbnail_rects = []
-
-        self._ui_thread  = None
-        self._ui_running = False
-        self._cam_sub    = None
+        self._active       = False
+        self._cam_sub      = None
         self._latest_frame = None
         self._frame_lock   = threading.Lock()
+        self._window_name  = 'YAREN - Fondos Virtuales'
 
-        self._window_name = 'YAREN - Modo Inmersivo'
-
-    # ── Lifecycle callbacks ────────────────────────────────────────────
+    # ── Lifecycle ──────────────────────────────────────────────────────
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         lang_qos = rclpy.qos.QoSProfile(
@@ -69,43 +68,34 @@ class VirtualBackgroundNode(LifecycleNode):
         self._lang_sub = self.create_subscription(
             Bool, '/yaren/is_english', self._lang_callback, lang_qos)
 
+        # Inicializar MediaPipe directamente (ya corre en proceso separado)
         mp_selfie = mp.solutions.selfie_segmentation
         self._segmentator = mp_selfie.SelfieSegmentation(model_selection=1)
 
         self._load_backgrounds()
-
-        self.get_logger().info('Configurado. Fondos y MediaPipe listos en RAM.')
+        self.get_logger().info(
+            f'Configurado. {len(self._bg_images)} fondos y MediaPipe listos en RAM.')
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:
-        # CORRECCIÓN: Usar qos_profile_sensor_data para conectar con csi_cam_pub.py
         self._cam_sub = self.create_subscription(
-            Image, '/csi_camera/image_raw', self._image_callback, qos_profile_sensor_data)
-
-        cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(self._window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.setWindowProperty(self._window_name, cv2.WND_PROP_TOPMOST, 1)
-        cv2.setMouseCallback(self._window_name, self._mouse_callback)
-
-        self._state      = 'MENU'
-        self._scroll_y   = 0
-        self._ui_running = True
-        self._ui_thread  = threading.Thread(target=self._ui_loop, daemon=True)
-        self._ui_thread.start()
-
+            Image, '/csi_camera/image_raw',
+            self._image_callback, qos_profile_sensor_data)
+        self._state    = 'MENU'
+        self._scroll_y = 0
+        self._active   = True
         self.get_logger().info('ACTIVADO — mostrando menú de fondos.')
         return TransitionCallbackReturn.SUCCESS
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
-        self._ui_running = False
-        if self._ui_thread and self._ui_thread.is_alive():
-            self._ui_thread.join(timeout=2.0)
-
+        self._active = False
         if self._cam_sub:
             self.destroy_subscription(self._cam_sub)
             self._cam_sub = None
-
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyWindow(self._window_name)
+        except Exception:
+            pass
         self.get_logger().info('DESACTIVADO.')
         return TransitionCallbackReturn.SUCCESS
 
@@ -122,51 +112,23 @@ class VirtualBackgroundNode(LifecycleNode):
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
-        self._ui_running = False
-        if self._ui_thread and self._ui_thread.is_alive():
-            self._ui_thread.join(timeout=1.0)
+        self._active = False
         if self._segmentator:
             self._segmentator.close()
             self._segmentator = None
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         return TransitionCallbackReturn.SUCCESS
 
-    # ── Suscriptor de idioma ───────────────────────────────────────────
+    # ── Callbacks ──────────────────────────────────────────────────────
 
     def _lang_callback(self, msg: Bool):
         self._is_english = msg.data
 
-    # ── Carga de fondos ────────────────────────────────────────────────
-
-    def _load_backgrounds(self):
-        try:
-            pkg_dir     = get_package_share_directory('yaren_filters')
-            folder_path = os.path.join(pkg_dir, 'fondos')
-        except Exception as e:
-            self.get_logger().error(f'No se pudo encontrar el paquete: {e}')
-            return
-
-        if not os.path.exists(folder_path):
-            self.get_logger().warn(f"Carpeta '{folder_path}' no existe.")
-            bg = np.zeros((TARGET_H, TARGET_W, 3), dtype=np.uint8)
-            bg[:] = (0, 255, 0)
-            self._bg_images.append(bg)
-            self._thumbnails.append(cv2.resize(bg, (self._thumb_w, self._thumb_h)))
-            return
-
-        files = glob.glob(os.path.join(folder_path, '*.[jp][pn]*[g]'))
-        for f in sorted(files):
-            img = cv2.imread(f)
-            if img is not None:
-                self._bg_images.append(img)
-                self._thumbnails.append(cv2.resize(img, (self._thumb_w, self._thumb_h)))
-
-        self.get_logger().info(f'Cargados {len(self._bg_images)} fondos.')
-
-    # ── Callback de imagen ─────────────────────────────────────────────
-
     def _image_callback(self, msg: Image):
-        if not self._ui_running:
+        if not self._active:
             return
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
@@ -174,100 +136,286 @@ class VirtualBackgroundNode(LifecycleNode):
             with self._frame_lock:
                 self._latest_frame = frame
         except Exception as e:
-            self.get_logger().error(f'Error en image_callback: {e}')
+            self.get_logger().error(f'image_callback: {e}')
 
-    # ── Hilo de UI ─────────────────────────────────────────────────────
+    # ── Render principal (llamado desde main loop) ──────────────────────
 
-    def _ui_loop(self):
-        while self._ui_running:
+    def spin_render(self):
+        """Llamar desde el hilo principal en cada iteración del spin."""
+        if not self._active:
+            return
+
+        # Crear/verificar ventana
+        try:
+            visible = cv2.getWindowProperty(
+                self._window_name, cv2.WND_PROP_VISIBLE)
+            window_exists = visible >= 1
+        except cv2.error:
+            window_exists = False
+
+        if not window_exists:
+            cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
+            cv2.setWindowProperty(
+                self._window_name, cv2.WND_PROP_FULLSCREEN,
+                cv2.WINDOW_FULLSCREEN)
+            cv2.setMouseCallback(self._window_name, self._mouse_callback)
+            self.get_logger().info('Ventana creada.')
+
+        # Renderizar según estado
+        if self._state == 'MENU':
+            output = self._draw_menu(TARGET_W, TARGET_H)
+        else:
             frame = None
             with self._frame_lock:
                 if self._latest_frame is not None:
                     frame = self._latest_frame.copy()
-
-            # CORRECCIÓN: Si estamos en el MENU, dibujarlo aunque la cámara no haya arrancado aún.
-            if self._state == 'MENU':
-                output = self._draw_menu(TARGET_W, TARGET_H)
+            if frame is None:
+                # Sin frame aún: mostrar fondo de espera
+                output = np.zeros((TARGET_H, TARGET_W, 3), dtype=np.uint8)
+                output[:] = (15, 15, 25)
+                cv2.putText(output,
+                            'Esperando camara...' if not self._is_english
+                            else 'Waiting for camera...',
+                            (TARGET_W // 2 - 160, TARGET_H // 2),
+                            cv2.FONT_HERSHEY_DUPLEX, 0.9,
+                            (100, 150, 200), 1, cv2.LINE_AA)
+                self._draw_back_button(output)
             else:
-                if frame is None:
-                    cv2.waitKey(16)
-                    continue
                 output = self._apply_background(frame)
                 output = cv2.resize(output, (TARGET_W, TARGET_H))
 
-            cv2.imshow(self._window_name, output)
-            cv2.setWindowProperty(self._window_name, cv2.WND_PROP_TOPMOST, 1)
-            cv2.waitKey(16)
+        cv2.imshow(self._window_name, output)
+        key = cv2.waitKey(1)
+        if key == 27:  # ESC → volver al menú o salir
+            if self._state == 'INMERSIVO':
+                self._state = 'MENU'
+            else:
+                self._go_idle()
 
-        self._publish_idle()
+    # ── Lógica de fondos ───────────────────────────────────────────────
+
+    def _load_backgrounds(self):
+        try:
+            pkg_dir     = get_package_share_directory('yaren_filters')
+            folder_path = os.path.join(pkg_dir, 'fondos')
+        except Exception as e:
+            self.get_logger().error(f'Paquete no encontrado: {e}')
+            return
+
+        if not os.path.exists(folder_path):
+            self.get_logger().warn(f"Carpeta '{folder_path}' no existe.")
+            return
+
+        exts = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
+        files = []
+        for ext in exts:
+            files += glob.glob(os.path.join(folder_path, ext))
+        files = sorted(set(files))
+
+        for f in files:
+            img = cv2.imread(f)
+            if img is not None:
+                self._bg_images.append(img)
+                thumb = cv2.resize(img, (self._thumb_w, self._thumb_h))
+                self._thumbnails.append(thumb)
+
+        self.get_logger().info(f'Cargados {len(self._bg_images)} fondos.')
 
     def _apply_background(self, frame: np.ndarray) -> np.ndarray:
+        """Aplica el fondo virtual con segmentación suavizada."""
+        if self._segmentator is None or not self._bg_images:
+            self._draw_back_button(frame)
+            return frame.copy()
+
         try:
-            bg = cv2.resize(
-                self._bg_images[self._bg_index],
-                (frame.shape[1], frame.shape[0]))
+            h, w = frame.shape[:2]
+            bg = cv2.resize(self._bg_images[self._bg_index], (w, h))
+
+            # Segmentación
             rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self._segmentator.process(rgb)
-            mask    = np.stack((results.segmentation_mask,) * 3, axis=-1) > 0.1
-            output  = np.where(mask, frame, bg)
-        except Exception:
+            mask    = results.segmentation_mask  # float32 [0..1]
+
+            # Suavizar máscara para bordes naturales (dos pasadas)
+            mask = cv2.GaussianBlur(mask, (25, 25), 0)
+            mask = cv2.GaussianBlur(mask, (15, 15), 0)
+
+            # Expandir a 3 canales
+            mask_3ch = np.stack([mask] * 3, axis=-1)
+
+            # Mezcla suave persona/fondo en float32
+            output = (frame.astype(np.float32) * mask_3ch +
+                      bg.astype(np.float32) * (1.0 - mask_3ch))
+            output = np.clip(output, 0, 255).astype(np.uint8)
+
+        except Exception as e:
+            self.get_logger().error(f'apply_background: {e}')
             output = frame.copy()
 
-        btn_lbl = 'BACK' if self._is_english else 'VOLVER'
-        cv2.rectangle(output, (30, 30), (220, 100), (0, 160, 255), -1)
-        cv2.putText(output, btn_lbl, (55, 75), cv2.FONT_HERSHEY_DUPLEX, 1.1, (255, 255, 255), 2)
+        self._draw_back_button(output)
         return output
+
+    def _draw_back_button(self, frame: np.ndarray):
+        """Botón VOLVER discreto en esquina superior derecha."""
+        h, w = frame.shape[:2]
+        btn_x1 = w - 160
+        btn_y1 = 15
+        btn_x2 = w - 15
+        btn_y2 = 55
+        # Fondo semitransparente
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (btn_x1, btn_y1), (btn_x2, btn_y2),
+                      (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
+        # Borde
+        cv2.rectangle(frame, (btn_x1, btn_y1), (btn_x2, btn_y2),
+                      (100, 100, 100), 1, cv2.LINE_AA)
+        # Texto
+        lbl = '← BACK' if self._is_english else '← VOLVER'
+        cv2.putText(frame, lbl,
+                    (btn_x1 + 10, btn_y1 + 28),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.65,
+                    (210, 210, 210), 1, cv2.LINE_AA)
+        self._back_btn_rect = (btn_x1, btn_y1,
+                               btn_x2 - btn_x1, btn_y2 - btn_y1)
+
+    # ── Menú de selección ──────────────────────────────────────────────
 
     def _draw_menu(self, w: int, h: int) -> np.ndarray:
         menu = np.zeros((h, w, 3), dtype=np.uint8)
-        menu[:] = (30, 20, 25)
+        menu[:] = (22, 15, 30)
 
-        title = 'SELECT A BACKGROUND' if self._is_english else 'SELECCIONA UN FONDO'
-        hint  = '(Drag to scroll)' if self._is_english else '(Arrastra para ver mas)'
-        cv2.putText(menu, title, (w//2 - 220, 60), cv2.FONT_HERSHEY_DUPLEX, 1.2, (251, 64, 224), 2)
-        cv2.putText(menu, hint, (w//2 - 180, 95), cv2.FONT_HERSHEY_PLAIN, 1.3, (200, 200, 200), 1)
+        # Gradiente sutil de fondo
+        for y in range(h):
+            alpha = y / h * 0.3
+            menu[y] = np.clip(
+                menu[y].astype(np.float32) + alpha * np.array([10, 5, 20]),
+                0, 255).astype(np.uint8)
 
+        # Título
+        title = ('SELECT A BACKGROUND' if self._is_english
+                 else 'SELECCIONA UN FONDO')
+        hint  = ('(Click to select, drag to scroll)'
+                 if self._is_english
+                 else '(Click para seleccionar, arrastra para ver mas)')
+        cv2.putText(menu, title,
+                    (w // 2 - 230, 42),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.1,
+                    (220, 60, 255), 2, cv2.LINE_AA)
+        cv2.line(menu, (w // 2 - 230, 52), (w // 2 + 230, 52),
+                 (80, 20, 100), 1, cv2.LINE_AA)
+        cv2.putText(menu, hint,
+                    (w // 2 - 230, 72),
+                    cv2.FONT_HERSHEY_PLAIN, 1.0,
+                    (130, 100, 150), 1, cv2.LINE_AA)
+
+        # Botón SALIR — esquina superior izquierda
+        ex, ey, ew, eh = 15, 10, 125, 45
+        self._exit_btn_rect = (ex, ey, ew, eh)
+        cv2.rectangle(menu, (ex, ey), (ex + ew, ey + eh),
+                      (30, 30, 60), -1)
+        cv2.rectangle(menu, (ex, ey), (ex + ew, ey + eh),
+                      (80, 80, 160), 1, cv2.LINE_AA)
+        lbl_exit = 'EXIT' if self._is_english else 'SALIR'
+        cv2.putText(menu, lbl_exit,
+                    (ex + 22, ey + 30),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.80,
+                    (180, 180, 220), 1, cv2.LINE_AA)
+
+        # Grid de miniaturas
         self._thumbnail_rects = []
-        start_x, start_y = 120, 140
-        gap_x,   gap_y   = 40, 40
-        cols     = max(1, (w - 2*start_x) // (self._thumb_w + gap_x))
-        if cols < 2: cols = 2 # forzar 2 columnas
-        rows     = math.ceil(len(self._thumbnails) / cols)
-        total_h  = start_y + rows * (self._thumb_h + gap_y)
-        self._max_scroll = max(0, total_h - h + 120)
+        cols    = 3
+        pad_x   = 25
+        pad_top = 90
+        gap_x   = 18
+        gap_y   = 18
+
+        thumb_w = (w - pad_x * 2 - gap_x * (cols - 1)) // cols
+        thumb_h = int(thumb_w * 0.60)
+
+        rows    = math.ceil(max(1, len(self._thumbnails)) / cols)
+        total_h = pad_top + rows * (thumb_h + gap_y)
+        self._max_scroll = max(0, total_h - h + 20)
+
+        # Regenerar thumbs si el tamaño cambió
+        if (self._bg_images and
+                (thumb_w != self._thumb_w or thumb_h != self._thumb_h)):
+            self._thumb_w = thumb_w
+            self._thumb_h = thumb_h
+            self._thumbnails = [
+                cv2.resize(img, (thumb_w, thumb_h))
+                for img in self._bg_images
+            ]
 
         for i, thumb in enumerate(self._thumbnails):
             row = i // cols
             col = i % cols
-            x   = start_x + col * (self._thumb_w + gap_x)
-            y   = start_y + row * (self._thumb_h + gap_y) - self._scroll_y
+            x   = pad_x + col * (thumb_w + gap_x)
+            y   = pad_top + row * (thumb_h + gap_y) - self._scroll_y
 
-            if y + self._thumb_h > 0 and y < h:
-                y1 = max(0, int(y))
-                y2 = min(h, int(y + self._thumb_h))
-                
-                # CORRECCIÓN: Separado en dos líneas
-                ty1 = y1 - int(y)
-                ty2 = ty1 + (y2 - y1)
-                
-                if y2 > y1:
-                    menu[y1:y2, x:x+self._thumb_w] = thumb[ty1:ty2, :]
-                    cv2.rectangle(menu, (x, int(y)), (x+self._thumb_w, int(y+self._thumb_h)), (255, 255, 255), 3)
+            y1  = max(0, int(y))
+            y2  = min(h, int(y + thumb_h))
+            ty1 = y1 - int(y)
+            ty2 = ty1 + (y2 - y1)
 
-            self._thumbnail_rects.append((x, y, self._thumb_w, self._thumb_h))
+            if y2 > y1 and 0 <= ty1 < ty2 <= thumb_h:
+                region = menu[y1:y2, x:x + thumb_w]
+                src    = thumb[ty1:ty2, :]
+                if region.shape == src.shape:
+                    menu[y1:y2, x:x + thumb_w] = src
 
-        btn_y   = h - 90
-        btn_lbl = 'EXIT' if self._is_english else 'SALIR'
-        cv2.rectangle(menu, (30, btn_y), (220, btn_y+70), (50, 50, 200), -1)
-        cv2.putText(menu, btn_lbl, (65, btn_y+45), cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 2)
+                # Borde: cian si está seleccionado, blanco si no
+                is_selected = (i == self._bg_index)
+                color = (0, 229, 255) if is_selected else (160, 160, 160)
+                thick = 3 if is_selected else 1
+                cv2.rectangle(menu,
+                              (x - 1, int(y) - 1),
+                              (x + thumb_w + 1, int(y + thumb_h) + 1),
+                              color, thick, cv2.LINE_AA)
+
+                # Nombre del archivo debajo de la miniatura
+                name = os.path.splitext(
+                    os.path.basename(
+                        glob.glob(os.path.join(
+                            get_package_share_directory('yaren_filters'),
+                            'fondos', '*'))[i]
+                        if i < len(glob.glob(os.path.join(
+                            get_package_share_directory('yaren_filters'),
+                            'fondos', '*'))) else ''))[0]
+                cv2.putText(menu, name[:18],
+                            (x + 4, min(h - 4, int(y + thumb_h) + 14)),
+                            cv2.FONT_HERSHEY_PLAIN, 0.85,
+                            (180, 180, 200) if not is_selected
+                            else (0, 229, 255),
+                            1, cv2.LINE_AA)
+
+            self._thumbnail_rects.append((x, y, thumb_w, thumb_h))
+
+        # Scrollbar lateral
+        if self._max_scroll > 0:
+            sb_x  = w - 10
+            sb_y0 = pad_top
+            sb_h  = h - pad_top - 20
+            fill  = max(20, int(sb_h * h / total_h))
+            fill_y = sb_y0 + int(
+                (sb_h - fill) * self._scroll_y / self._max_scroll)
+            cv2.rectangle(menu,
+                          (sb_x, sb_y0), (sb_x + 6, sb_y0 + sb_h),
+                          (40, 40, 55), -1)
+            cv2.rectangle(menu,
+                          (sb_x, fill_y), (sb_x + 6, fill_y + fill),
+                          (120, 60, 200), -1, cv2.LINE_AA)
+
         return menu
 
     # ── Mouse callback ─────────────────────────────────────────────────
 
     def _mouse_callback(self, event, x, y, flags, param):
+        # Scroll con rueda
         if event == cv2.EVENT_MOUSEWHEEL:
             delta = 1 if flags > 0 else -1
-            self._scroll_y = max(0, min(self._max_scroll, self._scroll_y - delta * 80))
+            self._scroll_y = max(
+                0, min(self._max_scroll, self._scroll_y - delta * 60))
             return
 
         if self._state == 'MENU':
@@ -277,40 +425,59 @@ class VirtualBackgroundNode(LifecycleNode):
                 self._click_start_pos = (x, y)
 
             elif event == cv2.EVENT_MOUSEMOVE and self._is_dragging:
-                dy             = self._drag_start_y - y
-                self._scroll_y = min(self._max_scroll, max(0, self._scroll_y + dy))
+                dy = self._drag_start_y - y
+                self._scroll_y = min(
+                    self._max_scroll, max(0, self._scroll_y + dy))
                 self._drag_start_y = y
 
             elif event == cv2.EVENT_LBUTTONUP:
                 self._is_dragging = False
-                dist = abs(x - self._click_start_pos[0]) + abs(y - self._click_start_pos[1])
-                if dist < 10:
-                    btn_y = TARGET_H - 90
-                    if 30 <= x <= 220 and btn_y <= y <= btn_y + 70:
-                        self._ui_running = False
+                dist = (abs(x - self._click_start_pos[0]) +
+                        abs(y - self._click_start_pos[1]))
+                if dist < 12:
+                    # Botón SALIR
+                    ex, ey, ew, eh = self._exit_btn_rect
+                    if ex <= x <= ex + ew and ey <= y <= ey + eh:
+                        self._go_idle()
                         return
-                    for i, (rx, ry, rw, rh) in enumerate(self._thumbnail_rects):
-                        if rx <= x <= rx+rw and ry <= y <= ry+rh:
+                    # Miniaturas
+                    for i, (rx, ry, rw, rh) in enumerate(
+                            self._thumbnail_rects):
+                        if rx <= x <= rx + rw and ry <= y <= ry + rh:
                             self._bg_index = i
                             self._state    = 'INMERSIVO'
+                            self.get_logger().info(
+                                f'Fondo #{i} seleccionado → INMERSIVO')
                             return
 
         elif self._state == 'INMERSIVO':
             if event == cv2.EVENT_LBUTTONDOWN:
-                btn_w = int(190 * (TARGET_W / 640.0))
-                btn_h = int(70 * (TARGET_H / 480.0))
-                if 30 <= x <= 30 + btn_w and 30 <= y <= 30 + btn_h:
+                rx, ry, rw, rh = self._back_btn_rect
+                if rx <= x <= rx + rw and ry <= y <= ry + rh:
                     self._state = 'MENU'
+                    self.get_logger().info('Volviendo al menú de fondos.')
 
-    def _publish_idle(self):
+    # ── Utilidades ─────────────────────────────────────────────────────
+
+    def _go_idle(self):
+        """Publicar idle y desactivarse."""
+        self._active = False
+        try:
+            cv2.destroyWindow(self._window_name)
+        except Exception:
+            pass
         if rclpy.ok():
             pub = self.create_publisher(String, '/yaren_mode', 10)
             msg = String()
             msg.data = 'idle'
+            import time
             for _ in range(3):
                 pub.publish(msg)
-                import time; time.sleep(0.06)
+                time.sleep(0.05)
             self.get_logger().info('Publicado idle → face_screen.')
+
+
+# ── Main ───────────────────────────────────────────────────────────────
 
 def main(args=None):
     rclpy.init(args=args)
@@ -318,13 +485,16 @@ def main(args=None):
     executor = rclpy.executors.SingleThreadedExecutor()
     executor.add_node(node)
     try:
-        executor.spin()
+        while rclpy.ok():
+            executor.spin_once(timeout_sec=0.016)  # ~60 Hz
+            node.spin_render()                      # imshow en hilo principal
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
