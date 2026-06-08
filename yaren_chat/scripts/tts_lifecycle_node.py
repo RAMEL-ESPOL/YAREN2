@@ -53,6 +53,7 @@ class TTSLifecycleNode(LifecycleNode):
 
         self.stt_status_publisher  = self.create_publisher(Bool, '/stt_terminado', 10)
         self.audio_playing_publisher = self.create_publisher(Bool, '/audio_playing', 10)
+        self.tts_text_pub = self.create_publisher(String, '/yaren/tts_text', 10)
         self.create_subscription(PersonResponse, '/response_person', self.process_input_person, 10)
 
         qos_profile = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
@@ -222,6 +223,11 @@ class TTSLifecycleNode(LifecycleNode):
         self.get_logger().info("🔊 Audio worker terminó y liberó el bloqueo")
 
     def _play_audio(self, text_to_speak):
+        # Publicar texto para lip sync por amplitud
+        txt_msg = String()
+        txt_msg.data = text_to_speak
+        self.tts_text_pub.publish(txt_msg)
+
         audio_msg = Bool()
         audio_msg.data = True
         self.audio_playing_publisher.publish(audio_msg)
@@ -241,14 +247,53 @@ class TTSLifecycleNode(LifecycleNode):
                     wav_file.setframerate(self.voice.config.sample_rate)
                     self.voice.synthesize_wav(text_to_speak, wav_file, syn_config=syn_config)
 
+            # ── Leer WAV y publicar visemas por amplitud ──
+            self._publish_visemes_from_wav(tmp_path)
+
             playsound(tmp_path)
-            os.unlink(tmp_path)  # limpiar archivo temporal
+            os.unlink(tmp_path)
 
         except Exception as e:
             self.get_logger().error(f"💥 Error en síntesis/reproducción: {e}")
         finally:
             audio_msg.data = False
             self.audio_playing_publisher.publish(audio_msg)
+
+    def _publish_visemes_from_wav(self, wav_path):
+        """Lee el WAV y publica una secuencia de índices de sprite (0-8)."""
+        try:
+            import struct
+            with wave.open(wav_path, 'rb') as wf:
+                framerate  = wf.getframerate()
+                n_frames   = wf.getnframes()
+                chunk_ms   = 50                          # ms por visema
+                chunk_size = int(framerate * chunk_ms / 1000)
+                visemes    = []
+
+                for _ in range(n_frames // chunk_size):
+                    raw = wf.readframes(chunk_size)
+                    if len(raw) < chunk_size * 2:
+                        break
+                    samples = struct.unpack(f'{len(raw)//2}h', raw)
+                    rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
+
+                    # RMS → sprite idx (0=cerrada, escala hasta 7=max abierta)
+                    if   rms < 200:   idx = 0
+                    elif rms < 800:   idx = 1
+                    elif rms < 2000:  idx = 3
+                    elif rms < 5000:  idx = 5
+                    elif rms < 10000: idx = 6
+                    else:             idx = 7
+
+                    visemes.append(idx)
+
+            # Publicar como string "0,1,3,5,3,1,0,..." con duración implícita de 50ms cada uno
+            msg = String()
+            msg.data = f"{chunk_ms}:" + ",".join(str(v) for v in visemes)
+            self.tts_text_pub.publish(msg)
+
+        except Exception as e:
+            self.get_logger().warn(f"Viseme extraction failed: {e}")
 
 
 def main(args=None):

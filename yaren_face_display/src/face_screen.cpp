@@ -22,6 +22,8 @@
 #include <functional>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
+#include <unordered_map>
+#include <queue>
 
 namespace fs = std::filesystem;
 
@@ -160,6 +162,7 @@ public:
     std::function<void(const std::string&)> onMicSelected;
     std::function<void(const std::string&)> onSpkSelected;
     std::string selectedMicId;
+    std::function<void()> onWifi;
     std::string selectedSpkId;
 
     bool eng() const { return isEnglish != nullptr && *isEnglish; }
@@ -303,6 +306,10 @@ public:
             return;
         }
         if (event != cv::EVENT_LBUTTONDOWN) return;
+        if (btnWifi.contains(pt)) {
+            if (onWifi) onWifi();
+            return;
+        }
 
         if (btnLang.contains(pt)) {
             if (isEnglish != nullptr) {
@@ -425,6 +432,7 @@ private:
     cv::Rect btnMinUp,  btnMinDown;
     cv::Rect btnRefresh, btnSaveAll, btnBack;
     cv::Rect hoveredRect {0,0,0,0};
+    cv::Rect btnWifi {0, 0, 0, 0};
     // FIX-E: puntero a mutex de audio compartido
     std::mutex* audioMutex_ {nullptr};
 
@@ -601,36 +609,54 @@ private:
                  cv::Scalar(20,35,55), 1, cv::LINE_AA);
     }
 
-    void renderBottomBar(cv::Mat& frame, int barY) {
-        const int btnH = 42, gap = 14;
-        int btnW1 = 220, btnW2 = 160, btnW3 = 130;
-        int totalW = btnW1 + btnW2 + btnW3 + gap*2;
+        void renderBottomBar(cv::Mat& frame, int barY) {
+        const int btnH = 42, gap = 10;
+        int btnW1 = 200, btnW2 = 140, btnW3 = 110, btnW4 = 110;
+        int totalW = btnW1 + btnW2 + btnW3 + btnW4 + gap * 3;
         int startX = (W - totalW) / 2;
-        auto drawBtn = [&](cv::Rect& r, int x, int w, const std::string& txt, const cv::Scalar& accent) {
+ 
+        auto drawBtn = [&](cv::Rect& r, int x, int w,
+                           const std::string& txt, const cv::Scalar& accent) {
             r = {x, barY, w, btnH};
-            bool hov = r.contains(hoveredRect.tl()) || r.contains({hoveredRect.x+1, hoveredRect.y+1});
-            cv::Scalar bg = hov ? cv::Scalar(accent[0]*0.25, accent[1]*0.25, accent[2]*0.25) : cv::Scalar(12, 18, 30);
+            bool hov = r.contains(hoveredRect.tl()) ||
+                       r.contains({hoveredRect.x + 1, hoveredRect.y + 1});
+            cv::Scalar bg = hov
+                ? cv::Scalar(accent[0]*0.25, accent[1]*0.25, accent[2]*0.25)
+                : cv::Scalar(12, 18, 30);
             cv::rectangle(frame, r, bg, cv::FILLED);
-            cv::rectangle(frame, r, hov ? accent : cv::Scalar(accent[0]*0.4, accent[1]*0.4, accent[2]*0.4), hov ? 2 : 1, cv::LINE_AA);
-            drawTextInRect(frame, txt, r, cv::FONT_HERSHEY_DUPLEX, 0.46, hov ? cv::Scalar(255,255,255) : cv::Scalar(180,190,200));
+            cv::rectangle(frame, r,
+                hov ? accent : cv::Scalar(accent[0]*0.4, accent[1]*0.4, accent[2]*0.4),
+                hov ? 2 : 1, cv::LINE_AA);
+            drawTextInRect(frame, txt, r, cv::FONT_HERSHEY_DUPLEX, 0.42,
+                hov ? cv::Scalar(255, 255, 255) : cv::Scalar(180, 190, 200));
         };
+ 
         int cx = startX;
-        drawBtn(btnSaveAll, cx, btnW1, eng() ? "SAVE ALL"  : "GUARDAR TODO", cv::Scalar(0,230,120));
+        drawBtn(btnSaveAll, cx,  btnW1, eng() ? "SAVE ALL"  : "GUARDAR TODO", cv::Scalar(0, 230, 120));
         cx += btnW1 + gap;
-        drawBtn(btnRefresh, cx, btnW2, eng() ? "REFRESH"   : "REFRESCAR",    cv::Scalar(255,180,0));
+        drawBtn(btnRefresh, cx,  btnW2, eng() ? "REFRESH"   : "REFRESCAR",    cv::Scalar(255, 180, 0));
         cx += btnW2 + gap;
-        drawBtn(btnBack,    cx, btnW3, eng() ? "BACK"      : "VOLVER",       cv::Scalar(150,150,150));
+        // ── NUEVO: botón WiFi ──
+        drawBtn(btnWifi,    cx,  btnW3, "WIFI",                                cv::Scalar(0, 180, 255));
+        cx += btnW3 + gap;
+        drawBtn(btnBack,    cx,  btnW4, eng() ? "BACK"      : "VOLVER",       cv::Scalar(150, 150, 150));
+ 
+        // Feedback
         if (!feedbackMsg.empty()) {
-            double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - feedbackTime).count();
+            double elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - feedbackTime).count();
             if (elapsed < 3.5) {
                 double alpha = (elapsed < 3.0) ? 1.0 : (3.5 - elapsed) / 0.5;
-                cv::Scalar fc(0, (int)(230*alpha), (int)(140*alpha));
-                drawCenteredText(frame, feedbackMsg, W, barY - 10, cv::FONT_HERSHEY_PLAIN, 0.95, fc);
+                cv::Scalar fc(0, (int)(230 * alpha), (int)(140 * alpha));
+                drawCenteredText(frame, feedbackMsg, W, barY - 10,
+                    cv::FONT_HERSHEY_PLAIN, 0.95, fc);
             } else {
                 feedbackMsg = "";
             }
         }
     }
+ 
+
 
     cv::Rect findHovered(int x, int y) { return {x, y, 1, 1}; }
     void clampDate() {
@@ -1428,6 +1454,604 @@ public:
         drawTextInRect(frame, lbl, r, cv::FONT_HERSHEY_DUPLEX, 0.46, hov ? cv::Scalar(255,255,255) : cv::Scalar(170,175,190));
     }
 };
+// =============================================================================
+//  OnScreenKeyboard — teclado QWERTY táctil para la pantalla
+// =============================================================================
+class OnScreenKeyboard {
+public:
+    std::string text;           // texto ingresado
+    bool visible { false };
+    std::string prompt;         // texto label encima del campo
+
+    void show(const std::string& promptText, const std::string& initial = "") {
+        prompt  = promptText;
+        text    = initial;
+        visible = true;
+        showNumbers_ = false;
+        hovKey_  = -1;
+    }
+    void hide() { visible = false; }
+
+    // Retorna true si el usuario presionó OK/Enter
+    bool handleMouse(int ev, int x, int y) {
+        if (!visible) return false;
+        hovPt_ = {x, y};
+        if (ev == cv::EVENT_MOUSEMOVE) {
+            hovKey_ = findKey(x, y);
+            return false;
+        }
+        if (ev != cv::EVENT_LBUTTONDOWN) return false;
+        // Botón backspace
+        if (btnBackspace_.contains({x,y})) {
+            if (!text.empty()) text.pop_back();
+            return false;
+        }
+        // Botón toggle numérico
+        if (btnNumToggle_.contains({x,y})) { showNumbers_ = !showNumbers_; return false; }
+        // Botón OK
+        if (btnOk_.contains({x,y})) { visible = false; return true; }
+        // Botón cancelar
+        if (btnCancel_.contains({x,y})) { visible = false; text = ""; return false; }
+        // Botón espacio
+        if (btnSpace_.contains({x,y})) { text += ' '; return false; }
+        // Botón mayúsculas
+        if (btnShift_.contains({x,y})) { shiftActive_ = !shiftActive_; return false; }
+        // Teclas normales
+        int ki = findKey(x, y);
+        if (ki >= 0 && ki < (int)keyRects_.size()) {
+            std::string ch = getCurrentKeys()[ki];
+            if (shiftActive_) {
+                if (!ch.empty()) ch[0] = (char)std::toupper((unsigned char)ch[0]);
+                shiftActive_ = false;
+            }
+            text += ch;
+        }
+        return false;
+    }
+
+    void render(cv::Mat& frame) {
+        if (!visible) return;
+        int W = frame.cols, H = frame.rows;
+
+        // Panel semitransparente de fondo completo
+        cv::Mat ov = frame.clone();
+        cv::rectangle(ov, {0,0,W,H}, cv::Scalar(2,6,16), cv::FILLED);
+        cv::addWeighted(ov, 0.88, frame, 0.12, 0, frame);
+
+        // Panel del teclado
+        const int KBW = 760, KBH = 310;
+        const int KBX = (W - KBW) / 2;
+        const int KBY = H - KBH - 10;
+        cv::rectangle(frame, {KBX, KBY, KBW, KBH}, cv::Scalar(8,14,28), cv::FILLED);
+        cv::rectangle(frame, {KBX, KBY, KBW, KBH}, cv::Scalar(0,150,200), 2, cv::LINE_AA);
+
+        // Label + campo de texto
+        int fieldY = KBY + 18;
+        cv::putText(frame, prompt, {KBX+16, fieldY+14},
+                    cv::FONT_HERSHEY_PLAIN, 0.95, cv::Scalar(80,180,220), 1, cv::LINE_AA);
+        cv::Rect fieldRect{KBX+16, fieldY+20, KBW-32, 32};
+        cv::rectangle(frame, fieldRect, cv::Scalar(4,12,26), cv::FILLED);
+        cv::rectangle(frame, fieldRect, cv::Scalar(0,180,230), 1, cv::LINE_AA);
+        // Mostrar texto con cursor parpadeante
+        std::string display = text;
+        double t = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (std::fmod(t * 2.0, 1.0) < 0.5) display += "|";
+        // Mostrar asteriscos si es Clave
+        std::string shown = isPassword_ ? std::string(text.size(), '*') + (display.size()>text.size()?"|":"") : display;
+        cv::putText(frame, shown, {fieldRect.x+8, fieldRect.y+22},
+                    cv::FONT_HERSHEY_PLAIN, 1.1, cv::Scalar(220,235,255), 1, cv::LINE_AA);
+
+        // Dibujar teclas
+        auto& keys = getCurrentKeys();
+        keyRects_.clear();
+        const int ROWS_N = 4;
+        // Layout QWERTY
+        const std::vector<std::vector<std::string>> ROWS_ALPHA = {
+            {"q","w","e","r","t","y","u","i","o","p"},
+            {"a","s","d","f","g","h","j","k","l"},
+            {"z","x","c","v","b","n","m"},
+            {}  // fila de controles
+        };
+        const std::vector<std::vector<std::string>> ROWS_NUM = {
+            {"1","2","3","4","5","6","7","8","9","0"},
+            {"-","/",":",";","(",")","$","&","@","\""},
+            {".","_","#","!","?","=","+","<",">"},
+            {}
+        };
+        auto& ROWS = showNumbers_ ? ROWS_NUM : ROWS_ALPHA;
+
+        const int keyH = 44, keyGap = 5;
+        int rowY = KBY + 75;
+
+        for (int r = 0; r < 3; ++r) {
+            const auto& row = ROWS[r];
+            int n = (int)row.size();
+            int keyW = (KBW - keyGap*(n+1)) / n;
+            int rowX = KBX + (KBW - (keyW*n + keyGap*(n-1))) / 2;
+            for (int c = 0; c < n; ++c) {
+                int kx = rowX + c*(keyW+keyGap);
+                cv::Rect kr{kx, rowY, keyW, keyH};
+                keyRects_.push_back(kr);
+                bool hov = ((int)keyRects_.size()-1 == hovKey_);
+                cv::Scalar bg   = hov ? cv::Scalar(30,80,120) : cv::Scalar(14,24,42);
+                cv::Scalar bord = hov ? cv::Scalar(0,220,255) : cv::Scalar(30,60,90);
+                cv::rectangle(frame, kr, bg, cv::FILLED);
+                cv::rectangle(frame, kr, bord, 1, cv::LINE_AA);
+                std::string label = row[c];
+                if (!showNumbers_ && shiftActive_ && !label.empty())
+                    label[0] = (char)std::toupper((unsigned char)label[0]);
+                int bl=0; cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_DUPLEX, 0.55, 1, &bl);
+                cv::putText(frame, label, {kx+(keyW-ts.width)/2, rowY+keyH/2+7},
+                            cv::FONT_HERSHEY_DUPLEX, 0.55, hov?cv::Scalar(255,255,255):cv::Scalar(180,200,220),
+                            1, cv::LINE_AA);
+            }
+            rowY += keyH + keyGap;
+        }
+
+        // Fila de controles
+        int ctrlY  = rowY;
+        int ctrlH  = keyH;
+
+        // Shift / 123
+        btnNumToggle_ = {KBX+keyGap, ctrlY, 90, ctrlH};
+        bool hNum = btnNumToggle_.contains(hovPt_);
+        cv::rectangle(frame, btnNumToggle_, hNum?cv::Scalar(30,50,80):cv::Scalar(10,20,35), cv::FILLED);
+        cv::rectangle(frame, btnNumToggle_, cv::Scalar(40,80,120), 1, cv::LINE_AA);
+        cv::putText(frame, showNumbers_?"ABC":"123", {btnNumToggle_.x+18, ctrlY+ctrlH/2+7},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(160,200,230), 1, cv::LINE_AA);
+
+        // Shift (solo en modo alpha)
+        if (!showNumbers_) {
+            btnShift_ = {KBX+keyGap+95, ctrlY, 70, ctrlH};
+            bool hSh = btnShift_.contains(hovPt_);
+            cv::Scalar shBord = shiftActive_ ? cv::Scalar(0,220,120) : cv::Scalar(40,80,120);
+            cv::rectangle(frame, btnShift_, hSh?cv::Scalar(20,50,30):cv::Scalar(10,20,35), cv::FILLED);
+            cv::rectangle(frame, btnShift_, shBord, 1, cv::LINE_AA);
+            cv::putText(frame, "SHIFT", {btnShift_.x+6, ctrlY+ctrlH/2+7},
+                        cv::FONT_HERSHEY_DUPLEX, 0.42, shiftActive_?cv::Scalar(0,230,120):cv::Scalar(140,180,200),
+                        1, cv::LINE_AA);
+        } else {
+            btnShift_ = {0,0,0,0};
+        }
+
+        // Espacio
+        int spX = KBX + (showNumbers_ ? 100+keyGap*2 : 175+keyGap*2);
+        int spW = KBW - spX + KBX - 100 - keyGap*3 - 90;
+        btnSpace_ = {spX, ctrlY, spW, ctrlH};
+        bool hSp = btnSpace_.contains(hovPt_);
+        cv::rectangle(frame, btnSpace_, hSp?cv::Scalar(25,50,80):cv::Scalar(12,20,38), cv::FILLED);
+        cv::rectangle(frame, btnSpace_, cv::Scalar(30,70,110), 1, cv::LINE_AA);
+        cv::putText(frame, "ESPACIO", {spX+spW/2-36, ctrlY+ctrlH/2+7},
+                    cv::FONT_HERSHEY_DUPLEX, 0.46, cv::Scalar(120,160,190), 1, cv::LINE_AA);
+
+        // Backspace
+        btnBackspace_ = {KBX+KBW-keyGap-90, ctrlY, 90, ctrlH};
+        bool hBs = btnBackspace_.contains(hovPt_);
+        cv::rectangle(frame, btnBackspace_, hBs?cv::Scalar(60,20,20):cv::Scalar(25,10,10), cv::FILLED);
+        cv::rectangle(frame, btnBackspace_, cv::Scalar(140,40,40), 1, cv::LINE_AA);
+        cv::putText(frame, "<-", {btnBackspace_.x+20, ctrlY+ctrlH/2+7},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(220,100,100), 1, cv::LINE_AA);
+
+        // Botones OK y CANCELAR
+        int btnRow2Y = ctrlY + ctrlH + keyGap;
+        btnOk_ = {KBX+KBW-keyGap-200, btnRow2Y, 200, ctrlH-6};
+        bool hOk = btnOk_.contains(hovPt_);
+        cv::rectangle(frame, btnOk_, hOk?cv::Scalar(0,60,20):cv::Scalar(0,30,10), cv::FILLED);
+        cv::rectangle(frame, btnOk_, cv::Scalar(0,180,80), hOk?2:1, cv::LINE_AA);
+        cv::putText(frame, "CONECTAR", {btnOk_.x+28, btnRow2Y+ctrlH/2+1},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(0,230,100), 1, cv::LINE_AA);
+
+        btnCancel_ = {KBX+keyGap, btnRow2Y, 130, ctrlH-6};
+        bool hCan = btnCancel_.contains(hovPt_);
+        cv::rectangle(frame, btnCancel_, hCan?cv::Scalar(40,30,10):cv::Scalar(18,14,6), cv::FILLED);
+        cv::rectangle(frame, btnCancel_, cv::Scalar(140,100,30), hCan?2:1, cv::LINE_AA);
+        cv::putText(frame, "CANCELAR", {btnCancel_.x+4, btnRow2Y+ctrlH/2+1},
+                    cv::FONT_HERSHEY_DUPLEX, 0.42, cv::Scalar(200,160,60), 1, cv::LINE_AA);
+    }
+
+    bool isPassword_ { true };  // mostrar *** en el campo
+
+private:
+    bool showNumbers_ { false };
+    bool shiftActive_ { false };
+    int  hovKey_      { -1 };
+    cv::Point hovPt_  { 0, 0 };
+    std::vector<cv::Rect> keyRects_;
+    cv::Rect btnBackspace_{0,0,0,0}, btnNumToggle_{0,0,0,0};
+    cv::Rect btnOk_{0,0,0,0}, btnCancel_{0,0,0,0};
+    cv::Rect btnSpace_{0,0,0,0}, btnShift_{0,0,0,0};
+
+    const std::vector<std::string>& getCurrentKeys() {
+        static const std::vector<std::string> ALPHA = {
+            "q","w","e","r","t","y","u","i","o","p",
+            "a","s","d","f","g","h","j","k","l",
+            "z","x","c","v","b","n","m"
+        };
+        static const std::vector<std::string> NUM = {
+            "1","2","3","4","5","6","7","8","9","0",
+            "-","/",":",";","(",")","$","&","@","\"",
+            ".","_","#","!","?","=","+","<",">"
+        };
+        return showNumbers_ ? NUM : ALPHA;
+    }
+
+    int findKey(int x, int y) {
+        for (int i=0;i<(int)keyRects_.size();++i)
+            if (keyRects_[i].contains({x,y})) return i;
+        return -1;
+    }
+};
+
+// =============================================================================
+//  WifiSetupScreen — versión con soporte de redes nuevas y teclado en pantalla
+// =============================================================================
+struct WifiNetwork {
+    std::string ssid;
+    bool saved { false };
+    bool secured { true };   // asumir WPA por defecto
+};
+
+class WifiSetupScreen {
+public:
+    std::function<void()>  onConnected;
+    std::function<void()>  onSkip;
+    bool* isEnglish = nullptr;
+    bool eng() const { return isEnglish && *isEnglish; }
+
+    void refresh() {
+        networks_.clear();
+
+        // Redes guardadas via connection show (más fiable)
+        FILE* p = popen("nmcli -t -f NAME,TYPE connection show 2>/dev/null", "r");
+        if (p) {
+            char buf[256];
+            while (fgets(buf, sizeof(buf), p)) {
+                std::string line(buf);
+                while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
+                if (line.find(":802-11-wireless") != std::string::npos) {
+                    std::string ssid = line.substr(0, line.find(':'));
+                    if (!ssid.empty()) networks_.push_back({ssid, true, true});
+                }
+            }
+            pclose(p);
+        }
+
+        // Redes visibles — usar campos separados para evitar problemas con ':'
+        // -f SSID y -f SECURITY por separado, luego cruzar por índice
+        struct ScanEntry { std::string ssid; std::string security; };
+        std::vector<ScanEntry> scanned;
+
+        FILE* p2 = popen("nmcli --terse --fields SSID,SECURITY dev wifi list 2>/dev/null", "r");
+        if (p2) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), p2)) {
+                std::string line(buf);
+                while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
+                if (line.empty()) continue;
+
+                // nmcli -t escapa ':' como '\:' dentro de valores
+                // Dividir solo en ':' no precedido por '\'
+                std::vector<std::string> parts;
+                std::string token;
+                for (size_t i = 0; i < line.size(); ++i) {
+                    if (line[i] == '\\' && i+1 < line.size() && line[i+1] == ':') {
+                        token += ':';
+                        ++i;
+                    } else if (line[i] == ':') {
+                        parts.push_back(token);
+                        token.clear();
+                    } else {
+                        token += line[i];
+                    }
+                }
+                parts.push_back(token);
+
+                if (parts.size() < 1) continue;
+                std::string ssid = parts[0];
+                std::string sec  = parts.size() > 1 ? parts[1] : "";
+                if (ssid.empty() || ssid == "--") continue;
+
+                scanned.push_back({ssid, sec});
+            }
+            pclose(p2);
+        }
+
+        for (auto& e : scanned) {
+            bool alreadyIn = false;
+            for (auto& n : networks_)
+                if (n.ssid == e.ssid) { alreadyIn = true; break; }
+            if (!alreadyIn) {
+                bool sec = !(e.security.empty() || e.security == "--");
+                networks_.push_back({e.ssid, false, sec});
+            }
+        }
+
+        statusMsg_   = "";
+        connecting_  = false;
+        selectedIdx_ = -1;
+        scroll_      = 0;
+        keyboard_.hide();
+    }
+
+    // Llamar desde renderLoop y handleMouse
+    void render(cv::Mat& frame) {
+        if (frame.empty()) return;
+
+        // Si el teclado está activo, renderizar WiFi abajo y teclado encima
+        renderMain(frame);
+        if (keyboard_.visible) keyboard_.render(frame);
+    }
+
+    void handleMouse(int ev, int x, int y) {
+        // El teclado captura primero
+        if (keyboard_.visible) {
+            bool confirmed = keyboard_.handleMouse(ev, x, y);
+            if (confirmed && !keyboard_.text.empty()) {
+                // conectar con Clave ingresada
+                connectWithPassword(pendingSsid_, keyboard_.text);
+            }
+            return;
+        }
+        hovPt_ = {x,y};
+        if (ev != cv::EVENT_LBUTTONDOWN) return;
+
+        if (btnScrollUp_.contains({x,y})  && btnScrollUp_.area()>0)  { if(scroll_>0) scroll_--; return; }
+        if (btnScrollDown_.contains({x,y})&& btnScrollDown_.area()>0){ scroll_++; return; }
+        for (auto& [r,idx] : rowRects_)
+            if (r.contains({x,y})) { selectedIdx_=idx; return; }
+        if (btnRefresh_.contains({x,y})) { refresh(); return; }
+        if (btnSkip_.contains({x,y}))    { if(onSkip) onSkip(); return; }
+        if (btnConnect_.contains({x,y}) && selectedIdx_>=0 && !connecting_) {
+            initiateConnect();
+        }
+    }
+
+private:
+    std::vector<WifiNetwork> networks_;
+    int  selectedIdx_ { -1 };
+    int  scroll_      { 0 };
+    bool connecting_  { false };
+    std::string statusMsg_;
+    std::string pendingSsid_;
+    cv::Point hovPt_ { 0,0 };
+    cv::Rect btnConnect_    {0,0,0,0};
+    cv::Rect btnRefresh_    {0,0,0,0};
+    cv::Rect btnSkip_       {0,0,0,0};
+    cv::Rect btnScrollUp_   {0,0,0,0};
+    cv::Rect btnScrollDown_ {0,0,0,0};
+    struct RowEntry { cv::Rect r; int idx; };
+    std::vector<RowEntry> rowRects_;
+    OnScreenKeyboard keyboard_;
+
+    void initiateConnect() {
+        if (selectedIdx_<0 || selectedIdx_>=(int)networks_.size()) return;
+        auto& net = networks_[selectedIdx_];
+        pendingSsid_ = net.ssid;
+
+        if (net.saved) {
+            // Red ya guardada → conectar directo
+            connectSaved(net.ssid);
+        } else if (!net.secured) {
+            // Red abierta → conectar sin Clave
+            connectOpen(net.ssid);
+        } else {
+            // Red nueva con seguridad → pedir Clave
+            keyboard_.isPassword_ = true;
+            keyboard_.show(
+                (eng() ? "Password for: " : "Clave para: ") + net.ssid,
+                "");
+        }
+    }
+
+    void connectSaved(const std::string& ssid) {
+        connecting_  = true;
+        statusMsg_   = eng() ? "Connecting..." : "Conectando...";
+        std::thread([this,ssid](){
+            std::string cmd = "nmcli connection up '" + ssid + "' 2>/dev/null";
+            int ret = std::system(cmd.c_str());
+            if (ret==0) {
+                statusMsg_ = eng() ? "Connected!" : "Conectado!";
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                if (onConnected) onConnected();
+            } else {
+                statusMsg_ = eng() ? "Failed. Try reconnecting." : "Error al conectar.";
+            }
+            connecting_ = false;
+        }).detach();
+    }
+
+    void connectOpen(const std::string& ssid) {
+        connecting_  = true;
+        statusMsg_   = eng() ? "Connecting to open network..." : "Conectando a red abierta...";
+        std::thread([this,ssid](){
+            std::string cmd = "nmcli device wifi connect '" + ssid + "' 2>/dev/null";
+            int ret = std::system(cmd.c_str());
+            if (ret==0) {
+                statusMsg_ = eng() ? "Connected!" : "Conectado!";
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                if (onConnected) onConnected();
+            } else {
+                statusMsg_ = eng() ? "Failed to connect." : "Error al conectar.";
+            }
+            connecting_ = false;
+        }).detach();
+    }
+
+    void connectWithPassword(const std::string& ssid, const std::string& password) {
+        connecting_  = true;
+        statusMsg_   = eng() ? "Connecting..." : "Conectando...";
+        
+        std::cout << "[WIFI] Intentando conectar a la red: '" << ssid << "' con la clave: '" << password << "'" << std::endl;
+
+        std::thread([this, ssid, password]() {
+            std::string safePwd = password;
+            size_t pos = 0;
+            while ((pos = safePwd.find("'", pos)) != std::string::npos) {
+                safePwd.replace(pos, 1, "'\\''");
+                pos += 4;
+            }
+            
+            // Comando sin --no-agent y capturando toda la salida
+            std::string cmd = "nmcli device wifi connect '" + ssid +
+                              "' password '" + safePwd + "' > /tmp/yaren_wifi_err.txt 2>&1";
+                              
+            int ret = std::system(cmd.c_str());
+            
+            if (ret == 0) {
+                statusMsg_ = eng() ? "Connected!" : "Conectado!";
+                for (auto& n : networks_)
+                    if (n.ssid == ssid) { n.saved = true; break; }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                if (onConnected) onConnected();
+                connecting_ = false;
+            } else {
+                std::string errMsg = eng() ? "Wrong password." : "Clave incorrecta.";
+                FILE* f = fopen("/tmp/yaren_wifi_err.txt", "r");
+                if (f) {
+                    char buf[256] = {};
+                    if (fgets(buf, sizeof(buf), f)) {
+                        std::string raw(buf);
+                        if (raw.find("Secrets were required") != std::string::npos ||
+                            raw.find("password") != std::string::npos ||
+                            raw.find("authentication") != std::string::npos) {
+                            errMsg = eng() ? "Wrong password, try again." : "Clave incorrecta, intenta de nuevo.";
+                        } else if (raw.find("not found") != std::string::npos) {
+                            errMsg = eng() ? "Network not found." : "Red no encontrada.";
+                        }
+                    }
+                    fclose(f);
+                }
+                
+                statusMsg_ = errMsg;
+                connecting_ = false;
+                
+                // Mensaje momentáneo: espera 4 segundos y luego borra el error
+                std::this_thread::sleep_for(std::chrono::seconds(4));
+                if (statusMsg_ == errMsg) {
+                    statusMsg_ = "";
+                }
+            }
+        }).detach();
+    }
+
+    void renderMain(cv::Mat& frame) {
+        int W = frame.cols, H = frame.rows;
+        cv::Mat ov = frame.clone();
+        cv::rectangle(ov,{0,0,W,H},cv::Scalar(4,10,22),cv::FILLED);
+        cv::addWeighted(ov,0.96,frame,0.04,0,frame);
+
+        drawCenteredText(frame, eng()?"WIFI SETUP":"CONFIGURAR WIFI",
+                         W,32,cv::FONT_HERSHEY_DUPLEX,0.80,cv::Scalar(0,229,255),2);
+        cv::line(frame,{W/2-300,48},{W/2+300,48},cv::Scalar(0,80,120),1,cv::LINE_AA);
+
+        int legY = 65; 
+        int legX = W/2 - 95;
+        cv::circle(frame,{legX,legY},5,cv::Scalar(0,200,100),cv::FILLED,cv::LINE_AA);
+        cv::putText(frame,eng()?"saved  ":"guardada  ",{legX+12,legY+5},cv::FONT_HERSHEY_PLAIN,0.80,cv::Scalar(60,140,80),1,cv::LINE_AA);
+        cv::circle(frame,{legX+110,legY},5,cv::Scalar(80,80,80),1,cv::LINE_AA);
+        cv::putText(frame,eng()?"new network":"nueva",{legX+122,legY+5},cv::FONT_HERSHEY_PLAIN,0.80,cv::Scalar(80,110,140),1,cv::LINE_AA);
+        // ----------------------------------------------
+
+        const int LIST_X=W/2-270, LIST_W=540, ROW_H=42, LIST_Y=82, VISIBLE=7;
+        int total=(int)networks_.size();
+        if (scroll_ > std::max(0,total-VISIBLE)) scroll_=std::max(0,total-VISIBLE);
+
+        rowRects_.clear();
+        for (int i=0;i<VISIBLE;++i) {
+            int idx=scroll_+i;
+            if (idx>=total) break;
+            cv::Rect r{LIST_X,LIST_Y+i*ROW_H,LIST_W,ROW_H-3};
+            rowRects_.push_back({r,idx});
+            bool sel=(selectedIdx_==idx);
+            bool hov=r.contains(hovPt_);
+            cv::Scalar bg  =sel?cv::Scalar(0,40,70):hov?cv::Scalar(15,25,40):cv::Scalar(8,16,28);
+            cv::Scalar brd =sel?cv::Scalar(0,229,255):hov?cv::Scalar(40,80,100):cv::Scalar(20,40,55);
+            cv::rectangle(frame,r,bg,cv::FILLED);
+            cv::rectangle(frame,r,brd,sel?2:1,cv::LINE_AA);
+
+            // Indicador guardada (●) / nueva (○)
+            if (networks_[idx].saved)
+                cv::circle(frame,{r.x+14,r.y+r.height/2},5,cv::Scalar(0,200,100),cv::FILLED,cv::LINE_AA);
+            else
+                cv::circle(frame,{r.x+14,r.y+r.height/2},5,cv::Scalar(80,80,80),1,cv::LINE_AA);
+
+            // Icono candado si es segura
+            if (networks_[idx].secured) {
+                int lx=r.x+28, ly=r.y+r.height/2;
+                cv::rectangle(frame,{lx-4,ly-1,8,7},cv::Scalar(160,160,160),1,cv::LINE_AA);
+                cv::ellipse(frame,{lx,ly-1},{4,4},0,180,360,cv::Scalar(160,160,160),1,cv::LINE_AA);
+            }
+
+            cv::Scalar tc=sel?cv::Scalar(255,255,255):hov?cv::Scalar(180,200,210):cv::Scalar(120,150,170);
+            cv::putText(frame,networks_[idx].ssid,{r.x+42,r.y+r.height/2+6},
+                        cv::FONT_HERSHEY_PLAIN,1.0,tc,1,cv::LINE_AA);
+
+            std::string badge = networks_[idx].saved ? (eng()?"saved":"guardada")
+                                         : (eng()?"new":"nueva");
+            cv::Scalar bcolor = networks_[idx].saved ? cv::Scalar(0,150,80) : cv::Scalar(0,140,200);
+            int bl = 0;
+            cv::Size bs = cv::getTextSize(badge, cv::FONT_HERSHEY_PLAIN, 0.72, 1, &bl);
+            cv::putText(frame, badge,
+                        {r.x + r.width - bs.width - 10, r.y + r.height/2 + 5},
+                        cv::FONT_HERSHEY_PLAIN, 0.72, bcolor, 1, cv::LINE_AA);
+        }
+
+        // Scroll
+        if (scroll_>0) {
+            btnScrollUp_={LIST_X+LIST_W+10,LIST_Y,30,30};
+            bool hu=btnScrollUp_.contains(hovPt_);
+            cv::rectangle(frame,btnScrollUp_,hu?cv::Scalar(30,50,70):cv::Scalar(15,25,40),cv::FILLED);
+            cv::rectangle(frame,btnScrollUp_,cv::Scalar(40,80,100),1,cv::LINE_AA);
+            std::vector<cv::Point> tri={{btnScrollUp_.x+15,btnScrollUp_.y+5},{btnScrollUp_.x+5,btnScrollUp_.y+22},{btnScrollUp_.x+25,btnScrollUp_.y+22}};
+            cv::fillPoly(frame,tri,hu?cv::Scalar(255,255,255):cv::Scalar(0,180,220));
+        } else { btnScrollUp_={0,0,0,0}; }
+
+        if (scroll_+VISIBLE<total) {
+            btnScrollDown_={LIST_X+LIST_W+10,LIST_Y+VISIBLE*ROW_H-30,30,30};
+            bool hd=btnScrollDown_.contains(hovPt_);
+            cv::rectangle(frame,btnScrollDown_,hd?cv::Scalar(30,50,70):cv::Scalar(15,25,40),cv::FILLED);
+            cv::rectangle(frame,btnScrollDown_,cv::Scalar(40,80,100),1,cv::LINE_AA);
+            std::vector<cv::Point> tri={{btnScrollDown_.x+15,btnScrollDown_.y+25},{btnScrollDown_.x+5,btnScrollDown_.y+8},{btnScrollDown_.x+25,btnScrollDown_.y+8}};
+            cv::fillPoly(frame,tri,hd?cv::Scalar(255,255,255):cv::Scalar(0,180,220));
+        } else { btnScrollDown_={0,0,0,0}; }
+
+        // Botones inferiores
+        int btnY=LIST_Y+VISIBLE*ROW_H+18, btnH=44;
+
+        btnConnect_={W/2-280,btnY,220,btnH};
+        bool canC=(selectedIdx_>=0)&&!connecting_&&!keyboard_.visible;
+        bool hc=btnConnect_.contains(hovPt_)&&canC;
+        cv::Scalar cBg=connecting_?cv::Scalar(20,50,20):canC?(hc?cv::Scalar(0,60,20):cv::Scalar(0,35,12)):cv::Scalar(15,20,18);
+        cv::Scalar cBrd=connecting_?cv::Scalar(0,150,80):canC?cv::Scalar(0,200,80):cv::Scalar(30,50,35);
+        cv::rectangle(frame,btnConnect_,cBg,cv::FILLED);
+        cv::rectangle(frame,btnConnect_,cBrd,hc?2:1,cv::LINE_AA);
+        std::string cLabel=connecting_?(eng()?"Connecting...":"Conectando..."):(eng()?"CONNECT":"CONECTAR");
+        drawTextInRect(frame,cLabel,btnConnect_,cv::FONT_HERSHEY_DUPLEX,0.46,canC?cv::Scalar(255,255,255):cv::Scalar(80,100,80));
+
+        btnRefresh_={W/2-36,btnY,160,btnH};
+        bool hr=btnRefresh_.contains(hovPt_);
+        cv::rectangle(frame,btnRefresh_,hr?cv::Scalar(30,40,10):cv::Scalar(15,22,8),cv::FILLED);
+        cv::rectangle(frame,btnRefresh_,hr?cv::Scalar(200,200,0):cv::Scalar(120,120,0),hr?2:1,cv::LINE_AA);
+        drawTextInRect(frame,eng()?"REFRESH":"REFRESCAR",btnRefresh_,cv::FONT_HERSHEY_DUPLEX,0.46,hr?cv::Scalar(255,255,255):cv::Scalar(180,180,100));
+
+        btnSkip_={W/2+144,btnY,120,btnH};
+        bool hs=btnSkip_.contains(hovPt_);
+        cv::rectangle(frame,btnSkip_,hs?cv::Scalar(35,35,35):cv::Scalar(18,18,22),cv::FILLED);
+        cv::rectangle(frame,btnSkip_,hs?cv::Scalar(150,150,150):cv::Scalar(80,80,80),hs?2:1,cv::LINE_AA);
+        drawTextInRect(frame,eng()?"SKIP":"OMITIR",btnSkip_,cv::FONT_HERSHEY_DUPLEX,0.46,hs?cv::Scalar(255,255,255):cv::Scalar(160,160,160));
+
+        // Status
+        if (!statusMsg_.empty()) {
+            bool isErr=statusMsg_.find("Error")!=std::string::npos||
+                       statusMsg_.find("fallo")!=std::string::npos||
+                       statusMsg_.find("Failed")!=std::string::npos||
+                       statusMsg_.find("Wrong")!=std::string::npos||
+                       statusMsg_.find("incorrecta")!=std::string::npos;
+            cv::Scalar sc=isErr?cv::Scalar(0,0,220):cv::Scalar(0,200,80);
+            int bl2=0; cv::Size ms=cv::getTextSize(statusMsg_,cv::FONT_HERSHEY_PLAIN,0.95,1,&bl2);
+            cv::putText(frame,statusMsg_,{(W-ms.width)/2, H - 25},cv::FONT_HERSHEY_PLAIN,0.95,sc,1,cv::LINE_AA);        }
+    }
+};
 
 // =============================================================================
 //  Navegación e Items
@@ -1469,6 +2093,11 @@ public:
         eyesClosedImg  = cv::imread(pkgDir + "/faces/separate_parts_without_background/eyes_pairs/3.png",  cv::IMREAD_UNCHANGED);
         mouthClosedImg = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/13.png", cv::IMREAD_UNCHANGED);
         mouthOpenImg   = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/8.png",  cv::IMREAD_UNCHANGED);
+        // Lip sync sprites
+        for (int i = 0; i <= 8; ++i) {
+            cv::Mat m = cv::imread(pkgDir + "/faces/separate_parts_without_background/mouths/" + std::to_string(i) + ".png", cv::IMREAD_UNCHANGED);
+            mouthSprites_[i] = m;
+        }
         lastInteractionTime = std::chrono::system_clock::now();
         auto checkImg = [&](const cv::Mat& m, const std::string& name) {
             if (m.empty()) RCLCPP_WARN(get_logger(), "IMAGEN NO CARGADA: %s", name.c_str());
@@ -1509,10 +2138,31 @@ public:
             std::lock_guard<std::mutex> lk(modeFlagMutex);
             showSettings_ = false;
         };
+        settingsMenu.onWifi = [this]() {
+            // Cerrar settings y abrir WiFi setup
+            {
+                std::lock_guard<std::mutex> lk(modeFlagMutex);
+                showSettings_  = false;
+                showWifiSetup_ = true;
+            }
+            wifiSetup_.refresh();
+            RCLCPP_INFO(this->get_logger(),
+                "[ WiFi ] Abriendo configuracion WiFi desde Settings...");
+        };
+
         radioApp.init(pkgDir, this->get_logger());
         radioApp.isEnglish = &isEnglish;
         routinesApp.isEnglish = &isEnglish;
-
+        wifiSetup_.isEnglish = &isEnglish;
+        wifiSetup_.onSkip = [this]() {
+            std::lock_guard<std::mutex> lk(modeFlagMutex);
+            showWifiSetup_ = false;
+        };
+        wifiSetup_.onConnected = [this]() {
+            chatAvailable_ = checkChatAvailable();
+            std::lock_guard<std::mutex> lk(modeFlagMutex);
+            showWifiSetup_ = false;
+        };
         radioApp.setAudioMutex(&audioMutex_);
         settingsMenu.setAudioMutex(&audioMutex_);
 
@@ -1701,7 +2351,49 @@ public:
                         showCustomOverlay(FaceOverlay::MIC_PLAYING, isEnglish ? "Yaren is listening..." : "Yaren te escucha...", 2.0);
                     }).detach();
                 }
-            });
+            }
+        );
+        lipsyncSub_ = this->create_subscription<std_msgs::msg::String>(
+            "/yaren/tts_text", 10,
+            [this](const std_msgs::msg::String::SharedPtr msg) {
+                std::string data = msg->data;
+                std::queue<VisemeFrame> q;
+
+                if (data.find('|') != std::string::npos) {
+                    // Formato nuevo: "dur:idx|dur:idx|..."
+                    std::istringstream ss(data);
+                    std::string token;
+                    while (std::getline(ss, token, '|')) {
+                        if (token.empty()) continue;
+                        size_t colon = token.find(':');
+                        if (colon == std::string::npos) continue;
+                        uint32_t dur = (uint32_t)std::stoul(token.substr(0, colon));
+                        int      idx = std::stoi(token.substr(colon + 1));
+                        q.push({std::max(0, std::min(8, idx)), dur});
+                    }
+                } else {
+                    // Formato legacy: "dur_ms:idx,idx,..."
+                    static constexpr uint32_t VISEME_MS[9] = {80,55,90,100,80,90,110,120,75};
+                    size_t colon = data.find(':');
+                    if (colon == std::string::npos) return;
+                    uint32_t base = (uint32_t)std::stoul(data.substr(0, colon));
+                    std::istringstream ss(data.substr(colon + 1));
+                    std::string token;
+                    while (std::getline(ss, token, ',')) {
+                        if (token.empty()) continue;
+                        int idx = std::max(0, std::min(8, std::stoi(token)));
+                        uint32_t dur = std::max(40u, std::min(200u,
+                            (uint32_t)(base * VISEME_MS[idx] / 80u)));
+                        q.push({idx, dur});
+                    }
+                }
+
+                std::lock_guard<std::mutex> lk(visemeMutex_);
+                visemeQueue_ = std::move(q);
+                visemeDeadline_ = std::chrono::steady_clock::now();
+                visemeBlend_ = 0.0f;
+            }
+        );
         cv::namedWindow("Yaren Face", cv::WINDOW_NORMAL);
         cv::setWindowProperty("Yaren Face", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
         cv::moveWindow("Yaren Face", 0, 0);
@@ -1798,30 +2490,93 @@ public:
             std::system(cmd_fondo.c_str());
             std::system(cmd_camara.c_str()); 
 
-            std::thread([this, setup]() {
-                std::this_thread::sleep_for(std::chrono::seconds(6));
-                auto configure_node = [&](const std::string& name, const std::string& display) {
+                        std::thread([this, setup]() {
+                // ── a) Pausa inicial para que se vea la animación ──
+                RCLCPP_INFO(this->get_logger(),
+                    "[ BOOT ] Esperando 3s antes de verificar red...");
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+ 
+                // ── b) Verificar internet con timeout de 10s ──
+                RCLCPP_INFO(this->get_logger(),
+                    "[ BOOT ] Verificando conexion a internet...");
+                chatAvailable_ = checkChatAvailable();
+ 
+                // ── c) Sin internet → mostrar pantalla WiFi ──
+                if (!chatAvailable_) {
+                    RCLCPP_WARN(this->get_logger(),
+                        "[ BOOT ] Sin internet. Mostrando configuracion WiFi...");
+ 
+                    {
+                        std::lock_guard<std::mutex> lk(configStatusMutex);
+                        configStatus = isEnglish
+                            ? "No internet — configure WiFi..."
+                            : "Sin internet — configura el WiFi...";
+                    }
+ 
+                    wifiSetup_.refresh();
+                    {
+                        std::lock_guard<std::mutex> lk(modeFlagMutex);
+                        showWifiSetup_ = true;
+                    }
+ 
+                    // Esperar hasta que el usuario conecte u omita
+                    while (true) {
+                        bool still;
+                        {
+                            std::lock_guard<std::mutex> lk(modeFlagMutex);
+                            still = showWifiSetup_;
+                        }
+                        if (!still) break;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    }
+ 
+                    // Re-verificar tras el intento de conexión
+                    chatAvailable_ = checkChatAvailable();
+                    RCLCPP_INFO(this->get_logger(),
+                        "[ BOOT ] Tras WiFi setup — internet: %s",
+                        chatAvailable_ ? "SI" : "NO");
+                } else {
+                    RCLCPP_INFO(this->get_logger(),
+                        "[ BOOT ] Internet OK. Continuando arranque...");
+                }
+ 
+                // ── d) Configurar lifecycle nodes ──
+                auto configure_node = [&](const std::string& name,
+                                          const std::string& display) {
                     {
                         std::lock_guard<std::mutex> lk(configStatusMutex);
                         configStatus = "Cargando " + display + "...";
                     }
+                    RCLCPP_INFO(this->get_logger(),
+                        "[ NODE ] Configurando: %s", name.c_str());
+ 
                     bool ok = false;
                     for (int intento = 0; intento < 3 && !ok; intento++) {
                         if (intento > 0) {
-                            RCLCPP_WARN(this->get_logger(), "Reintentando configurar %s (intento %d/3)...", name.c_str(), intento + 1);
+                            RCLCPP_WARN(this->get_logger(),
+                                "[ NODE ] Reintentando %s (%d/3)...",
+                                name.c_str(), intento + 1);
                             std::this_thread::sleep_for(std::chrono::seconds(3));
                         }
-                        int ret = std::system(("bash -c 'source " + setup +
-                                    " && ros2 lifecycle set /" + name +
-                                    " configure' > /dev/null 2>&1").c_str());
+                        int ret = std::system(
+                            ("bash -c 'source " + setup +
+                             " && ros2 lifecycle set /" + name +
+                             " configure' > /dev/null 2>&1").c_str());
                         ok = (ret == 0);
                     }
-                    if (!ok) RCLCPP_ERROR(this->get_logger(), "❌ No se pudo configurar: %s", name.c_str());
-                    // FIX-B: configProgress es atomic<int>, incremento seguro
+ 
+                    if (ok)
+                        RCLCPP_INFO(this->get_logger(),
+                            "[ NODE ] ✓ %s configurado.", name.c_str());
+                    else
+                        RCLCPP_ERROR(this->get_logger(),
+                            "[ NODE ] ✗ No se pudo configurar: %s", name.c_str());
+ 
                     configProgress++;
-                    std::this_thread::sleep_for(std::chrono::seconds(4));
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
                 };
-                configure_node("llm_lifecycle_node",       "Inteligencia Artificial");
+ 
+                configure_node("llm_lifecycle_node",        "Inteligencia Artificial");
                 configure_node("stt_lifecycle_node",        "Reconocimiento de Voz");
                 configure_node("tts_lifecycle_node",        "Sintesis de Voz");
                 configure_node("detector",                  "Deteccion de Emociones");
@@ -1829,29 +2584,33 @@ public:
                 configure_node("body_points_detector_node", "Deteccion Corporal");
                 configure_node("yaren_speaker_node",        "Altavoz");
                 configure_node("virtual_background_node",   "Fondo Virtual");
-                std::this_thread::sleep_for(std::chrono::seconds(6));
-                configure_node("filtro_animales",        "Filtro de Animales");
-                configure_node("face_landmark_publisher", "Landmarks Faciales");
-                configure_node("csi_cam_node",             "Camara Principal");
+                configure_node("filtro_animales",           "Filtro de Animales");
+                configure_node("face_landmark_publisher",   "Landmarks Faciales");
+                configure_node("csi_cam_node",              "Camara Principal");
+ 
+                // ── e) Finalizar pantalla de carga ──
                 {
                     std::lock_guard<std::mutex> lk(configStatusMutex);
-                    configStatus  = isEnglish ? "Yaren is ready!" : "Yaren listo!";
-                    configProgress = configTotal; // forzar 100% aunque hubo fallos
+                    configStatus   = isEnglish ? "Yaren is ready!" : "Yaren listo!";
+                    configProgress = configTotal;
                 }
+                RCLCPP_INFO(this->get_logger(),
+                    "[ BOOT ] Sistema listo. Iniciando modo interactivo.");
+ 
                 std::this_thread::sleep_for(std::chrono::seconds(2));
                 resetIdleTimer();
-                configuring = false; // Aquí termina la pantalla de carga y aparece la cara
-
-                // --- DETENER MÚSICA DE ARRANQUE Y QUEDAR EN SILENCIO ---
+ 
                 {
                     std::lock_guard<std::mutex> lk(audioMutex_);
                     if (bootMusic) {
-                        Mix_HaltMusic();           // Detiene la música actual
-                        Mix_FreeMusic(bootMusic);  // Libera la memoria
+                        Mix_HaltMusic();
+                        Mix_FreeMusic(bootMusic);
                         bootMusic = nullptr;
                     }
                 }
-                
+ 
+                configuring = false;
+ 
             }).detach();
         }
     }
@@ -2000,6 +2759,10 @@ private:
     bool showSettings_  { false };
     bool showRadio_     { false };
     bool showRoutines_  { false };
+    bool showWifiSetup_ { false };
+    bool chatAvailable_ { false };
+    WifiSetupScreen wifiSetup_;
+    
 
     RadioApp     radioApp;
     RoutinesApp  routinesApp;
@@ -2149,6 +2912,55 @@ private:
             MI("vid_susanita", isEnglish ? "LITTLE SUSAN" : "SUSANITA", isEnglish ? "Zenon's Farm" : "La Granja de Zenon", {255, 100, 200}, ("python3 " + rdDir + "susanita.py &").c_str(), "for pid in $(ps aux | grep -E 'susanita.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "susanita"),
         }};
     }
+        bool checkChatAvailable() {
+        const int TIMEOUT_SECS  = 10;
+        const int POLL_INTERVAL = 1;   // segundos entre intentos
+ 
+        const char* key = std::getenv("GROQ_API_KEY");
+        bool key_ok     = (key != nullptr && strlen(key) > 10);
+ 
+        if (!key_ok) {
+            RCLCPP_WARN(get_logger(),
+                "[ WiFi ] GROQ_API_KEY no configurada — chat deshabilitado.");
+            return false;
+        }
+ 
+        RCLCPP_INFO(get_logger(),
+            "[ WiFi ] Buscando conexion a internet (maximo %d segundos)...",
+            TIMEOUT_SECS);
+ 
+        for (int elapsed = 0; elapsed < TIMEOUT_SECS; elapsed += POLL_INTERVAL) {
+            // Verificar estado de red con nmcli (rapido, sin bloqueo prolongado)
+            FILE* p = popen("nmcli -t -f STATE general 2>/dev/null", "r");
+            char buf[64] = {};
+            if (p) { fgets(buf, sizeof(buf), p); pclose(p); }
+            bool nmcli_ok = std::string(buf).find("connected") != std::string::npos;
+ 
+            if (nmcli_ok) {
+                // nmcli dice conectado → verificar ping real (timeout 2s)
+                bool ping_ok = (std::system(
+                    "ping -c 1 -W 2 8.8.8.8 > /dev/null 2>&1") == 0);
+ 
+                if (ping_ok) {
+                    RCLCPP_INFO(get_logger(),
+                        "[ WiFi ] ✓ Internet disponible (tras %d segundo(s)).",
+                        elapsed + POLL_INTERVAL);
+                    return true;
+                }
+            }
+ 
+            RCLCPP_INFO(get_logger(),
+                "[ WiFi ] Sin internet... reintentando (%d/%d)",
+                elapsed + POLL_INTERVAL, TIMEOUT_SECS);
+ 
+            std::this_thread::sleep_for(std::chrono::seconds(POLL_INTERVAL));
+        }
+ 
+        RCLCPP_WARN(get_logger(),
+            "[ WiFi ] ✗ No se encontro internet tras %d segundos.", TIMEOUT_SECS);
+        return false;
+    }
+
 
     bool runCommand(const std::string& cmd) {
         if (cmd.empty()) return false;
@@ -2278,12 +3090,14 @@ private:
         }
         // 2. Si la pantalla ya está despierta, cualquier interacción (movimiento o clic) 
         // reinicia el temporizador para que no se duerma mientras la usas
-        resetIdleTimer();        bool sSettings, sRadio, sRoutines;
+        resetIdleTimer();        
+        bool sSettings, sRadio, sRoutines, sWifi;
         {
             std::lock_guard<std::mutex> lk(modeFlagMutex);
             sSettings  = showSettings_;
             sRadio     = showRadio_;
             sRoutines  = showRoutines_;
+            sWifi      = showWifiSetup_;
         }
         if (sSettings) {
             settingsMenu.handleMouse(event, x, y);
@@ -2295,6 +3109,10 @@ private:
         }
         if (sRoutines) {
             routinesApp.handleMouse(event, x, y);
+            return;
+        }
+        if (sWifi) {
+            wifiSetup_.handleMouse(event, x, y);
             return;
         }
 
@@ -2408,6 +3226,19 @@ private:
                     startMenuMusic();
                 }
                 return;
+            }
+            // Click en modo bloqueado → abrir WiFi setup
+            for (int i = 0; i < (int)level.items.size(); ++i) {
+                if (level.items[i].rect.contains({x,y})) {
+                    bool blocked = (level.items[i].id == "yaren_chat") && !chatAvailable_;
+                    if (blocked) {
+                        wifiSetup_.refresh();
+                        std::lock_guard<std::mutex> lk(modeFlagMutex);
+                        showWifiSetup_ = true;
+                        return;
+                    }
+                    break;
+                }
             }
             for (int i = 0; i < (int)level.items.size(); ++i) {
                 if (level.items[i].rect.contains({ x, y })) {
@@ -2769,8 +3600,10 @@ private:
     }
 
     void drawCard(cv::Mat& frame, const MenuItem& item, bool hovered, bool arrow) {
+        bool blocked = (item.id == "yaren_chat") && !chatAvailable_;
+        if (blocked) hovered = false;  // no hover visual si bloqueado
         int cx = item.rect.x, cy = item.rect.y, cw = item.rect.width, ch = item.rect.height;
-        cv::Scalar a = item.color;
+        cv::Scalar a = blocked ? cv::Scalar(70,70,70) : item.color;
         cv::rectangle(frame, item.rect, hovered ? cv::Scalar(20,30,45) : cv::Scalar(10,18,31), cv::FILLED);
         cv::rectangle(frame, item.rect, hovered ? a : cv::Scalar(a[0]*.35, a[1]*.35, a[2]*.35), hovered ? 2 : 1, cv::LINE_AA);
         cv::line(frame, {cx+4, cy+4}, {cx+16, cy+4}, a, 1, cv::LINE_AA);
@@ -2816,6 +3649,22 @@ private:
                     hovered ? a : cv::Scalar(a[0]*.7, a[1]*.7, a[2]*.7), 1, cv::LINE_AA);
         cv::Size ss = cv::getTextSize(item.sublabel, cv::FONT_HERSHEY_PLAIN, 0.85, 1, &bl);
         cv::putText(frame, item.sublabel, {cx+(cw-ss.width)/2, cy+ch-12}, cv::FONT_HERSHEY_PLAIN, 0.85, cv::Scalar(90,110,130), 1, cv::LINE_AA);
+        // Overlay bloqueado
+        if (blocked) {
+            // Panel oscuro semitransparente
+            cv::Mat ov2 = frame.clone();
+            cv::rectangle(ov2, item.rect, cv::Scalar(0,0,0), cv::FILLED);
+            cv::addWeighted(ov2, 0.35, frame, 0.65, 0, frame);
+            // Icono candado
+            int lcx = cx + cw - 22, lcy = cy + 16;
+            cv::rectangle(frame, {lcx-7, lcy, 14, 11}, cv::Scalar(160,160,160), 1, cv::LINE_AA);
+            cv::ellipse(frame, {lcx, lcy}, {5,5}, 0, 180, 360, cv::Scalar(160,160,160), 1, cv::LINE_AA);
+            // Razón
+            std::string reason = isEnglish ? "No internet" : "Sin internet";
+            int rbl=0; cv::Size rs = cv::getTextSize(reason, cv::FONT_HERSHEY_PLAIN, 0.75, 1, &rbl);
+            cv::putText(frame, reason, {cx+(cw-rs.width)/2, cy+ch-2},
+                        cv::FONT_HERSHEY_PLAIN, 0.75, cv::Scalar(130,130,130), 1, cv::LINE_AA);
+        }
     }
 
     cv::Mat getFaceFrame() {
@@ -2829,7 +3678,20 @@ private:
         if (!isBlinking && sinceBlink > 4.0) { isBlinking = true; blinkStartTime = now; lastBlinkTime = now; }
         if (isBlinking && std::chrono::duration<double>(now - blinkStartTime).count() > 0.2) isBlinking = false;
         overlayImage(res, isBlinking ? eyesClosedImg : eyesOpenImg);
-        overlayImage(res, ttsActive ? mouthOpenImg : mouthClosedImg);
+        updateViseme();
+        {
+            int idxA = currentVisemeIdx_.load();
+            int idxB = nextVisemeIdx_.load();
+            float bl = visemeBlend_;
+            if (ttsActive.load()
+                && !mouthSprites_[idxA].empty()
+                && !mouthSprites_[idxB].empty()) {
+                overlayImageAlpha(res, mouthSprites_[idxA], 1.0f - bl);
+                overlayImageAlpha(res, mouthSprites_[idxB], bl);
+            } else {
+                overlayImage(res, ttsActive ? mouthOpenImg : mouthClosedImg);
+            }
+        }        
         if (eyesOpenImg.empty() && eyesClosedImg.empty() && mouthOpenImg.empty() && mouthClosedImg.empty()) {
             cv::putText(res, isEnglish ? "WARNING: face images not found" : "ADVERTENCIA: imagenes de cara no encontradas", { 20, canvasSize.height / 2 }, cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 100, 255), 1, cv::LINE_AA);
         }
@@ -3200,85 +4062,101 @@ private:
     void renderLoop() {
         rclcpp::Rate rate(30);
         while (running && rclcpp::ok()) {
-            cv::Mat frame = getFaceFrame();
             
-            // 1. PANTALLA DE CARGA
-            if (configuring.load()) {
-                cv::Mat loadFrame(cv::Size(800, 480), CV_8UC3);
-                renderLoadingScreen(loadFrame);
-                { std::lock_guard<std::mutex> lk(frameMutex); latestFrame = loadFrame.clone(); }
-                auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", loadFrame).toImageMsg();
-                faceScreenPublisher->publish(*msg);
-                rate.sleep();
-                continue;
-            }
-
-            // 2. RENDERIZADO DE LA INTERFAZ PRINCIPAL
-            bool sSettings, sRadio, sRoutines;
+            // 1. Obtener banderas de menús activos
+            bool sSettings, sRadio, sRoutines, sWifi;
             {
                 std::lock_guard<std::mutex> lk(modeFlagMutex);
                 sSettings  = showSettings_;
                 sRadio     = showRadio_;
                 sRoutines  = showRoutines_;
+                sWifi      = showWifiSetup_;
             }
 
-            if (sSettings) {
-                settingsMenu.render(frame);
-            } else if (sRadio) {
-                radioApp.render(frame);
-            } else if (sRoutines) {
-                routinesApp.render(frame);
+            cv::Mat frame;
+
+            // 2. Decidir el fondo: Si Yaren se está configurando, usar la pantalla de carga. Si no, usar la cara.
+            if (configuring.load()) {
+                frame = cv::Mat(cv::Size(800, 480), CV_8UC3);
+                renderLoadingScreen(frame);
             } else {
-                // FIX: overlayMutex y navMutex se toman en órdenes separados sin anidamiento
-                renderFaceOverlay(frame);
-                std::lock_guard<std::mutex> lock(navMutex);
-                if (!navStack.empty()) {
-                    renderMenu(frame);
-                    renderSettingsButton(frame);
-                    renderPowerButton(frame);
+                frame = getFaceFrame();
+            }
+
+            // --- ESTO ES LO QUE FALTABA ---
+            // Ahora dibujamos el WiFi ENCIMA del fondo, incluso si sigue configurando
+            if (sWifi) {
+                wifiSetup_.render(frame);
+            } else if (!configuring.load()) {
+                // Solo dibujamos los otros menús si no estamos en configuración ni en WiFi
+                bool sSettings, sRadio, sRoutines;
+                {
+                    std::lock_guard<std::mutex> lk(modeFlagMutex);
+                    sSettings = showSettings_; sRadio = showRadio_; sRoutines = showRoutines_;
+                }
+                if (sSettings) settingsMenu.render(frame);
+                else if (sRadio) radioApp.render(frame);
+                else if (sRoutines) routinesApp.render(frame);
+                else {
+                    renderFaceOverlay(frame);
+                    std::lock_guard<std::mutex> lock(navMutex);
+                    if (!navStack.empty()) {
+                        renderMenu(frame);
+                        renderSettingsButton(frame);
+                        renderPowerButton(frame);
+                    }
                 }
             }
 
-            // 3. DETERMINAR SI YAREN ESTÁ INACTIVO 
+            // 4. DETERMINAR SI YAREN ESTÁ INACTIVO
+            // Solo se activa el screensaver si Yaren está en la cara pura:
+            // sin menú, sin modo activo, sin settings, sin radio, sin rutinas,
+            // sin WiFi, sin overlay activo y sin música de menú sonando.
             bool currentIdle = false;
             {
                 std::lock_guard<std::mutex> lock(navMutex);
-                // ESTRICTO: Solo es inactivo si la pila de navegación está completamente vacía
-                currentIdle = navStack.empty() && !sSettings && !sRadio && !sRoutines && activeMode.empty();
+                FaceOverlay ovState;
+                { std::lock_guard<std::mutex> lk(overlayMutex); ovState = faceOverlay; }
+
+                currentIdle = navStack.empty()
+                           && activeMode.empty()
+                           && active_lifecycle_nodes.empty()
+                           && !sSettings
+                           && !sRadio
+                           && !sRoutines
+                           && !sWifi
+                           && !micTestRunning.load()
+                           && !ttsActive.load()
+                           && ovState == FaceOverlay::NONE
+                           && !isMenuMusicPlaying;
             }
 
-            // 4. LÓGICA DEL SCREENSAVER (PANTALLA DE INACTIVIDAD)
+            // 5. LÓGICA DEL SCREENSAVER (Evitar que se active si está cargando o en WiFi)
             auto now = std::chrono::system_clock::now();
             double elapsedIdle = std::chrono::duration<double>(now - lastInteractionTime).count();
 
-            // Transiciones de estado del Screensaver
-            if (currentIdle && elapsedIdle > idleTimeoutSecs) {
+            if (currentIdle && elapsedIdle > idleTimeoutSecs && !configuring.load() && !sWifi) {
                 if (!isIdleScreenActive) startIdleScreen();
             } else if (!currentIdle && isIdleScreenActive) {
                 stopIdleScreen();
             }
 
-            // Si está activo, dibujamos el video sobre todo el frame
             if (isIdleScreenActive && idleVideo.isOpened()) {
                 cv::Mat videoFrame;
-                idleVideo >> videoFrame; // Leer el siguiente fotograma
+                idleVideo >> videoFrame; 
                 
                 if (videoFrame.empty()) {
-                    // Si el video termina, hacer loop reiniciando al fotograma 0
                     idleVideo.set(cv::CAP_PROP_POS_FRAMES, 0);
                     idleVideo >> videoFrame;
                 }
                 if (!videoFrame.empty()) {
-                    // Sobrescribir la interfaz con el video
                     cv::resize(videoFrame, frame, frame.size(), 0, 0, cv::INTER_LINEAR);
-                    
-                    // Texto opcional sutil en la esquina inferior para estética
                     cv::putText(frame, "Zzz...", {30, frame.rows - 30}, 
                                 cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
                 }
             }
 
-            // 5. PUBLICAR ESTADO A ROS 2 (Para que los otros nodos sepan si Yaren "escucha")
+            // 6. PUBLICAR ESTADOS
             {
                 std::lock_guard<std::mutex> lock(idleStateMutex);
                 if (currentIdle != lastIdleState) {
@@ -3290,7 +4168,6 @@ private:
                 }
             }
 
-            // 6. ACTUALIZAR LA PANTALLA
             if (!frame.empty()) {
                 { std::lock_guard<std::mutex> lk(frameMutex); latestFrame = frame.clone(); }
                 auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
@@ -3318,6 +4195,54 @@ private:
         }
     }
 
+    int phonemeToSprite(const std::string& ph) {
+        static const std::map<std::string,int> M = {
+            {"_",0},{"pau",0},{"",0},
+            {"a",7},{"e",5},{"i",4},{"o",3},{"u",2},
+            {"j",4},{"w",2},{"p",1},{"b",1},{"m",0},
+            {"f",5},{"v",1},{"t",1},{"d",1},
+            {"s",4},{"z",4},{"n",1},{"l",1},{"r",1},
+            {"k",1},{"g",1},{"x",6},{"tʃ",4},{"ɲ",1},
+        };
+        auto it = M.find(ph); return it!=M.end() ? it->second : 1;
+    }
+    void overlayImageAlpha(cv::Mat& bg, const cv::Mat& fg, float ga) {
+        if (fg.empty() || bg.empty() || ga < 0.01f) return;
+        cv::Mat src = fg;
+        if (fg.size() != bg.size())
+            cv::resize(fg, src, bg.size(), 0, 0, cv::INTER_LINEAR);
+        if (src.channels() != 4) return;
+        for (int y = 0; y < bg.rows; ++y)
+            for (int x = 0; x < bg.cols; ++x) {
+                const cv::Vec4b& f = src.at<cv::Vec4b>(y,x);
+                float a = (f[3]/255.f) * ga;
+                if (a > 0.01f) {
+                    cv::Vec3b& b = bg.at<cv::Vec3b>(y,x);
+                    for (int c=0;c<3;++c)
+                        b[c]=cv::saturate_cast<uchar>(f[c]*a+b[c]*(1.f-a));
+                }
+            }
+    }
+
+    void updateViseme() {
+        std::lock_guard<std::mutex> lk(visemeMutex_);
+        if (!ttsActive.load()) {
+
+            currentVisemeIdx_=0; nextVisemeIdx_=0; visemeBlend_=0.f; return;
+
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (now >= visemeDeadline_ && !visemeQueue_.empty()) {
+            auto f = visemeQueue_.front(); visemeQueue_.pop();
+            currentVisemeIdx_ = nextVisemeIdx_.load();
+            nextVisemeIdx_    = f.idx;
+            visemeBlend_      = 0.0f;
+            visemeDeadline_   = now + std::chrono::milliseconds(f.duration_ms);
+        }
+        float elapsed = std::chrono::duration<float>(
+            now - (visemeDeadline_ - std::chrono::milliseconds(80))).count();
+            visemeBlend_ = std::min(1.0f, std::max(0.0f, elapsed / 0.07f));
+    } 
     void overlayImage(cv::Mat& bg, const cv::Mat& fg) {
         if (fg.empty() || bg.empty()) return;
         cv::Mat fgResized;
@@ -3391,6 +4316,7 @@ private:
     std::mutex        overlayMutex;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  ttsSubscription;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  sttListeningSubscription_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lipsyncSub_;
     std::atomic<bool> first_listen_done { false };
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr faceScreenPublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   modePublisher;
@@ -3409,13 +4335,22 @@ private:
     // --- VARIABLES DE PANTALLA DE INACTIVIDAD (AQUÍ DEBEN IR) ---
     std::chrono::system_clock::time_point lastInteractionTime;
     bool isIdleScreenActive { false };
-    double idleTimeoutSecs { 10.0 }; // Segundos de inactividad
+    double idleTimeoutSecs { 60.0 }; // Segundos de inactividad
     cv::VideoCapture idleVideo;
     Mix_Music* idleMusic { nullptr };
     std::vector<std::string> idleVideoPaths;
     std::vector<std::string> idleMusicPaths;
     std::vector<std::string> bootMusicPaths;
     Mix_Music* bootMusic { nullptr };
+    // Lip sync
+    cv::Mat mouthSprites_[9];          // 0-8 PNG de boca
+    std::atomic<int>  currentVisemeIdx_  { 0 };
+    std::atomic<int>  nextVisemeIdx_     { 0 };
+    float             visemeBlend_       { 0.0f };
+    std::chrono::steady_clock::time_point visemeDeadline_;
+    std::mutex        visemeMutex_;
+    struct VisemeFrame { int idx; uint32_t duration_ms; };
+    std::queue<VisemeFrame> visemeQueue_;
 };
 
 // =============================================================================
