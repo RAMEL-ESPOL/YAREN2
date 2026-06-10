@@ -81,6 +81,19 @@ class EmotionDetectionNode(LifecycleNode):
         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
         cv2.setMouseCallback(self.window_name, self.on_mouse_click)
+        
+        # ──────────────────────────────────────────────
+        # Truco de xdotool (Idéntico a tu C++)
+        # ──────────────────────────────────────────────
+        def force_focus():
+            time.sleep(0.3)  # Esperar 300ms a que la ventana se cree
+            cmd = f"xdotool search --sync --name '{self.window_name}' windowactivate --sync windowraise 2>/dev/null"
+            os.system(cmd)
+            
+        # Lanzar el hilo como daemon (equivalente al .detach() en C++)
+        threading.Thread(target=force_focus, daemon=True).start()
+        # ──────────────────────────────────────────────
+
         self._active      = True
         self._frame_count = 0
         self._latest_frame = None

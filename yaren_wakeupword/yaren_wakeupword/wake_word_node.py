@@ -78,7 +78,8 @@ class YarenWakeWordNode(Node):
 
         self.idle_sub = self.create_subscription(
             Bool, '/yaren/face_idle', self.idle_callback, qos_tl)
-
+	self.mic_test_sub = self.create_subscription(
+    Bool, '/yaren/mic_test_active', self._cb_mic_test,     10)
         self.wake_pub = self.create_publisher(Bool, '/yaren/wake_event', 10)
         self.lang_pub = self.create_publisher(Bool, '/yaren/is_english',  qos_tl)
 
@@ -99,35 +100,66 @@ class YarenWakeWordNode(Node):
 
         # Micrófono
         self.mic    = pyaudio.PyAudio()
-        self.stream = self.mic.open(
-            format=pyaudio.paInt16, channels=1, rate=16000,
-            input=True, frames_per_buffer=8000
-        )
+        self.stream = None  # empieza cerrado, se abre cuando face_idle=true
+
         self.stream.start_stream()
 
         self.create_timer(0.1, self.audio_loop_callback)
         self.get_logger().info("🤖 wake_word_node listo. Esperando wake word...")
 
-    def idle_callback(self, msg: Bool):
-        self.is_face_idle = msg.data
-        if self.is_face_idle:
-            self.get_logger().info("✅ Pantalla libre. Escuchando wake word...")
-            self.recognizer = KaldiRecognizer(self.model, 16000)
-        else:
-            self.get_logger().info("🛑 Menú activo. Micrófono pausado.")
-
-    def audio_loop_callback(self):
-        if not self.is_face_idle:
-            try:
-                available = self.stream.get_read_available()
-                if available > 0:
-                    self.stream.read(available, exception_on_overflow=False)
-            except Exception:
-                pass
+    def _open_stream(self):
+    try:
+        if self.stream is not None:
             return
+        self.stream = self.mic.open(
+            format=pyaudio.paInt16, channels=1, rate=16000,
+            input=True, frames_per_buffer=8000
+        )
+        self.stream.start_stream()
+        self.get_logger().info("🎤 Stream abierto.")
+    except Exception as e:
+        self.get_logger().error(f"Error abriendo stream: {e}")
+        self.stream = None
 
-        try:
-            data = self.stream.read(4000, exception_on_overflow=False)
+def _close_stream(self):
+    try:
+        if self.stream is None:
+            return
+        self.stream.stop_stream()
+        self.stream.close()
+        self.stream = None
+        self.get_logger().info("🔇 Stream cerrado.")
+    except Exception as e:
+        self.get_logger().error(f"Error cerrando stream: {e}")
+        self.stream = None
+
+def _cb_mic_test(self, msg: Bool):
+    if msg.data:
+        self.get_logger().info("🔬 Test activo. Cerrando stream.")
+        self._close_stream()
+    else:
+        self.get_logger().info("🔬 Test terminado.")
+        if self.is_face_idle:
+            self._open_stream()
+    def idle_callback(self, msg: Bool):
+    self.is_face_idle = msg.data
+    if self.is_face_idle:
+        self.get_logger().info("✅ Pantalla libre. Escuchando wake word...")
+        self.recognizer = KaldiRecognizer(self.model, 16000)
+        self._open_stream()
+    else:
+        self.get_logger().info("🛑 Menú activo. Cerrando stream.")
+        self._close_stream()
+    def audio_loop_callback(self):
+    if not self.is_face_idle:
+        return
+
+    if self.stream is None:
+        self._open_stream()
+        return
+
+    try:
+        data = self.stream.read(4000, exception_on_overflow=False)
             if not data:
                 return
 
@@ -171,13 +203,12 @@ class YarenWakeWordNode(Node):
             pass
 
     def destroy_node(self):
-        try:
-            self.stream.stop_stream()
-            self.stream.close()
-            self.mic.terminate()
-        except Exception:
-            pass
-        super().destroy_node()
+	    try:
+		self._close_stream()
+		self.mic.terminate()
+	    except Exception:
+		pass
+	    super().destroy_node()
 
 
 def main(args=None):
