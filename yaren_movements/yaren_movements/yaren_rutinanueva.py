@@ -40,7 +40,7 @@ from yaren_interfaces.msg import BodyPosition
 # ══════════════════════════════════════════════════════════════════════════════
 
 DETECTION_NODES = [
-    ["ros2", "run", "yaren_arm_mimic", "csi_cam_pub.py"],
+    ["ros2", "run", "camara_usb_csi", "csi_cam_pub.py"],
     ["ros2", "run", "yaren_arm_mimic", "body_points_detector.py"],
     ["ros2", "run", "yaren_arm_mimic", "body_tracker_node"],
 ]
@@ -409,7 +409,7 @@ class PoseRecorderNode(Node):
             BodyPosition, "/body_tracker",
             self._body_tracker_cb, 10)
         self.create_subscription(
-            Image, "/csi_camera/image_raw",
+            Image, "csi_camera/image_raw",
             self._camera_cb, 10)
 
         self._traj_pub = self.create_publisher(
@@ -1179,6 +1179,10 @@ def main():
             print(f"[WARN] No se pudo lanzar: {' '.join(cmd)}")
 
     time.sleep(3.0)
+    
+    print("[INFO] Configurando y activando hardware de cámara...")
+    subprocess.run(["ros2", "lifecycle", "set", "/csi_cam_node", "configure"])
+    subprocess.run(["ros2", "lifecycle", "set", "/csi_cam_node", "activate"])
 
     rclpy.init()
     node = PoseRecorderNode()
@@ -1192,10 +1196,19 @@ def main():
         run_ui(node)
     finally:
         print("[INFO] Iniciando limpieza...")
-        node.destroy_node()
-        rclpy.shutdown()
-        time.sleep(0.5)
 
+        # 1. PRIMERO: Cerrar la ventana de OpenCV
+        print("[INFO] Cerrando ventana UI...")
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)  # Crucial: Fuerza a OpenCV a vaciar la cola de eventos y cerrar gráficamente la ventana
+
+        # 2. SEGUNDO: Desactivar y limpiar el hardware de la cámara CSI
+        print("[INFO] Apagando y liberando cámara CSI...")
+        subprocess.run(["ros2", "lifecycle", "set", "/csi_cam_node", "deactivate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["ros2", "lifecycle", "set", "/csi_cam_node", "cleanup"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # 3. TERCERO: Matar los subprocesos de detección (tracker, pose, etc.)
+        print("[INFO] Deteniendo nodos de detección...")
         for proc in detection_procs:
             try:
                 if proc.poll() is None:
@@ -1204,8 +1217,16 @@ def main():
             except Exception:
                 pass
 
+        # 4. CUARTO: Apagar ROS 2 de forma segura
+        print("[INFO] Apagando nodo ROS 2...")
+        try:
+            node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
+
         print("[INFO] Limpieza completada.")
-        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
