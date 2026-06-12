@@ -13,7 +13,7 @@ std::pair<int, int> FaceMaskFilter::getLandmarkIndices() const {
 }
 
 FaceFilter::FilterParams FaceMaskFilter::getFilterParams() const {
-    return {10, 300, 1.15, 100, 1000, 1.0, 100, 1000};
+    return {10, 300, 1.8, 100, 1000, 1.0, 100, 1000};
 }
 
 std::pair<int, int> FaceMaskFilter::calculatePosition(

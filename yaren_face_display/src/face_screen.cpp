@@ -2405,6 +2405,10 @@ public:
         rclcpp::QoS qos_profile_idle(1);
         qos_profile_idle.transient_local();
         idleStatePublisher = this->create_publisher<std_msgs::msg::Bool>("/yaren/face_idle", qos_profile_idle);
+        rclcpp::QoS qos_mic(1);
+        qos_mic.transient_local();
+        micOwnerPublisher_ = this->create_publisher<std_msgs::msg::String>("/yaren/mic_owner", qos_mic);
+        micTestPublisher_ = this->create_publisher<std_msgs::msg::Bool>("/yaren/mic_test", 10); 
 
         wakeEventSubscription = this->create_subscription<std_msgs::msg::Bool>(
             "/yaren/wake_event", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
@@ -2447,7 +2451,7 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|llm_lifecycle_node|stt_lifecycle_node|tts_lifecycle_node|detector|face_filter_node| animal_filter_mask|body_points_detector_node|yaren_speaker_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|csi_cam_pub|fondo_virtual' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
         const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
@@ -2695,7 +2699,6 @@ public:
         }
         if (renderThread.joinable()) renderThread.join();
         // FIX-F: verificar joinable antes de join en testThread
-        if (testThread.joinable()) testThread.join();
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
         std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
@@ -2846,7 +2849,7 @@ private:
             MI("yaren", "YAREN", isEnglish ? "main modes" : "modos principales", {0,229,255}, "", "", true, "sub_yaren", "yaren"),
         };
         subMenuMap["sub_modo_prueba"] = { isEnglish ? "TEST MODE" : "MODO PRUEBA", {255,140,0}, {
-            MI("test_camara", isEnglish ? "CAMERA" : "CAMARA", isEnglish ? "test camera" : "probar camara", {0,200,255}, ("python3 " + absCwd + "/src/YAREN2/CSI-Camera/simple_camera.py &").c_str(), "", false, "", "camera"),
+            MI("test_camara", isEnglish ? "CAMERA" : "CAMARA", isEnglish ? "test camera" : "probar camara", {0,200,255}, ("python " + absCwd + "/src/YAREN2/CSI-Camera/simple_camera.py &").c_str(), "", false, "", "camera"),
             MI("test_mic", isEnglish ? "MICROPHONE" : "MICROFONO", isEnglish ? "test microphone" : "probar microfono", {0,255,128}, "", "", false, "", "microfono"),
             MI("test_motores", isEnglish ? "MOTORS" : "MOTORES", isEnglish ? "test motors" : "probar motores", {255,140,0}, "", "", true, "sub_motores", "motores"),
         }};
@@ -2990,152 +2993,157 @@ private:
     }
 
     void executeMicTest() {
-    if (micTestRunning.load()) return;
-    micTestRunning = true;
+        if (micTestRunning.load()) return;
+        micTestRunning = true;
 
-    // Publicar face_idle=true para liberar el mic del voice_menu
-    {
-	auto idleMsg = std_msgs::msg::Bool();
-	idleMsg.data = true;
-	idleStatePublisher->publish(idleMsg);
+        // Lanzar TODA la lógica en un hilo independiente (detached)
+        // Esto evita congelar la UI y previene el deadlock con navMutex.
+        std::thread([this]() {
+            {
+                auto m = std_msgs::msg::String();
+                m.data = "mic_test";
+                micOwnerPublisher_->publish(m);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+            // 1. Avisar al wake_word_node ANTES de liberar el mic
+            {
+                auto testMsg = std_msgs::msg::Bool();
+                testMsg.data = true;
+                micTestPublisher_->publish(testMsg);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+            // 2. Liberar face_idle
+            {
+                auto idleMsg = std_msgs::msg::Bool();
+                idleMsg.data = true;
+                idleStatePublisher->publish(idleMsg);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+            {
+                std::lock_guard<std::mutex> lock(overlayMutex);
+                faceOverlay      = FaceOverlay::MIC_COUNTDOWN;
+                micCountdownSecs = 5;
+                overlayMessage   = isEnglish ? "Speak for the next 5 seconds"
+                                            : "Habla por los siguientes 5 segundos";
+            }
+
+            stopMenuMusic();
+
+            {
+                // Ahora esto es seguro porque el hilo principal ya soltó el navMutex
+                std::lock_guard<std::mutex> nlock(navMutex);
+                navStack.clear();
+                hoveredItem = -1;
+                hoveredBack = hoveredStop = hoveredExit = false;
+            }
+
+            std::string micId = settingsMenu.selectedMicId;
+            std::string spkId = settingsMenu.selectedSpkId;
+            std::string envMic = micId.empty() ? "" : "PULSE_SOURCE='" + micId + "' ";
+            std::string recordCmd = envMic +
+                "arecord -D pulse -f S16_LE -r 44100 -c 1 -d 5 "
+                "/tmp/yaren_mic_test.wav > /tmp/yaren_arecord.log 2>&1";
+
+            std::atomic<int> recRet{-1};
+            std::thread recordingThread([&]() {
+                recRet = std::system(recordCmd.c_str());
+            });
+
+            for (int i = 5; i >= 1; --i) {
+                {
+                    std::lock_guard<std::mutex> lock(overlayMutex);
+                    faceOverlay      = FaceOverlay::MIC_COUNTDOWN;
+                    micCountdownSecs = i;
+                    overlayMessage   = (isEnglish
+                        ? "Speak for the next "
+                        : "Habla por los siguientes ")
+                        + std::to_string(i)
+                        + (isEnglish ? (i == 1 ? " second" : " seconds")
+                                    : (i == 1 ? " segundo" : " segundos"));
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+            recordingThread.join();
+
+            if (recRet.load() != 0) {
+                showErrorOverlay(
+                    isEnglish ? "Failed to record audio.\nCheck the microphone."
+                            : "Fallo al grabar audio.\nRevisa el microfono.", 4.0);
+                {
+                    std::lock_guard<std::mutex> lock(overlayMutex);
+                    faceOverlay = FaceOverlay::NONE;
+                }
+                auto testMsg = std_msgs::msg::Bool();
+                testMsg.data = false;
+                micTestPublisher_->publish(testMsg);
+                micTestRunning = false;
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(overlayMutex);
+                faceOverlay    = FaceOverlay::NONE;
+                overlayMessage = "";
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+
+            {
+                std::lock_guard<std::mutex> lock(overlayMutex);
+                faceOverlay    = FaceOverlay::MIC_PLAYING;
+                overlayMessage = isEnglish ? "Playing audio..." : "Reproduciendo audio...";
+            }
+
+            std::string envSpk = spkId.empty() ? "" : "PULSE_SINK='" + spkId + "' ";
+            std::string playCmd = envSpk +
+                "aplay -D pulse /tmp/yaren_mic_test.wav > /tmp/yaren_aplay.log 2>&1";
+            int playRet = std::system(playCmd.c_str());
+
+            if (playRet != 0) {
+                showErrorOverlay(
+                    isEnglish ? "Failed to play audio.\nCheck the speaker."
+                            : "Fallo al reproducir audio.\nRevisa el parlante.", 4.0);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(overlayMutex);
+                faceOverlay      = FaceOverlay::NONE;
+                overlayMessage   = "";
+                micCountdownSecs = 0;
+            }
+
+            {
+                std::lock_guard<std::mutex> nlock(navMutex);
+                navStack.clear();
+                NavLevel root;
+                root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
+                root.accentColor = {0, 200, 200};
+                root.items       = rootMenuItems;
+                navStack.push_back(root);
+                auto it = subMenuMap.find("sub_modo_prueba");
+                if (it != subMenuMap.end()) {
+                    NavLevel lvl = it->second;
+                    lvl.key = "sub_modo_prueba";
+                    navStack.push_back(lvl);
+                }
+                hoveredItem = -1;
+                hoveredBack = false;
+                hoveredStop = false;
+                hoveredExit = false;
+            }
+
+            {
+                auto m = std_msgs::msg::String();
+                m.data = "none";
+                micOwnerPublisher_->publish(m);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            startMenuMusic();
+            micTestRunning = false;
+        }).detach();
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    // Mostrar overlay ANTES de limpiar el navStack
-    {
-	std::lock_guard<std::mutex> lock(overlayMutex);
-	faceOverlay      = FaceOverlay::MIC_COUNTDOWN;
-	micCountdownSecs = 5;
-	overlayMessage   = isEnglish ? "Speak for the next 5 seconds"
-	                             : "Habla por los siguientes 5 segundos";
-    }
-
-    stopMenuMusic();
-
-    {
-	std::lock_guard<std::mutex> nlock(navMutex);
-	navStack.clear();
-	hoveredItem = -1;
-	hoveredBack = hoveredStop = hoveredExit = false;
-    }
-
-    // FIX: lanzar el hilo directamente sin el wrapper anónimo intermedio.
-    // Si hay un hilo anterior corriendo, lo dejamos terminar de forma
-    // independiente (micTestRunning garantiza que no se solapen dos pruebas).
-    if (testThread.joinable()) {
-	// No bloqueamos el hilo de UI — detach el anterior si aún corre
-	testThread.detach();
-    }
-
-    testThread = std::thread([this]() {
-	std::string micId = settingsMenu.selectedMicId;
-	std::string spkId = settingsMenu.selectedSpkId;
-	std::string envMic = micId.empty() ? "" : "PULSE_SOURCE='" + micId + "' ";
-	std::string recordCmd = envMic +
-	    "arecord -D pulse -f S16_LE -r 44100 -c 1 -d 5 "
-	    "/tmp/yaren_mic_test.wav > /tmp/yaren_arecord.log 2>&1";
-
-	RCLCPP_INFO(get_logger(), "[MIC TEST] Iniciando grabacion: %s",
-	            recordCmd.c_str());
-
-	// Grabación con countdown en paralelo
-	std::atomic<int> recRet{-1};
-	std::thread recordingThread([&]() {
-	    recRet = std::system(recordCmd.c_str());
-	});
-
-	for (int i = 5; i >= 1; --i) {
-	    {
-	        std::lock_guard<std::mutex> lock(overlayMutex);
-	        faceOverlay      = FaceOverlay::MIC_COUNTDOWN;
-	        micCountdownSecs = i;
-	        overlayMessage   = (isEnglish
-	            ? "Speak for the next "
-	            : "Habla por los siguientes ")
-	            + std::to_string(i)
-	            + (isEnglish ? (i == 1 ? " second" : " seconds")
-	                         : (i == 1 ? " segundo" : " segundos"));
-	    }
-	    std::this_thread::sleep_for(std::chrono::seconds(1));
-	}
-	recordingThread.join();
-
-	if (recRet.load() != 0) {
-	    RCLCPP_ERROR(get_logger(),
-	        "[MIC TEST] Fallo grabacion (exit %d)", recRet.load());
-	    showErrorOverlay(
-	        isEnglish ? "Failed to record audio.\nCheck the microphone."
-	                  : "Fallo al grabar audio.\nRevisa el microfono.", 4.0);
-	    {
-	        std::lock_guard<std::mutex> lock(overlayMutex);
-	        faceOverlay = FaceOverlay::NONE;
-	    }
-	    micTestRunning = false;
-	    return;
-	}
-
-	{
-	    std::lock_guard<std::mutex> lock(overlayMutex);
-	    faceOverlay    = FaceOverlay::NONE;
-	    overlayMessage = "";
-	}
-	std::this_thread::sleep_for(std::chrono::seconds(1));
-
-	{
-	    std::lock_guard<std::mutex> lock(overlayMutex);
-	    faceOverlay    = FaceOverlay::MIC_PLAYING;
-	    overlayMessage = isEnglish ? "Playing audio..." : "Reproduciendo audio...";
-	}
-
-	std::string envSpk = spkId.empty() ? "" : "PULSE_SINK='" + spkId + "' ";
-	std::string playCmd = envSpk +
-	    "aplay -D pulse /tmp/yaren_mic_test.wav "
-	    "> /tmp/yaren_aplay.log 2>&1";
-	int playRet = std::system(playCmd.c_str());
-
-	if (playRet != 0) {
-	    RCLCPP_ERROR(get_logger(),
-	        "[MIC TEST] Fallo reproduccion (exit %d)", playRet);
-	    showErrorOverlay(
-	        isEnglish ? "Failed to play audio.\nCheck the speaker."
-	                  : "Fallo al reproducir audio.\nRevisa el parlante.", 4.0);
-	}
-
-	// Limpiar overlay
-	{
-	    std::lock_guard<std::mutex> lock(overlayMutex);
-	    faceOverlay      = FaceOverlay::NONE;
-	    overlayMessage   = "";
-	    micCountdownSecs = 0;
-	}
-
-	// FIX: reconstruir navStack SIN tener audioMutex_ tomado dentro de navMutex.
-	// startMenuMusic() se llama DESPUÉS de soltar navMutex para evitar deadlock.
-	{
-	    std::lock_guard<std::mutex> nlock(navMutex);
-	    navStack.clear();
-	    NavLevel root;
-	    root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
-	    root.accentColor = {0, 200, 200};
-	    root.items       = rootMenuItems;
-	    navStack.push_back(root);
-	    auto it = subMenuMap.find("sub_modo_prueba");
-	    if (it != subMenuMap.end()) {
-	        NavLevel lvl = it->second;
-	        lvl.key = "sub_modo_prueba";
-	        navStack.push_back(lvl);
-	    }
-	    hoveredItem = -1;
-	    hoveredBack = false;
-	    hoveredStop = false;
-	    hoveredExit = false;
-	}
-	// FIX: startMenuMusic() FUERA del lock de navMutex
-	startMenuMusic();
-
-	micTestRunning = false;
-    });
-}
     void handleMouse(int event, int x, int y) {
         if (isIdleScreenActive) {
             if (event == cv::EVENT_LBUTTONDOWN) {
@@ -4375,15 +4383,16 @@ private:
     std::atomic<bool> first_listen_done { false };
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr faceScreenPublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   modePublisher;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr micOwnerPublisher_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     languagePublisher;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     idleStatePublisher;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     micTestPublisher_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  wakeEventSubscription;
 
     std::mutex idleStateMutex;
     bool lastIdleState { false };
 
     std::thread renderThread;
-    std::thread testThread;
     std::mutex  frameMutex, navMutex;
     cv::Mat     latestFrame;
 

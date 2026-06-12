@@ -95,29 +95,58 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
 
 void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedPtr msg)
 {
-    is_english_ = msg->data;
-    RCLCPP_INFO(this->get_logger(), "Game manager language updated to: %s", is_english_ ? "English" : "Español");
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    
+    bool new_is_english = msg->data;
+    
+    // Ignorar si el idioma no cambió realmente
+    if (game_initialized_ && new_is_english == is_english_) return;
+
+    is_english_ = new_is_english;
+    RCLCPP_INFO(this->get_logger(), "Game manager language updated to: %s",
+                is_english_ ? "English" : "Español");
 
     if (!game_initialized_)
     {
-        // Primera vez: arrancar el juego con el idioma correcto
         game_initialized_ = true;
+        game_start_time_  = std::chrono::steady_clock::now();
         RCLCPP_INFO(this->get_logger(), "Starting game in correct language...");
         select_challenge();
         start_detection();
         RCLCPP_INFO(this->get_logger(), "Game started");
     }
-    else if (score_ == 0 && lives_ == 3)
+    else
     {
-        // Cambio de idioma antes de que el jugador haya hecho algo
-        RCLCPP_INFO(this->get_logger(), "Language changed before game progress, re-selecting challenge...");
-        waiting_for_pose_ = false;
-        detection_ongoing_ = false;
-        select_challenge();
-        start_detection();
+        // Cambio real de idioma — solo resetear si no hay progreso
+        // Y solo si pasaron al menos 3 segundos desde el inicio
+        // (evita el doble-disparo del TRANSIENT_LOCAL)
+        auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - game_start_time_).count();
+            
+        if (elapsed < 3.0)
+        {
+            RCLCPP_INFO(this->get_logger(),
+                "Ignorando cambio de idioma transitorio (%.1fs desde inicio)", elapsed);
+            return;
+        }
+
+        if (score_ == 0 && lives_ == 3)
+        {
+            RCLCPP_INFO(this->get_logger(),
+                "Language changed before game progress, re-selecting challenge...");
+            waiting_for_pose_  = false;
+            detection_ongoing_ = false;
+            select_challenge();
+            start_detection();
+        }
+        else
+        {
+            // Juego en progreso: solo cambiar textos, no resetear
+            RCLCPP_INFO(this->get_logger(),
+                "Language changed mid-game, updating texts only.");
+        }
     }
 }
-
 void YarenGameManager::load_challenges_from_yaml()
 {
     try
@@ -293,9 +322,11 @@ void YarenGameManager::select_challenge()
         challenge_text = selected_challenge[text_key].as<std::string>();
     }
 
+    // Siempre publicamos el texto del desafio al TTS, en todos los idiomas y niveles.
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
     feedback_msg->data = challenge_text;
     feedback_publisher_->publish(std::move(feedback_msg));
+    
     RCLCPP_INFO(this->get_logger(), "Challenge text: %s", challenge_text.c_str());
 }
 
@@ -315,19 +346,21 @@ void YarenGameManager::start_detection()
 
 void YarenGameManager::check_challenge_timeout()
 {
+    std::lock_guard<std::mutex> lock(language_mutex_);
     if (!waiting_for_pose_ || challenge_timeout_ == 0.0) return;
     
     if (get_current_time() > challenge_timeout_)
     {
         RCLCPP_INFO(this->get_logger(), "Challenge timed out");
         int random_index = rand() % defeat_texts_es_.size();
-        std::string defeat_text = is_english_ ? defeat_texts_en_[random_index] : defeat_texts_es_[random_index];
+        std::string defeat_text = is_english_ ?
+            defeat_texts_en_[random_index] : defeat_texts_es_[random_index];
         handle_failed_challenge(defeat_text);
     }
 }
 
-void YarenGameManager::handle_pose_result(const yaren_interfaces::msg::PoseResult::SharedPtr msg)
-{        
+void YarenGameManager::handle_pose_result(const yaren_interfaces::msg::PoseResult::SharedPtr msg){        
+    std::lock_guard<std::mutex> lock(language_mutex_);
     if (!waiting_for_pose_ || audio_playing_) return;
             
     int received_challenge = msg->challenge;

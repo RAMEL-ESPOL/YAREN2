@@ -23,7 +23,7 @@ import time
 import tempfile
 import threading
 import random
-
+import numpy as np
 import pyaudio
 import rclpy
 from rclpy.node import Node
@@ -399,6 +399,7 @@ class YarenVoiceMenuNode(Node):
         self.tts_busy            = False
         self.first_greeting_done = False
         self._start_lock         = threading.Lock()
+        self._conversation_start_time = 0.0
 
         workspace_dir = os.getcwd()
         pkg_share     = get_package_share_directory("yaren_chat")
@@ -412,7 +413,11 @@ class YarenVoiceMenuNode(Node):
         self.voice_en   = None
         self.voice_lock = threading.Lock()
         self._load_tts()
-
+        qos_tl_mic = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.mic_owner_pub = self.create_publisher(String, "/yaren/mic_owner", qos_tl_mic)
+        self.mic_owner = "none"
+        self.create_subscription(String, "/yaren/mic_owner", self._cb_mic_owner, qos_tl_mic)
+        self.lipsync_pub = self.create_publisher(String, "/yaren/tts_text", 10)
         # ── STT: paths de ambos modelos Vosk ─────────────────────────────────
         vosk_path_es = os.path.join(
             workspace_dir, "src", "YAREN2", "yaren_chat", "models", "STT",
@@ -487,6 +492,8 @@ class YarenVoiceMenuNode(Node):
 
     def _song_name(self, idx: int) -> str:
         return SONG_NAMES[self._lang][idx]
+    def _cb_mic_owner(self, msg: String):
+        self.mic_owner = msg.data
 
     # ── Callbacks ROS2 ────────────────────────────────────────────────────────
     def _cb_language(self, msg: Bool):
@@ -509,9 +516,21 @@ class YarenVoiceMenuNode(Node):
     def _cb_idle(self, msg: Bool):
         self.is_face_idle = msg.data
         self.get_logger().info(f"Pantalla: {'LIBRE' if msg.data else 'EN MENÚ'}")
+        
         if not msg.data:
-            self._reset_conversation()
-            self.recognizer.Reset()
+            # Solo terminar conversación si el usuario abrió el menú manualmente
+            # (detectado porque is_active lleva más de 1 segundo activo)
+            if self.is_active:
+                elapsed = time.time() - self._conversation_start_time
+                if elapsed > 2.0:
+                    # El usuario tocó el menú — sí terminar
+                    self._reset_conversation()
+                    self.recognizer.Reset()
+                else:
+                    self.get_logger().info("face_idle=False transitorio durante saludo, ignorando.")
+            else:
+                self._reset_conversation()
+                self.recognizer.Reset()
 
     def _cb_wake(self, msg: Bool):
         self.get_logger().info(
@@ -521,7 +540,7 @@ class YarenVoiceMenuNode(Node):
             threading.Thread(target=self._start_conversation, daemon=True).start()
 
     def _audio_loop(self):
-        if not self.is_face_idle or not self.is_active or self.tts_busy:
+        if not self.is_face_idle or not self.is_active or self.tts_busy or self.mic_owner != "voice_menu":
             try:
                 available = self.stream.get_read_available()
                 if available > 0:
@@ -550,9 +569,13 @@ class YarenVoiceMenuNode(Node):
         with self._start_lock:
             if self.is_active:
                 return
+            owner_msg = String()
+            owner_msg.data = "voice_menu"
+            self.mic_owner_pub.publish(owner_msg)
             self.is_active    = True
             self.waiting_for  = "main"
             self.current_menu = self._menu_tree["items"]
+            self._conversation_start_time = time.time()  # ← agregar esto
 
         if not self.first_greeting_done:
             self._speak(self._menu_tree["speak_welcome"])
@@ -704,6 +727,9 @@ class YarenVoiceMenuNode(Node):
         self.waiting_for         = None
         self.current_menu        = None
         self.get_logger().info("Conversación terminada.")
+        owner_msg = String()
+        owner_msg.data = "none"
+        self.mic_owner_pub.publish(owner_msg)
 
     # ── TTS ──────────────────────────────────────────────────────────────────
     def _load_tts(self):
@@ -727,7 +753,53 @@ class YarenVoiceMenuNode(Node):
         except Exception as e:
             self.get_logger().warn(f"TTS EN no disponible, usando ES como fallback: {e}")
             self.voice_en = self.voice_es
+    
+    def _compute_lipsync(self, wav_path: str, sample_rate: int) -> str:
+        try:
+            with wave.open(wav_path, 'rb') as wf:
+                n_frames   = wf.getnframes()
+                n_channels = wf.getnchannels()
+                sampwidth  = wf.getsampwidth()
+                raw        = wf.readframes(n_frames)
 
+            if sampwidth == 2:
+                samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            elif sampwidth == 4:
+                samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+            else:
+                samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+
+            if n_channels > 1:
+                samples = samples.reshape(-1, n_channels).mean(axis=1)
+
+            FRAME_MS   = 80
+            frame_size = int(sample_rate * FRAME_MS / 1000)
+            if frame_size == 0:
+                return ""
+
+            indices = []
+            for i in range(0, len(samples), frame_size):
+                chunk = samples[i:i + frame_size]
+                if len(chunk) == 0:
+                    break
+                rms = float(np.sqrt(np.mean(chunk ** 2)))
+                if   rms < 0.01: idx = 0
+                elif rms < 0.03: idx = 1
+                elif rms < 0.06: idx = 2
+                elif rms < 0.10: idx = 3
+                elif rms < 0.15: idx = 4
+                elif rms < 0.20: idx = 5
+                elif rms < 0.27: idx = 6
+                elif rms < 0.35: idx = 7
+                else:             idx = 8
+                indices.append(str(idx))
+
+            return f"{FRAME_MS}:{','.join(indices)}" if indices else ""
+
+        except Exception as e:
+            self.get_logger().error(f"[LipSync] Error: {e}")
+            return ""
+    
     def _speak(self, text: str):
         if not text:
             return
@@ -749,6 +821,7 @@ class YarenVoiceMenuNode(Node):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
                 tmp_path = fp.name
 
+            # 1. Sintetizar WAV
             with self.voice_lock:
                 with wave.open(tmp_path, "wb") as wf:
                     wf.setnchannels(1)
@@ -756,6 +829,16 @@ class YarenVoiceMenuNode(Node):
                     wf.setframerate(voice.config.sample_rate)
                     voice.synthesize_wav(text, wf, syn_config=syn_cfg)
 
+            # 2. Calcular lip sync y publicar ANTES de reproducir
+            lipsync_str = self._compute_lipsync(tmp_path, voice.config.sample_rate)
+            if lipsync_str:
+                ls_msg      = String()
+                ls_msg.data = lipsync_str
+                self.lipsync_pub.publish(ls_msg)
+                self.get_logger().debug(f"[LipSync] Publicado: {lipsync_str[:60]}...")
+
+            # 3. Reproducir
+            from playsound import playsound
             playsound(tmp_path)
             os.unlink(tmp_path)
 
@@ -765,7 +848,6 @@ class YarenVoiceMenuNode(Node):
             audio_msg.data = False
             self.audio_pub.publish(audio_msg)
             self.tts_busy = False
-
     # ── Cleanup ───────────────────────────────────────────────────────────────
     def destroy_node(self):
         try:

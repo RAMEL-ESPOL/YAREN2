@@ -26,6 +26,8 @@ public:
     YarenGameManager();
 
 private:
+    std::mutex language_mutex_;
+    std::chrono::steady_clock::time_point game_start_time_;
     // ── Callbacks ──────────────────────────────────────────────
     void handle_audio_status(const std_msgs::msg::Bool::SharedPtr msg);
     void handle_pose_result(const yaren_interfaces::msg::PoseResult::SharedPtr msg);

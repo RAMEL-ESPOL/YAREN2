@@ -50,6 +50,12 @@ class STTLifecycleNode(LifecycleNode):
         self.stt_listening_publisher = self.create_publisher(Bool, '/stt_listening', 10)
         self.response_publisher      = self.create_publisher(PersonResponse, '/response_person', 10)
         self.stt_status_publisher    = self.create_publisher(Bool, '/stt_terminado', 10)
+        qos_mic = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.mic_owner_pub = self.create_publisher(String, '/yaren/mic_owner', qos_mic)
+        self.mic_owner = "none"
+        self.mic_owner_sub = self.create_subscription(String, '/yaren/mic_owner', self._cb_mic_owner, qos_mic)
+        self.mic_owner_event = threading.Event()
+        self.mic_owner_event.set()
 
         self.vosk_model       = None
         self.recognition_thread = None
@@ -67,7 +73,12 @@ class STTLifecycleNode(LifecycleNode):
     # ──────────────────────────────────────────────
     # Idioma
     # ──────────────────────────────────────────────
-
+    def _cb_mic_owner(self, msg):
+        self.mic_owner = msg.data
+        if msg.data == "chat_stt":
+            self.mic_owner_event.set()
+        else:
+            self.mic_owner_event.clear()
     def cb_cambio_idioma(self, msg):
         nuevo_idioma = msg.data
         if nuevo_idioma == self.idioma_actual:
@@ -143,6 +154,10 @@ class STTLifecycleNode(LifecycleNode):
         self.get_logger().info('Activating STT Node')
         self.tts_finished_event.set()  # asegurar que empieza libre
         self.is_recognizing = True
+        owner_msg = String()
+        owner_msg.data = "chat_stt"
+        self.mic_owner_pub.publish(owner_msg)
+        self.mic_owner_event.set()
         self.recognition_thread = threading.Thread(target=self._recognize_speech)
         self.recognition_thread.start()
         return TransitionCallbackReturn.SUCCESS
@@ -151,6 +166,9 @@ class STTLifecycleNode(LifecycleNode):
         self.get_logger().info('Deactivating STT Node')
         self.is_recognizing = False
         self.tts_finished_event.set()  # desbloquear si estaba esperando
+        owner_msg = String()
+        owner_msg.data = "none"
+        self.mic_owner_pub.publish(owner_msg)
         if self.recognition_thread:
             self.recognition_thread.join()
         return TransitionCallbackReturn.SUCCESS
@@ -174,6 +192,8 @@ class STTLifecycleNode(LifecycleNode):
             self.stt_listening_publisher.publish(listen_msg)
 
             while self.is_recognizing:
+                if not self.mic_owner_event.wait(timeout=0.1):
+                    continue
                 data = stream.read(4000, exception_on_overflow=False)
 
                 # Si el TTS aún no terminó, descartar audio acumulado

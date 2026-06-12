@@ -43,7 +43,7 @@ class CSICameraLifecycle(LifecycleNode):
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         # Se crea el publisher, pero aún no transmite nada
-        self.publisher_ = self.create_lifecycle_publisher(Image, '/csi_camera/image_raw', 10)
+        self.publisher_ = self.create_lifecycle_publisher(Image, 'csi_camera/image_raw', 10)
         self.get_logger().info('Cámara CONFIGURADA.')
         return TransitionCallbackReturn.SUCCESS
 
@@ -63,11 +63,16 @@ class CSICameraLifecycle(LifecycleNode):
             flip_method=flip_method,
         )
 
-        self.get_logger().info('Iniciando pipeline CSI GStreamer...')
-        self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        # Intento 1: Cámara USB (para pruebas en PC)
+        self.cap = cv2.VideoCapture(0)
+        
+        # Intento 2: Fallback a GStreamer CSI (para la Jetson)
+        if not self.cap.isOpened():
+            self.get_logger().info('Cámara USB no detectada. Intentando pipeline CSI GStreamer...')
+            self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
 
         if not self.cap or not self.cap.isOpened():
-            self.get_logger().error('Fallo total al abrir el hardware de la cámara CSI.')
+            self.get_logger().error('Fallo total al abrir el hardware de la cámara.')
             return TransitionCallbackReturn.FAILURE
 
         # Iniciar el timer que lee los frames
@@ -77,7 +82,6 @@ class CSICameraLifecycle(LifecycleNode):
         super().on_activate(state)
         self.get_logger().info('Cámara ACTIVADA. Capturando y publicando imágenes...')
         return TransitionCallbackReturn.SUCCESS
-        
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Desactivando cámara...')
