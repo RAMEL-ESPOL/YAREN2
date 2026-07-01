@@ -2280,15 +2280,24 @@ public:
                         stopRadio = radioShowing;
                         stopRouts = routinesShowing;
                     } else if (modeData.rfind("play_radio_song:", 0) == 0) {
-                        navStack.clear();
-                        hoveredItem = -1;
-                        hoveredBack = hoveredStop = hoveredExit = false;
-                        playSongIdx = std::stoi(modeData.substr(16));
-                        doRadioReset = true;
-                        activeMode = "radio_musica";
-                        activeStopCmd = "ros2 topic pub --once /yaren_mode std_msgs/msg/String \"{data: 'idle'}\"";
-                        clearNav = true;
-                    } else if (modeData == "radio_musica") {
+		    navStack.clear();
+		    hoveredItem = -1;
+		    hoveredBack = hoveredStop = hoveredExit = false;
+		    
+		    // --- INICIO BLOQUE PROTEGIDO ---
+		    try {
+			playSongIdx = std::stoi(modeData.substr(16));
+		    } catch (const std::exception& e) {
+			RCLCPP_WARN(this->get_logger(), "Comando de cancion invalido recibido: '%s'. Error: %s", modeData.c_str(), e.what());
+			playSongIdx = -1; // -1 significa que no reproduzca nada
+		    }
+		    // --- FIN BLOQUE PROTEGIDO ---
+
+		    doRadioReset = true;
+		    activeMode = "radio_musica";
+		    activeStopCmd = "ros2 topic pub --once /yaren_mode std_msgs/msg/String \"{data: 'idle'}\"";
+		    clearNav = true;
+		} else if (modeData == "radio_musica") {
                         navStack.clear();
                         hoveredItem = -1;
                         hoveredBack = hoveredStop = hoveredExit = false;
@@ -2359,33 +2368,44 @@ public:
                 std::string data = msg->data;
                 std::queue<VisemeFrame> q;
 
-                if (data.find('|') != std::string::npos) {
-                    // Formato nuevo: "dur:idx|dur:idx|..."
-                    std::istringstream ss(data);
-                    std::string token;
-                    while (std::getline(ss, token, '|')) {
-                        if (token.empty()) continue;
-                        size_t colon = token.find(':');
-                        if (colon == std::string::npos) continue;
-                        uint32_t dur = (uint32_t)std::stoul(token.substr(0, colon));
-                        int      idx = std::stoi(token.substr(colon + 1));
-                        q.push({std::max(0, std::min(8, idx)), dur});
+                try {
+                    if (data.find('|') != std::string::npos) {
+                        // Formato nuevo: "dur:idx|dur:idx|..."
+                        std::istringstream ss(data);
+                        std::string token;
+                        while (std::getline(ss, token, '|')) {
+                            if (token.empty()) continue;
+                            size_t colon = token.find(':');
+                            // Evitar error si no hay ':' o si no hay nada antes del ':'
+                            if (colon == std::string::npos || colon == 0) continue; 
+                            
+                            uint32_t dur = (uint32_t)std::stoul(token.substr(0, colon));
+                            int      idx = std::stoi(token.substr(colon + 1));
+                            q.push({std::max(0, std::min(8, idx)), dur});
+                        }
+                    } else {
+                        // Formato legacy: "dur_ms:idx,idx,..."
+                        static constexpr uint32_t VISEME_MS[9] = {80,55,90,100,80,90,110,120,75};
+                        size_t colon = data.find(':');
+                        // Evitar error si no hay ':' o si no hay nada antes del ':'
+                        if (colon == std::string::npos || colon == 0) return; 
+                        
+                        uint32_t base = (uint32_t)std::stoul(data.substr(0, colon));
+                        std::istringstream ss(data.substr(colon + 1));
+                        std::string token;
+                        while (std::getline(ss, token, ',')) {
+                            if (token.empty()) continue;
+                            int idx = std::max(0, std::min(8, std::stoi(token)));
+                            uint32_t dur = std::max(40u, std::min(200u,
+                                (uint32_t)(base * VISEME_MS[idx] / 80u)));
+                            q.push({idx, dur});
+                        }
                     }
-                } else {
-                    // Formato legacy: "dur_ms:idx,idx,..."
-                    static constexpr uint32_t VISEME_MS[9] = {80,55,90,100,80,90,110,120,75};
-                    size_t colon = data.find(':');
-                    if (colon == std::string::npos) return;
-                    uint32_t base = (uint32_t)std::stoul(data.substr(0, colon));
-                    std::istringstream ss(data.substr(colon + 1));
-                    std::string token;
-                    while (std::getline(ss, token, ',')) {
-                        if (token.empty()) continue;
-                        int idx = std::max(0, std::min(8, std::stoi(token)));
-                        uint32_t dur = std::max(40u, std::min(200u,
-                            (uint32_t)(base * VISEME_MS[idx] / 80u)));
-                        q.push({idx, dur});
-                    }
+                } 
+                catch (const std::exception& e) {
+                    // Si el TTS manda basura, lo atrapamos aquí en lugar de crashear el nodo entero
+                    RCLCPP_WARN(this->get_logger(), "Mensaje de visema ignorado por formato invalido '%s': %s", data.c_str(), e.what());
+                    return; 
                 }
 
                 std::lock_guard<std::mutex> lk(visemeMutex_);
