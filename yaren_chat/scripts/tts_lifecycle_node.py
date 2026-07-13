@@ -223,10 +223,13 @@ class TTSLifecycleNode(LifecycleNode):
         self.get_logger().info("🔊 Audio worker terminó y liberó el bloqueo")
 
     def _play_audio(self, text_to_speak):
-        # Publicar texto para lip sync por amplitud
-        txt_msg = String()
-        txt_msg.data = text_to_speak
-        self.tts_text_pub.publish(txt_msg)
+        # NOTA: el lip sync real se publica en _publish_visemes_from_wav(),
+        # a partir del audio ya sintetizado (formato "dur_ms:idx,idx,...").
+        # Antes aquí también se publicaba el texto crudo al mismo tópico
+        # /yaren/tts_text, lo cual rompía al nodo C++ (face_screen) cuando
+        # el texto contenía un ':' (p.ej. "CS: Source", "Nota: ..."), porque
+        # ese nodo intenta parsear TODO lo que llega a ese tópico como
+        # "numero:numero,numero,...". Se elimina ese publish redundante.
 
         audio_msg = Bool()
         audio_msg.data = True
