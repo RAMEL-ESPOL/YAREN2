@@ -90,6 +90,13 @@ ament_export_dependencies(
   std_srvs
   lifecycle_msgs
 )
+# -------------------------------------------------------------------
+# 9. INSTALAR SCRIPTS PYTHON
+# -------------------------------------------------------------------
+install(PROGRAMS
+  scripts/ros2_ws_bridge.py
+DESTINATION lib/${PROJECT_NAME}
+)
 ament_export_include_directories(include)
 
 ament_package()

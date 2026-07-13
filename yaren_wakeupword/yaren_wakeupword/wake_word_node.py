@@ -75,7 +75,10 @@ class YarenWakeWordNode(Node):
         self.mic_owner = "none"
         self.create_subscription(String, '/yaren/mic_owner', self._cb_mic_owner, qos_tl)
         self.idle_sub = self.create_subscription(
-            Bool, '/yaren/face_idle', self.idle_callback, qos_tl)            
+            Bool, '/yaren/face_idle', self.idle_callback, qos_tl)       
+        self._wakeword_enabled  = True   # default ON si el brain no dice nada (fail-safe)
+        self._last_brain_signal = 0.0
+        self.create_subscription(Bool, '/yaren/wakeword_enabled', self._cb_wakeword_enabled, qos_tl)     
         self.wake_pub = self.create_publisher(Bool, '/yaren/wake_event', 10)
         self.lang_pub = self.create_publisher(Bool, '/yaren/is_english',  qos_tl)
 
@@ -100,7 +103,19 @@ class YarenWakeWordNode(Node):
 
         self.create_timer(0.1, self.audio_loop_callback)
         self.get_logger().info("🤖 wake_word_node listo. Esperando wake word...")
+    def _cb_wakeword_enabled(self, msg: Bool):
+        self._wakeword_enabled  = msg.data
+        self._last_brain_signal = time.time()
+        self.get_logger().info(f"[WAKE] {'activado' if msg.data else 'pausado por el brain'}")
 
+    def _is_enabled(self) -> bool:
+        # Si no hay señal del brain en 10s, asumimos que murió y nos reactivamos solos
+        if self._last_brain_signal > 0.0 and time.time() - self._last_brain_signal > 10.0:
+            if not self._wakeword_enabled:
+                self.get_logger().warn("[WAKE] Sin señal del brain hace 10s, reactivando por seguridad.")
+            self._wakeword_enabled  = True
+            self._last_brain_signal = time.time()  # evita loguear esto cada 0.1s
+        return self._wakeword_enabled
     def _open_stream(self):
         try:
             if self.stream is not None:
@@ -121,7 +136,7 @@ class YarenWakeWordNode(Node):
             self.get_logger().info(f"🔒 Mic cedido a: {self.mic_owner}. Cerrando stream.")
             self._close_stream()
         else:
-            if self.is_face_idle:
+            if self.is_face_idle and self._is_enabled():
                 self._open_stream()
 
     def _close_stream(self):
@@ -141,22 +156,16 @@ class YarenWakeWordNode(Node):
         if self.is_face_idle:
             self.get_logger().info("✅ Pantalla libre. Escuchando wake word...")
             self.recognizer = KaldiRecognizer(self.model, 16000)
-            self._open_stream()
-        else:
-            self.get_logger().info("🛑 Menú activo. Cerrando stream.")
-            self._close_stream()
-
-    def idle_callback(self, msg: Bool):
-        self.is_face_idle = msg.data
-        if self.is_face_idle:
-            self.get_logger().info("✅ Pantalla libre. Escuchando wake word...")
-            self.recognizer = KaldiRecognizer(self.model, 16000)
-            self._open_stream()
+            if self._is_enabled():
+                self._open_stream()
         else:
             self.get_logger().info("🛑 Menú activo. Cerrando stream.")
             self._close_stream()
 
     def audio_loop_callback(self):
+        if not self._is_enabled():
+            self._close_stream()
+            return
         if not self.is_face_idle or self.mic_owner not in ("none", "wake_word"):           
             return
 
@@ -197,7 +206,7 @@ class YarenWakeWordNode(Node):
                     self.wake_pub.publish(wake_msg)
 
                     self.is_face_idle = False
-                    self._mic_test_active = Falses
+                    self._mic_test_active = False
 
             else:
                 partial      = json.loads(self.recognizer.PartialResult())

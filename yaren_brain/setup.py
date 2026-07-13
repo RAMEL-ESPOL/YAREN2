@@ -15,8 +15,8 @@ setup(
     zip_safe=True,
     maintainer='roberto',
     maintainer_email='raestrad@espol.edu.ec',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='Yaren Brain Node - Personalidad autonoma con gestos',
+    license='Apache License 2.0',
     extras_require={
         'test': [
             'pytest',
@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'yaren_brain_node = yaren_brain.yaren_brain_node:main',
         ],
     },
 )
