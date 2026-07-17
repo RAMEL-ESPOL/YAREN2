@@ -79,221 +79,113 @@ bool YarenPoseDetector::is_near(const std::pair<float, float>& point1, const std
 
 bool YarenPoseDetector::detect_pose_actions(const std::vector<std::pair<float, float>>& keypoints)
 {
-    if (current_challenge_ == 0) {
-        return false;
-    }
-    
-    int thershold_bt_shoulders = (keypoints[LEFT_SHOULDER].first - keypoints[RIGHT_SHOULDER].first) / 3;
-    int thershold_vertical = (keypoints[NOSE].second - keypoints[LEFT_EYE].second) * 2;
-    int thershold_touch_eye = (keypoints[LEFT_EYE].first - keypoints[RIGHT_EYE].first) / 1;
-    int thershold_touch_elbow = (keypoints[NOSE].second - keypoints[LEFT_EYE].second) * 4;
-    
+    if (current_challenge_ == 0) return false;
+    if (keypoints.size() < 13) return false;
+
+    // Umbral dinámico basado en el ancho entre hombros
+    float shoulder_width = std::abs(keypoints[LEFT_SHOULDER].first - keypoints[RIGHT_SHOULDER].first);
+    float vertical_threshold   = shoulder_width * 0.5f;   // para "arriba"
+    float forward_h_threshold  = shoulder_width * 0.6f;   // separación horizontal brazo al frente
+    float forward_v_threshold  = shoulder_width * 0.4f;   // diferencia vertical brazo al frente
+    float side_h_threshold     = shoulder_width * 0.7f;   // separación horizontal brazo a un lado
+
     switch (current_challenge_)
     {
+        // --- BRAZO DERECHO ARRIBA ---
         case 1:
-            if (is_above(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER]) &&
-                is_above(keypoints[RIGHT_ELBOW], keypoints[RIGHT_SHOULDER]) &&
-                keypoints[RIGHT_WRIST].second != 0 && keypoints[RIGHT_ELBOW].second != 0)
-            {
-                return true;
-            }
-            break;
-            
+            return keypoints[RIGHT_WRIST].second != 0 &&
+                   keypoints[RIGHT_ELBOW].second != 0 &&
+                   is_above(keypoints[RIGHT_WRIST],  keypoints[RIGHT_SHOULDER]) &&
+                   is_above(keypoints[RIGHT_ELBOW],  keypoints[RIGHT_SHOULDER]);
+
+        // --- BRAZO IZQUIERDO ARRIBA ---
         case 2:
-            if (is_above(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER]) &&
-                is_above(keypoints[LEFT_ELBOW], keypoints[LEFT_SHOULDER]) &&
-                keypoints[LEFT_WRIST].second != 0 && keypoints[LEFT_ELBOW].second != 0)
-            {
-                return true;
-            }
-            break;
-            
+            return keypoints[LEFT_WRIST].second != 0 &&
+                   keypoints[LEFT_ELBOW].second != 0 &&
+                   is_above(keypoints[LEFT_WRIST],  keypoints[LEFT_SHOULDER]) &&
+                   is_above(keypoints[LEFT_ELBOW],  keypoints[LEFT_SHOULDER]);
+
+        // --- AMBOS BRAZOS ARRIBA ---
         case 3:
-        {
-            bool arm_left_up = (is_above(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER]) &&
-                               is_above(keypoints[LEFT_ELBOW], keypoints[LEFT_SHOULDER]) &&
-                               keypoints[LEFT_WRIST].second != 0 && keypoints[LEFT_ELBOW].second != 0);
-                               
-            bool arm_right_up = (is_above(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER]) &&
-                                is_above(keypoints[RIGHT_ELBOW], keypoints[RIGHT_SHOULDER]) &&
-                                keypoints[RIGHT_WRIST].second != 0 && keypoints[RIGHT_ELBOW].second != 0);
-                                
-            if (arm_left_up && arm_right_up)
-            {
-                return true;
-            }
-            break;
-        }
-            
+            return keypoints[RIGHT_WRIST].second != 0 && keypoints[RIGHT_ELBOW].second != 0 &&
+                   keypoints[LEFT_WRIST].second  != 0 && keypoints[LEFT_ELBOW].second  != 0 &&
+                   is_above(keypoints[RIGHT_WRIST],  keypoints[RIGHT_SHOULDER]) &&
+                   is_above(keypoints[RIGHT_ELBOW],  keypoints[RIGHT_SHOULDER]) &&
+                   is_above(keypoints[LEFT_WRIST],   keypoints[LEFT_SHOULDER])  &&
+                   is_above(keypoints[LEFT_ELBOW],   keypoints[LEFT_SHOULDER]);
+
+        // --- BRAZO DERECHO HACIA DELANTE ---
+        // Muñeca y codo al mismo nivel vertical que el hombro (±threshold),
+        // y la muñeca está más al frente (en 2D: cerca horizontalmente del hombro)
         case 4:
-            if (is_at_same_height(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER], 100.0f) &&
-                is_in_horizontal_range(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER], 100.0f))
-            {
-                return true;
-            }
-            break;
-            
+            return keypoints[RIGHT_WRIST].second != 0 &&
+                   std::abs(keypoints[RIGHT_WRIST].second  - keypoints[RIGHT_SHOULDER].second) < forward_v_threshold &&
+                   std::abs(keypoints[RIGHT_ELBOW].second  - keypoints[RIGHT_SHOULDER].second) < forward_v_threshold &&
+                   // la muñeca NO está muy lejos lateralmente (está al frente, no al lado)
+                   std::abs(keypoints[RIGHT_WRIST].first   - keypoints[RIGHT_SHOULDER].first)  < forward_h_threshold;
+
+        // --- BRAZO IZQUIERDO HACIA DELANTE ---
         case 5:
-            if (is_at_same_height(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER], 100.0f) &&
-                is_in_horizontal_range(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER], 100.0f))
-            {
-                return true;
-            }
-            break;
-            
+            return keypoints[LEFT_WRIST].second != 0 &&
+                   std::abs(keypoints[LEFT_WRIST].second  - keypoints[LEFT_SHOULDER].second) < forward_v_threshold &&
+                   std::abs(keypoints[LEFT_ELBOW].second  - keypoints[LEFT_SHOULDER].second) < forward_v_threshold &&
+                   std::abs(keypoints[LEFT_WRIST].first   - keypoints[LEFT_SHOULDER].first)  < forward_h_threshold;
+
+        // --- AMBOS BRAZOS HACIA DELANTE ---
         case 6:
         {
-            bool arm_left_forward = (is_at_same_height(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER], 100.0f) &&
-                                    is_in_horizontal_range(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER], 100.0f));
-                                    
-            bool arm_right_forward = (is_at_same_height(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER], 100.0f) &&
-                                     is_in_horizontal_range(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER], 100.0f));
-                                     
-            if (arm_left_forward && arm_right_forward)
-            {
-                return true;
-            }
+            bool right_fwd = keypoints[RIGHT_WRIST].second != 0 &&
+                             std::abs(keypoints[RIGHT_WRIST].second - keypoints[RIGHT_SHOULDER].second) < forward_v_threshold &&
+                             std::abs(keypoints[RIGHT_WRIST].first  - keypoints[RIGHT_SHOULDER].first)  < forward_h_threshold;
+            bool left_fwd  = keypoints[LEFT_WRIST].second != 0 &&
+                             std::abs(keypoints[LEFT_WRIST].second  - keypoints[LEFT_SHOULDER].second)  < forward_v_threshold &&
+                             std::abs(keypoints[LEFT_WRIST].first   - keypoints[LEFT_SHOULDER].first)   < forward_h_threshold;
+            return right_fwd && left_fwd;
         }
-        break;
-        
+
+        // --- BRAZO DERECHO A UN LADO ---
+        // Muñeca al mismo nivel vertical que el hombro Y separada horizontalmente
         case 7:
-            if (is_above(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER]) &&
-                is_above(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER]) &&
-                is_left_of(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER], thershold_bt_shoulders) &&
-                is_right_of(keypoints[LEFT_WRIST], keypoints[LEFT_SHOULDER], thershold_bt_shoulders))
-            {
-                return true;
-            }
-            break;
+            return keypoints[RIGHT_WRIST].second != 0 &&
+                   std::abs(keypoints[RIGHT_WRIST].second - keypoints[RIGHT_SHOULDER].second) < forward_v_threshold &&
+                   // la muñeca está claramente a la derecha del hombro derecho
+                   (keypoints[RIGHT_SHOULDER].first - keypoints[RIGHT_WRIST].first) > side_h_threshold;
 
+        // --- BRAZO IZQUIERDO A UN LADO ---
         case 8:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[NOSE], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 9:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[NOSE], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 10:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[LEFT_EYE], thershold_touch_eye))
-            {
-                return true;
-            }
-            break;
-            
-        case 11:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[LEFT_EYE], thershold_touch_eye))
-            {
-                return true;
-            }
-            break;
+            return keypoints[LEFT_WRIST].second != 0 &&
+                   std::abs(keypoints[LEFT_WRIST].second - keypoints[LEFT_SHOULDER].second) < forward_v_threshold &&
+                   // la muñeca está claramente a la izquierda del hombro izquierdo
+                   (keypoints[LEFT_WRIST].first - keypoints[LEFT_SHOULDER].first) > side_h_threshold;
 
-        case 12:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[RIGHT_EYE], thershold_touch_eye))
-            {
-                return true;
-            }
-            break;
-            
-        case 13:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[RIGHT_EYE], thershold_touch_eye))
-            {
-                return true;
-            }
-            break;
-            
-        case 14:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[RIGHT_EAR], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 15:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[RIGHT_EAR], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 16:
+        // --- BRAZOS EXTENDIDOS A LOS LADOS ---
+        case 9:
         {
-            bool wrist_right = is_near(keypoints[RIGHT_WRIST], keypoints[RIGHT_EAR], thershold_vertical);
-            bool wrist_left = is_near(keypoints[LEFT_WRIST], keypoints[RIGHT_EAR], thershold_vertical);
-            
-            if (wrist_right && wrist_left)
-            {
-                return true;
-            }
+            bool right_side = keypoints[RIGHT_WRIST].second != 0 &&
+                              std::abs(keypoints[RIGHT_WRIST].second - keypoints[RIGHT_SHOULDER].second) < forward_v_threshold &&
+                              (keypoints[RIGHT_SHOULDER].first - keypoints[RIGHT_WRIST].first) > side_h_threshold;
+            bool left_side  = keypoints[LEFT_WRIST].second != 0 &&
+                              std::abs(keypoints[LEFT_WRIST].second - keypoints[LEFT_SHOULDER].second) < forward_v_threshold &&
+                              (keypoints[LEFT_WRIST].first - keypoints[LEFT_SHOULDER].first) > side_h_threshold;
+            return right_side && left_side;
         }
-        break;
-        
-        case 17:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[LEFT_EAR], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 18:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[LEFT_EAR], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 19:
+
+        // --- BRAZO DERECHO ARRIBA + BRAZO IZQUIERDO A UN LADO ---
+        case 10:
         {
-            bool wrist_left = is_near(keypoints[LEFT_WRIST], keypoints[LEFT_EAR], thershold_vertical);
-            bool wrist_right = is_near(keypoints[RIGHT_WRIST], keypoints[LEFT_EAR], thershold_vertical);
-            
-            if (wrist_left && wrist_right)
-            {
-                return true;
-            }
+            bool right_up  = keypoints[RIGHT_WRIST].second != 0 &&
+                             keypoints[RIGHT_ELBOW].second != 0 &&
+                             is_above(keypoints[RIGHT_WRIST], keypoints[RIGHT_SHOULDER]) &&
+                             is_above(keypoints[RIGHT_ELBOW], keypoints[RIGHT_SHOULDER]);
+            bool left_side = keypoints[LEFT_WRIST].second != 0 &&
+                             std::abs(keypoints[LEFT_WRIST].second - keypoints[LEFT_SHOULDER].second) < forward_v_threshold &&
+                             (keypoints[LEFT_WRIST].first - keypoints[LEFT_SHOULDER].first) > side_h_threshold;
+            return right_up && left_side;
         }
-        break;
-            
-        case 20:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[LEFT_SHOULDER], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 21:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[RIGHT_SHOULDER], thershold_vertical))
-            {
-                return true;
-            }
-            break;
-            
-        case 22:
-            if (is_near(keypoints[RIGHT_WRIST], keypoints[LEFT_ELBOW], thershold_touch_elbow) &&
-                keypoints[LEFT_ELBOW].second != 0 && keypoints[RIGHT_WRIST].second != 0)
-            {
-                return true;
-            }
-            break;
-            
-        case 23:
-            if (is_near(keypoints[LEFT_WRIST], keypoints[RIGHT_ELBOW], thershold_touch_elbow) &&
-                keypoints[RIGHT_ELBOW].second != 0 && keypoints[LEFT_WRIST].second != 0)
-            {
-                return true;
-            }
-            break;
-            
+
         default:
             break;
     }
-    
     return false;
 }
 

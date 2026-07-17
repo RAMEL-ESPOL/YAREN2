@@ -1,0 +1,120 @@
+challenges:
+  - id: 1
+    pose: "Brazo derecho arriba"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.5]
+    text:
+      - "Yaren quiere ver tu brazo derecho apuntando a las nubes vamos tu puedes alza tu brazo derecho"
+      - "Puedes levantar el brazo derecho como si alcanzaras una estrella"
+      - "Brazo derecho arriba demuestrale a Yaren que eres rápido como un rayo"
+    text_en:
+      - "Yaren wants to see your right arm pointing to the clouds, come on you can do it, raise your right arm"
+      - "Can you raise your right arm as if you were reaching for a star"
+      - "Right arm up, show Yaren that you are fast as lightning"
+
+  - id: 2
+    pose: "Brazo izquierdo arriba"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, -3.0, 0.0, 3.0, 0.0]
+    text:
+      - "Ahora es el turno del brazo izquierdo haz que se eleve como un cohete"
+      - "Levanta el brazo izquierdo y saluda como un astronauta"
+      - "Puedes hacerlo estira el brazo izquierdo hacia el cielo como si fueras un superhéroe"
+    text_en:
+      - "Now it's the left arm's turn, make it rise like a rocket"
+      - "Raise your left arm and wave like an astronaut"
+      - "You can do it, stretch your left arm towards the sky like a superhero"
+
+  - id: 3
+    pose: "Ambos brazos arriba"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, -3.0, 0.0, 3.0, 0.0]
+    text:
+      - "Ahora Yaren dice que alces ambos brazos vamos tú puedes"
+      - "Vamos a ver si estás atento Yaren dice que levantes tus brazos"
+      - "Alza tus brazos como alas de águila vamos tu puedes alza tus brazos"
+    text_en:
+      - "Now Yaren says to raise both arms, come on you can do it"
+      - "Let's see if you are paying attention, Yaren says raise your arms"
+      - "Raise your arms like eagle wings, come on you can raise your arms"
+
+  - id: 4
+    pose: "Brazo derecho hacia delante"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 1.7, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.5]
+    text:
+      - "Estira tu brazo derecho como si fueses un ninja"
+      - "Puedes empujar el aire con tu brazo derecho como si empujaras una nube"
+      - "Imagina que alcanzas un tesoro lejano estira ese brazo derecho y atrápalo"
+    text_en:
+      - "Stretch your right arm out as if you were a ninja"
+      - "Can you push the air with your right arm as if you were pushing a cloud"
+      - "Imagine reaching for a distant treasure, stretch that right arm and catch it"
+
+  - id: 5
+    pose: "Brazo izquierdo hacia delante"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, -1.7, 0.0, 3.0, 0.0]
+    text:
+      - "Coloca tu brazo izquierdo hacia adelante como si quisieras empujar algo invisible"
+      - "El brazo izquierdo quiere ser el protagonista extiéndelo con estilo"
+      - "Imagina que estás empujando una puerta gigante con tu brazo izquierdo"
+    text_en:
+      - "Put your left arm forward as if you wanted to push something invisible"
+      - "The left arm wants to be the star, extend it with style"
+      - "Imagine you are pushing a giant door with your left arm"
+
+  - id: 6
+    pose: "Ambos brazos hacia delante"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 1.7, 0.0, -3.0, 0.0, -1.7, 0.0, 3.0, 0.0]
+    text:
+      - "Alerta de intrusos párate firme con los brazos tiesos hacia adelante"
+      - "Estira ambos brazos como si abrazaras un globo gigante"
+      - "A por el récord mantén los brazos rectos hacia el frente como un tren veloz"
+    text_en:
+      - "Intruder alert, stand firm with stiff arms forward"
+      - "Stretch both arms as if hugging a giant balloon"
+      - "Go for the record, keep your arms straight forward like a speeding train"
+
+  - id: 7
+    pose: "Brazo derecho a un lado"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 1.7, 1.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.5]
+    text:
+      - "Extiende solo tu brazo derecho hacia un lado como si señalaras una puerta"
+      - "Estira tu brazo derecho a un costado como si fueras la mitad de un avión"
+      - "Brazo derecho a la derecha mantente firme como una estatua"
+    text_en:
+      - "Extend only your right arm to the side as if pointing to a door"
+      - "Stretch your right arm to the side like you are half an airplane"
+      - "Right arm to the right stay firm like a statue"
+
+  - id: 8
+    pose: "Brazo izquierdo a un lado"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, -1.7, 1.0, 3.0, 0.0]
+    text:
+      - "Extiende solo tu brazo izquierdo hacia un lado como si señalaras un camino"
+      - "Estira tu brazo izquierdo a un costado como si fueras la otra mitad del avión"
+      - "Brazo izquierdo a la izquierda mantente firme y no te muevas"
+    text_en:
+      - "Extend only your left arm to the side as if pointing out a path"
+      - "Stretch your left arm to the side like you are the other half of the airplane"
+      - "Left arm to the left stay firm and don't move"
+
+  - id: 9
+    pose: "Brazos extendidos a los lados"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 1.7, 1.0, -3.0, 0.0, -1.7, 1.0, 3.0, 0.0]
+    text:
+      - "Extiende ambos brazos a los lados como si fueras las alas de un avión"
+      - "Vamos a volar pon tus brazos a los lados como un pájaro gigante"
+      - "Equilibrio perfecto extiende tus brazos a la izquierda y derecha como una balanza"
+    text_en:
+      - "Extend both arms to the sides as if you were the wings of an airplane"
+      - "Let's fly, put your arms to the sides like a giant bird"
+      - "Perfect balance, extend your arms to the left and right like a scale"
+
+  - id: 10
+    pose: "Brazo derecho arriba y brazo izquierdo a un lado"
+    robot_pose: [0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, -1.7, 1.0, 3.0, 0.0]
+    text:
+      - "Brazo derecho arriba y el izquierdo a un lado como un reloj marcando las tres en punto"
+      - "Forma una letra ele gigante brazo derecho al cielo y el izquierdo al horizonte"
+      - "Coordina tus movimientos derecho arriba izquierdo al costado sin equivocarte"
+    text_en:
+      - "Right arm up and left to the side like a clock striking three o'clock"
+      - "Form a giant letter L, right arm to the sky and left to the horizon"
+      - "Coordinate your movements, right up left to the side without making a mistake"

@@ -284,20 +284,28 @@ public:
 
     void handleMouse(int event, int x, int y) {
         cv::Point pt{x, y};
+        
         if (event == cv::EVENT_MOUSEMOVE) {
             if (!isDraggingVolume) {
                 hoveredRect = findHovered(x, y);
             } else {
+                // AQUÍ ES DONDE VA EL BLOQUE QUE ME PASASTE
                 int relX = std::max(0, std::min(sliderTrackRect.width, x - sliderTrackRect.x));
                 volumeLevel = (relX * 128) / sliderTrackRect.width;
                 isMuted = (volumeLevel == 0);
-                // FIX-E: proteger Mix_VolumeMusic con mutex
+
+                // Actualizar volumen interno de SDL
                 if (audioMutex_) {
                     std::lock_guard<std::mutex> lk(*audioMutex_);
                     Mix_VolumeMusic(volumeLevel);
                 } else {
                     Mix_VolumeMusic(volumeLevel);
                 }
+
+                // NUEVO: Actualizar volumen maestro del sistema inmediatamente
+                int volPorcentaje = (volumeLevel * 100) / 128;
+                std::string volCmd = "pactl set-sink-volume @DEFAULT_SINK@ " + std::to_string(volPorcentaje) + "% &";
+                std::system(volCmd.c_str());
             }
             return;
         }
@@ -681,26 +689,42 @@ private:
     }
     void saveAudioConfig() {
         bool ok = true;
+        
+        // 1. Aplicar volumen maestro del sistema (0-100%) basado en volumeLevel (0-128)
+        int volPorcentaje = (volumeLevel * 100) / 128;
+        std::string volCmd = "pactl set-sink-volume @DEFAULT_SINK@ " + std::to_string(volPorcentaje) + "% 2>/dev/null";
+        std::system(volCmd.c_str());
+
+        // 2. Configurar el sink (salida) predeterminado
         if (!selectedSpkId.empty()) {
             std::string cmd = "pactl set-default-sink '" + selectedSpkId + "' 2>/dev/null";
             if (std::system(cmd.c_str()) != 0) ok = false;
+            
+            // Mover las aplicaciones existentes al nuevo sink
             std::system(
                 ("for i in $(pactl list sink-inputs short 2>/dev/null | awk '{print $1}'); "
                  "do pactl move-sink-input $i '" + selectedSpkId + "' 2>/dev/null; done").c_str());
         }
+
+        // 3. Configurar el source (micrófono) predeterminado
         if (!selectedMicId.empty()) {
             std::string cmd = "pactl set-default-source '" + selectedMicId + "' 2>/dev/null";
             if (std::system(cmd.c_str()) != 0) ok = false;
+            
+            // Mover las aplicaciones existentes al nuevo source
             std::system(
                 ("for i in $(pactl list source-outputs short 2>/dev/null | awk '{print $1}'); "
                  "do pactl move-source-output $i '" + selectedMicId + "' 2>/dev/null; done").c_str());
         }
+
         auto writeFile = [](const char* path, const std::string& val) {
             FILE* f = fopen(path, "w");
             if (f) { fprintf(f, "%s\n", val.c_str()); fclose(f); }
         };
+        
         writeFile("/tmp/yaren_mic_device.txt", selectedMicId);
         writeFile("/tmp/yaren_spk_device.txt", selectedSpkId);
+        
         if (ok) setFeedback(eng() ? "Audio applied correctly" : "Audio aplicado correctamente");
         else    setFeedback(eng() ? "Warning: a device failed"  : "Advertencia: algun dispositivo fallo");
     }
@@ -915,9 +939,18 @@ public:
                 currentPage++; hovSong = -1; return;
             }
             if (hovBack) {
-                killAudio(); currentPage = 0;
-                if (onBack) onBack(); return;
+            // Si estamos en una página posterior, simplemente regresamos a la página 0
+            if (currentPage > 0) {
+                currentPage = 0; 
+                hovSong = -1;
+            } else {
+                // Si estamos en la página 0, entonces sí salimos de la Radio
+                killAudio(); 
+                currentPage = 0;
+                if (onBack) onBack();
             }
+            return;
+        }
             for (int i = 0; i < (int)cardRects.size(); ++i) {
                 if (cardRects[i].contains({x,y})) {
                     int actualIndex = currentPage * ITEMS_PER_PAGE + i;
@@ -1683,7 +1716,7 @@ private:
 };
 
 // =============================================================================
-//  WifiSetupScreen — versión con soporte de redes nuevas y teclado en pantalla
+//  WifiSetupScreen — versión asíncrona con validación de Internet
 // =============================================================================
 struct WifiNetwork {
     std::string ssid;
@@ -1699,95 +1732,98 @@ public:
     bool eng() const { return isEnglish && *isEnglish; }
 
     void refresh() {
-        networks_.clear();
-
-        // Redes guardadas via connection show (más fiable)
-        FILE* p = popen("nmcli -t -f NAME,TYPE connection show 2>/dev/null", "r");
-        if (p) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), p)) {
-                std::string line(buf);
-                while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
-                if (line.find(":802-11-wireless") != std::string::npos) {
-                    std::string ssid = line.substr(0, line.find(':'));
-                    if (!ssid.empty()) networks_.push_back({ssid, true, true});
-                }
-            }
-            pclose(p);
-        }
-
-        // Redes visibles — usar campos separados para evitar problemas con ':'
-        // -f SSID y -f SECURITY por separado, luego cruzar por índice
-        struct ScanEntry { std::string ssid; std::string security; };
-        std::vector<ScanEntry> scanned;
-
-        FILE* p2 = popen("nmcli --terse --fields SSID,SECURITY dev wifi list 2>/dev/null", "r");
-        if (p2) {
-            char buf[512];
-            while (fgets(buf, sizeof(buf), p2)) {
-                std::string line(buf);
-                while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
-                if (line.empty()) continue;
-
-                // nmcli -t escapa ':' como '\:' dentro de valores
-                // Dividir solo en ':' no precedido por '\'
-                std::vector<std::string> parts;
-                std::string token;
-                for (size_t i = 0; i < line.size(); ++i) {
-                    if (line[i] == '\\' && i+1 < line.size() && line[i+1] == ':') {
-                        token += ':';
-                        ++i;
-                    } else if (line[i] == ':') {
-                        parts.push_back(token);
-                        token.clear();
-                    } else {
-                        token += line[i];
-                    }
-                }
-                parts.push_back(token);
-
-                if (parts.size() < 1) continue;
-                std::string ssid = parts[0];
-                std::string sec  = parts.size() > 1 ? parts[1] : "";
-                if (ssid.empty() || ssid == "--") continue;
-
-                scanned.push_back({ssid, sec});
-            }
-            pclose(p2);
-        }
-
-        for (auto& e : scanned) {
-            bool alreadyIn = false;
-            for (auto& n : networks_)
-                if (n.ssid == e.ssid) { alreadyIn = true; break; }
-            if (!alreadyIn) {
-                bool sec = !(e.security.empty() || e.security == "--");
-                networks_.push_back({e.ssid, false, sec});
-            }
-        }
-
+        if (is_refreshing_.load()) return;
+        
+        is_refreshing_ = true;
         statusMsg_   = "";
         connecting_  = false;
         selectedIdx_ = -1;
         scroll_      = 0;
         keyboard_.hide();
+
+        std::thread([this]() {
+            std::vector<WifiNetwork> temp_networks;
+
+            FILE* p = popen("nmcli -t -f NAME,TYPE connection show 2>/dev/null", "r");
+            if (p) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), p)) {
+                    std::string line(buf);
+                    while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
+                    if (line.find(":802-11-wireless") != std::string::npos) {
+                        std::string ssid = line.substr(0, line.find(':'));
+                        if (!ssid.empty()) temp_networks.push_back({ssid, true, true});
+                    }
+                }
+                pclose(p);
+            }
+
+            struct ScanEntry { std::string ssid; std::string security; };
+            std::vector<ScanEntry> scanned;
+
+            FILE* p2 = popen("nmcli --terse --fields SSID,SECURITY dev wifi list 2>/dev/null", "r");
+            if (p2) {
+                char buf[512];
+                while (fgets(buf, sizeof(buf), p2)) {
+                    std::string line(buf);
+                    while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
+                    if (line.empty()) continue;
+
+                    std::vector<std::string> parts;
+                    std::string token;
+                    for (size_t i = 0; i < line.size(); ++i) {
+                        if (line[i] == '\\' && i+1 < line.size() && line[i+1] == ':') {
+                            token += ':';
+                            ++i;
+                        } else if (line[i] == ':') {
+                            parts.push_back(token);
+                            token.clear();
+                        } else {
+                            token += line[i];
+                        }
+                    }
+                    parts.push_back(token);
+
+                    if (parts.size() < 1) continue;
+                    std::string ssid = parts[0];
+                    std::string sec  = parts.size() > 1 ? parts[1] : "";
+                    if (ssid.empty() || ssid == "--") continue;
+
+                    scanned.push_back({ssid, sec});
+                }
+                pclose(p2);
+            }
+
+            for (auto& e : scanned) {
+                bool alreadyIn = false;
+                for (auto& n : temp_networks) {
+                    if (n.ssid == e.ssid) { alreadyIn = true; break; }
+                }
+                if (!alreadyIn) {
+                    bool sec = !(e.security.empty() || e.security == "--");
+                    temp_networks.push_back({e.ssid, false, sec});
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(networks_mutex_);
+                networks_ = temp_networks;
+            }
+            
+            is_refreshing_ = false;
+        }).detach();
     }
 
-    // Llamar desde renderLoop y handleMouse
     void render(cv::Mat& frame) {
         if (frame.empty()) return;
-
-        // Si el teclado está activo, renderizar WiFi abajo y teclado encima
         renderMain(frame);
         if (keyboard_.visible) keyboard_.render(frame);
     }
 
     void handleMouse(int ev, int x, int y) {
-        // El teclado captura primero
         if (keyboard_.visible) {
             bool confirmed = keyboard_.handleMouse(ev, x, y);
             if (confirmed && !keyboard_.text.empty()) {
-                // conectar con Clave ingresada
                 connectWithPassword(pendingSsid_, keyboard_.text);
             }
             return;
@@ -1795,19 +1831,24 @@ public:
         hovPt_ = {x,y};
         if (ev != cv::EVENT_LBUTTONDOWN) return;
 
+        if (btnSkip_.contains({x,y})) { if(onSkip) onSkip(); return; }
+        if (is_refreshing_.load() || connecting_) return;
+
         if (btnScrollUp_.contains({x,y})  && btnScrollUp_.area()>0)  { if(scroll_>0) scroll_--; return; }
         if (btnScrollDown_.contains({x,y})&& btnScrollDown_.area()>0){ scroll_++; return; }
         for (auto& [r,idx] : rowRects_)
             if (r.contains({x,y})) { selectedIdx_=idx; return; }
         if (btnRefresh_.contains({x,y})) { refresh(); return; }
-        if (btnSkip_.contains({x,y}))    { if(onSkip) onSkip(); return; }
-        if (btnConnect_.contains({x,y}) && selectedIdx_>=0 && !connecting_) {
+        if (btnConnect_.contains({x,y}) && selectedIdx_>=0) {
             initiateConnect();
         }
     }
 
 private:
     std::vector<WifiNetwork> networks_;
+    std::mutex networks_mutex_;
+    std::atomic<bool> is_refreshing_{false};
+
     int  selectedIdx_ { -1 };
     int  scroll_      { 0 };
     bool connecting_  { false };
@@ -1823,23 +1864,34 @@ private:
     std::vector<RowEntry> rowRects_;
     OnScreenKeyboard keyboard_;
 
+    // NUEVO: Función para comprobar si hay internet de verdad
+    bool checkInternetLocal() {
+        // Intenta 2 veces con curl (timeout de 3s). Si hay internet retorna true.
+        for (int i = 0; i < 2; ++i) {
+            int ret = std::system("curl -s -I -m 3 https://api.groq.com > /dev/null 2>&1");
+            if (ret == 0) return true;
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        return false;
+    }
+
     void initiateConnect() {
-        if (selectedIdx_<0 || selectedIdx_>=(int)networks_.size()) return;
-        auto& net = networks_[selectedIdx_];
+        WifiNetwork net;
+        {
+            std::lock_guard<std::mutex> lock(networks_mutex_);
+            if (selectedIdx_<0 || selectedIdx_>=(int)networks_.size()) return;
+            net = networks_[selectedIdx_];
+        }
+        
         pendingSsid_ = net.ssid;
 
         if (net.saved) {
-            // Red ya guardada → conectar directo
             connectSaved(net.ssid);
         } else if (!net.secured) {
-            // Red abierta → conectar sin Clave
             connectOpen(net.ssid);
         } else {
-            // Red nueva con seguridad → pedir Clave
             keyboard_.isPassword_ = true;
-            keyboard_.show(
-                (eng() ? "Password for: " : "Clave para: ") + net.ssid,
-                "");
+            keyboard_.show((eng() ? "Password for: " : "Clave para: ") + net.ssid, "");
         }
     }
 
@@ -1849,12 +1901,21 @@ private:
         std::thread([this,ssid](){
             std::string cmd = "nmcli connection up '" + ssid + "' 2>/dev/null";
             int ret = std::system(cmd.c_str());
-            if (ret==0) {
-                statusMsg_ = eng() ? "Connected!" : "Conectado!";
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                if (onConnected) onConnected();
+            if (ret == 0) {
+                statusMsg_ = eng() ? "Verifying internet..." : "Verificando internet...";
+                if (checkInternetLocal()) {
+                    statusMsg_ = eng() ? "Connected!" : "Conectado!";
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    if (onConnected) onConnected();
+                } else {
+                    statusMsg_ = eng() ? "Connected, but NO INTERNET." : "Conectada, pero SIN INTERNET.";
+                    std::this_thread::sleep_for(std::chrono::seconds(4));
+                    statusMsg_ = "";
+                }
             } else {
                 statusMsg_ = eng() ? "Failed. Try reconnecting." : "Error al conectar.";
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                statusMsg_ = "";
             }
             connecting_ = false;
         }).detach();
@@ -1866,12 +1927,21 @@ private:
         std::thread([this,ssid](){
             std::string cmd = "nmcli device wifi connect '" + ssid + "' 2>/dev/null";
             int ret = std::system(cmd.c_str());
-            if (ret==0) {
-                statusMsg_ = eng() ? "Connected!" : "Conectado!";
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                if (onConnected) onConnected();
+            if (ret == 0) {
+                statusMsg_ = eng() ? "Verifying internet..." : "Verificando internet...";
+                if (checkInternetLocal()) {
+                    statusMsg_ = eng() ? "Connected!" : "Conectado!";
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    if (onConnected) onConnected();
+                } else {
+                    statusMsg_ = eng() ? "Connected, but NO INTERNET." : "Conectada, pero SIN INTERNET.";
+                    std::this_thread::sleep_for(std::chrono::seconds(4));
+                    statusMsg_ = "";
+                }
             } else {
                 statusMsg_ = eng() ? "Failed to connect." : "Error al conectar.";
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                statusMsg_ = "";
             }
             connecting_ = false;
         }).detach();
@@ -1881,8 +1951,6 @@ private:
         connecting_  = true;
         statusMsg_   = eng() ? "Connecting..." : "Conectando...";
         
-        std::cout << "[WIFI] Intentando conectar a la red: '" << ssid << "' con la clave: '" << password << "'" << std::endl;
-
         std::thread([this, ssid, password]() {
             std::string safePwd = password;
             size_t pos = 0;
@@ -1891,18 +1959,28 @@ private:
                 pos += 4;
             }
             
-            // Comando sin --no-agent y capturando toda la salida
             std::string cmd = "nmcli device wifi connect '" + ssid +
                               "' password '" + safePwd + "' > /tmp/yaren_wifi_err.txt 2>&1";
                               
             int ret = std::system(cmd.c_str());
             
             if (ret == 0) {
-                statusMsg_ = eng() ? "Connected!" : "Conectado!";
-                for (auto& n : networks_)
-                    if (n.ssid == ssid) { n.saved = true; break; }
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                if (onConnected) onConnected();
+                statusMsg_ = eng() ? "Verifying internet..." : "Verificando internet...";
+                
+                if (checkInternetLocal()) {
+                    statusMsg_ = eng() ? "Connected!" : "Conectado!";
+                    {
+                        std::lock_guard<std::mutex> lock(networks_mutex_);
+                        for (auto& n : networks_)
+                            if (n.ssid == ssid) { n.saved = true; break; }
+                    }
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    if (onConnected) onConnected();
+                } else {
+                    statusMsg_ = eng() ? "Connected, but NO INTERNET." : "Conectada, pero SIN INTERNET.";
+                    std::this_thread::sleep_for(std::chrono::seconds(4));
+                    statusMsg_ = "";
+                }
                 connecting_ = false;
             } else {
                 std::string errMsg = eng() ? "Wrong password." : "Clave incorrecta.";
@@ -1925,7 +2003,6 @@ private:
                 statusMsg_ = errMsg;
                 connecting_ = false;
                 
-                // Mensaje momentáneo: espera 4 segundos y luego borra el error
                 std::this_thread::sleep_for(std::chrono::seconds(4));
                 if (statusMsg_ == errMsg) {
                     statusMsg_ = "";
@@ -1950,76 +2027,87 @@ private:
         cv::putText(frame,eng()?"saved  ":"guardada  ",{legX+12,legY+5},cv::FONT_HERSHEY_PLAIN,0.80,cv::Scalar(60,140,80),1,cv::LINE_AA);
         cv::circle(frame,{legX+110,legY},5,cv::Scalar(80,80,80),1,cv::LINE_AA);
         cv::putText(frame,eng()?"new network":"nueva",{legX+122,legY+5},cv::FONT_HERSHEY_PLAIN,0.80,cv::Scalar(80,110,140),1,cv::LINE_AA);
-        // ----------------------------------------------
-
+        
         const int LIST_X=W/2-270, LIST_W=540, ROW_H=42, LIST_Y=82, VISIBLE=7;
-        int total=(int)networks_.size();
-        if (scroll_ > std::max(0,total-VISIBLE)) scroll_=std::max(0,total-VISIBLE);
-
-        rowRects_.clear();
-        for (int i=0;i<VISIBLE;++i) {
-            int idx=scroll_+i;
-            if (idx>=total) break;
-            cv::Rect r{LIST_X,LIST_Y+i*ROW_H,LIST_W,ROW_H-3};
-            rowRects_.push_back({r,idx});
-            bool sel=(selectedIdx_==idx);
-            bool hov=r.contains(hovPt_);
-            cv::Scalar bg  =sel?cv::Scalar(0,40,70):hov?cv::Scalar(15,25,40):cv::Scalar(8,16,28);
-            cv::Scalar brd =sel?cv::Scalar(0,229,255):hov?cv::Scalar(40,80,100):cv::Scalar(20,40,55);
-            cv::rectangle(frame,r,bg,cv::FILLED);
-            cv::rectangle(frame,r,brd,sel?2:1,cv::LINE_AA);
-
-            // Indicador guardada (●) / nueva (○)
-            if (networks_[idx].saved)
-                cv::circle(frame,{r.x+14,r.y+r.height/2},5,cv::Scalar(0,200,100),cv::FILLED,cv::LINE_AA);
-            else
-                cv::circle(frame,{r.x+14,r.y+r.height/2},5,cv::Scalar(80,80,80),1,cv::LINE_AA);
-
-            // Icono candado si es segura
-            if (networks_[idx].secured) {
-                int lx=r.x+28, ly=r.y+r.height/2;
-                cv::rectangle(frame,{lx-4,ly-1,8,7},cv::Scalar(160,160,160),1,cv::LINE_AA);
-                cv::ellipse(frame,{lx,ly-1},{4,4},0,180,360,cv::Scalar(160,160,160),1,cv::LINE_AA);
-            }
-
-            cv::Scalar tc=sel?cv::Scalar(255,255,255):hov?cv::Scalar(180,200,210):cv::Scalar(120,150,170);
-            cv::putText(frame,networks_[idx].ssid,{r.x+42,r.y+r.height/2+6},
-                        cv::FONT_HERSHEY_PLAIN,1.0,tc,1,cv::LINE_AA);
-
-            std::string badge = networks_[idx].saved ? (eng()?"saved":"guardada")
-                                         : (eng()?"new":"nueva");
-            cv::Scalar bcolor = networks_[idx].saved ? cv::Scalar(0,150,80) : cv::Scalar(0,140,200);
-            int bl = 0;
-            cv::Size bs = cv::getTextSize(badge, cv::FONT_HERSHEY_PLAIN, 0.72, 1, &bl);
-            cv::putText(frame, badge,
-                        {r.x + r.width - bs.width - 10, r.y + r.height/2 + 5},
-                        cv::FONT_HERSHEY_PLAIN, 0.72, bcolor, 1, cv::LINE_AA);
+        
+        std::vector<WifiNetwork> safe_networks;
+        {
+            std::lock_guard<std::mutex> lock(networks_mutex_);
+            safe_networks = networks_;
         }
 
-        // Scroll
-        if (scroll_>0) {
-            btnScrollUp_={LIST_X+LIST_W+10,LIST_Y,30,30};
-            bool hu=btnScrollUp_.contains(hovPt_);
-            cv::rectangle(frame,btnScrollUp_,hu?cv::Scalar(30,50,70):cv::Scalar(15,25,40),cv::FILLED);
-            cv::rectangle(frame,btnScrollUp_,cv::Scalar(40,80,100),1,cv::LINE_AA);
-            std::vector<cv::Point> tri={{btnScrollUp_.x+15,btnScrollUp_.y+5},{btnScrollUp_.x+5,btnScrollUp_.y+22},{btnScrollUp_.x+25,btnScrollUp_.y+22}};
-            cv::fillPoly(frame,tri,hu?cv::Scalar(255,255,255):cv::Scalar(0,180,220));
-        } else { btnScrollUp_={0,0,0,0}; }
+        bool refreshing = is_refreshing_.load();
 
-        if (scroll_+VISIBLE<total) {
-            btnScrollDown_={LIST_X+LIST_W+10,LIST_Y+VISIBLE*ROW_H-30,30,30};
-            bool hd=btnScrollDown_.contains(hovPt_);
-            cv::rectangle(frame,btnScrollDown_,hd?cv::Scalar(30,50,70):cv::Scalar(15,25,40),cv::FILLED);
-            cv::rectangle(frame,btnScrollDown_,cv::Scalar(40,80,100),1,cv::LINE_AA);
-            std::vector<cv::Point> tri={{btnScrollDown_.x+15,btnScrollDown_.y+25},{btnScrollDown_.x+5,btnScrollDown_.y+8},{btnScrollDown_.x+25,btnScrollDown_.y+8}};
-            cv::fillPoly(frame,tri,hd?cv::Scalar(255,255,255):cv::Scalar(0,180,220));
-        } else { btnScrollDown_={0,0,0,0}; }
+        if (refreshing) {
+            double t = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+            int t_dots = (int)(t * 3.0) % 4;
+            std::string loadingText = (eng() ? "Scanning networks" : "Buscando redes") + std::string(t_dots, '.');
+            drawCenteredText(frame, loadingText, W, LIST_Y + 100, cv::FONT_HERSHEY_DUPLEX, 0.75, cv::Scalar(0, 200, 255), 1);
+        } else {
+            int total = (int)safe_networks.size();
+            if (scroll_ > std::max(0,total-VISIBLE)) scroll_=std::max(0,total-VISIBLE);
 
-        // Botones inferiores
+            rowRects_.clear();
+            for (int i=0;i<VISIBLE;++i) {
+                int idx=scroll_+i;
+                if (idx>=total) break;
+                cv::Rect r{LIST_X,LIST_Y+i*ROW_H,LIST_W,ROW_H-3};
+                rowRects_.push_back({r,idx});
+                bool sel=(selectedIdx_==idx);
+                bool hov=r.contains(hovPt_);
+                cv::Scalar bg  =sel?cv::Scalar(0,40,70):hov?cv::Scalar(15,25,40):cv::Scalar(8,16,28);
+                cv::Scalar brd =sel?cv::Scalar(0,229,255):hov?cv::Scalar(40,80,100):cv::Scalar(20,40,55);
+                cv::rectangle(frame,r,bg,cv::FILLED);
+                cv::rectangle(frame,r,brd,sel?2:1,cv::LINE_AA);
+
+                if (safe_networks[idx].saved)
+                    cv::circle(frame,{r.x+14,r.y+r.height/2},5,cv::Scalar(0,200,100),cv::FILLED,cv::LINE_AA);
+                else
+                    cv::circle(frame,{r.x+14,r.y+r.height/2},5,cv::Scalar(80,80,80),1,cv::LINE_AA);
+
+                if (safe_networks[idx].secured) {
+                    int lx=r.x+28, ly=r.y+r.height/2;
+                    cv::rectangle(frame,{lx-4,ly-1,8,7},cv::Scalar(160,160,160),1,cv::LINE_AA);
+                    cv::ellipse(frame,{lx,ly-1},{4,4},0,180,360,cv::Scalar(160,160,160),1,cv::LINE_AA);
+                }
+
+                cv::Scalar tc=sel?cv::Scalar(255,255,255):hov?cv::Scalar(180,200,210):cv::Scalar(120,150,170);
+                cv::putText(frame,safe_networks[idx].ssid,{r.x+42,r.y+r.height/2+6},
+                            cv::FONT_HERSHEY_PLAIN,1.0,tc,1,cv::LINE_AA);
+
+                std::string badge = safe_networks[idx].saved ? (eng()?"saved":"guardada")
+                                                             : (eng()?"new":"nueva");
+                cv::Scalar bcolor = safe_networks[idx].saved ? cv::Scalar(0,150,80) : cv::Scalar(0,140,200);
+                int bl = 0;
+                cv::Size bs = cv::getTextSize(badge, cv::FONT_HERSHEY_PLAIN, 0.72, 1, &bl);
+                cv::putText(frame, badge,
+                            {r.x + r.width - bs.width - 10, r.y + r.height/2 + 5},
+                            cv::FONT_HERSHEY_PLAIN, 0.72, bcolor, 1, cv::LINE_AA);
+            }
+
+            if (scroll_>0) {
+                btnScrollUp_={LIST_X+LIST_W+10,LIST_Y,30,30};
+                bool hu=btnScrollUp_.contains(hovPt_);
+                cv::rectangle(frame,btnScrollUp_,hu?cv::Scalar(30,50,70):cv::Scalar(15,25,40),cv::FILLED);
+                cv::rectangle(frame,btnScrollUp_,cv::Scalar(40,80,100),1,cv::LINE_AA);
+                std::vector<cv::Point> tri={{btnScrollUp_.x+15,btnScrollUp_.y+5},{btnScrollUp_.x+5,btnScrollUp_.y+22},{btnScrollUp_.x+25,btnScrollUp_.y+22}};
+                cv::fillPoly(frame,tri,hu?cv::Scalar(255,255,255):cv::Scalar(0,180,220));
+            } else { btnScrollUp_={0,0,0,0}; }
+
+            if (scroll_+VISIBLE<total) {
+                btnScrollDown_={LIST_X+LIST_W+10,LIST_Y+VISIBLE*ROW_H-30,30,30};
+                bool hd=btnScrollDown_.contains(hovPt_);
+                cv::rectangle(frame,btnScrollDown_,hd?cv::Scalar(30,50,70):cv::Scalar(15,25,40),cv::FILLED);
+                cv::rectangle(frame,btnScrollDown_,cv::Scalar(40,80,100),1,cv::LINE_AA);
+                std::vector<cv::Point> tri={{btnScrollDown_.x+15,btnScrollDown_.y+25},{btnScrollDown_.x+5,btnScrollDown_.y+8},{btnScrollDown_.x+25,btnScrollDown_.y+8}};
+                cv::fillPoly(frame,tri,hd?cv::Scalar(255,255,255):cv::Scalar(0,180,220));
+            } else { btnScrollDown_={0,0,0,0}; }
+        }
+
         int btnY=LIST_Y+VISIBLE*ROW_H+18, btnH=44;
 
         btnConnect_={W/2-280,btnY,220,btnH};
-        bool canC=(selectedIdx_>=0)&&!connecting_&&!keyboard_.visible;
+        bool canC=(selectedIdx_>=0)&&!connecting_&&!keyboard_.visible&&!refreshing;
         bool hc=btnConnect_.contains(hovPt_)&&canC;
         cv::Scalar cBg=connecting_?cv::Scalar(20,50,20):canC?(hc?cv::Scalar(0,60,20):cv::Scalar(0,35,12)):cv::Scalar(15,20,18);
         cv::Scalar cBrd=connecting_?cv::Scalar(0,150,80):canC?cv::Scalar(0,200,80):cv::Scalar(30,50,35);
@@ -2029,10 +2117,12 @@ private:
         drawTextInRect(frame,cLabel,btnConnect_,cv::FONT_HERSHEY_DUPLEX,0.46,canC?cv::Scalar(255,255,255):cv::Scalar(80,100,80));
 
         btnRefresh_={W/2-36,btnY,160,btnH};
-        bool hr=btnRefresh_.contains(hovPt_);
-        cv::rectangle(frame,btnRefresh_,hr?cv::Scalar(30,40,10):cv::Scalar(15,22,8),cv::FILLED);
-        cv::rectangle(frame,btnRefresh_,hr?cv::Scalar(200,200,0):cv::Scalar(120,120,0),hr?2:1,cv::LINE_AA);
-        drawTextInRect(frame,eng()?"REFRESH":"REFRESCAR",btnRefresh_,cv::FONT_HERSHEY_DUPLEX,0.46,hr?cv::Scalar(255,255,255):cv::Scalar(180,180,100));
+        bool hr=btnRefresh_.contains(hovPt_) && !refreshing;
+        cv::Scalar rBg=refreshing?cv::Scalar(10,10,10):hr?cv::Scalar(30,40,10):cv::Scalar(15,22,8);
+        cv::Scalar rBrd=refreshing?cv::Scalar(50,50,50):hr?cv::Scalar(200,200,0):cv::Scalar(120,120,0);
+        cv::rectangle(frame,btnRefresh_,rBg,cv::FILLED);
+        cv::rectangle(frame,btnRefresh_,rBrd,hr?2:1,cv::LINE_AA);
+        drawTextInRect(frame,eng()?"REFRESH":"REFRESCAR",btnRefresh_,cv::FONT_HERSHEY_DUPLEX,0.46,!refreshing?cv::Scalar(255,255,255):cv::Scalar(100,100,100));
 
         btnSkip_={W/2+144,btnY,120,btnH};
         bool hs=btnSkip_.contains(hovPt_);
@@ -2040,19 +2130,20 @@ private:
         cv::rectangle(frame,btnSkip_,hs?cv::Scalar(150,150,150):cv::Scalar(80,80,80),hs?2:1,cv::LINE_AA);
         drawTextInRect(frame,eng()?"SKIP":"OMITIR",btnSkip_,cv::FONT_HERSHEY_DUPLEX,0.46,hs?cv::Scalar(255,255,255):cv::Scalar(160,160,160));
 
-        // Status
         if (!statusMsg_.empty()) {
             bool isErr=statusMsg_.find("Error")!=std::string::npos||
                        statusMsg_.find("fallo")!=std::string::npos||
                        statusMsg_.find("Failed")!=std::string::npos||
                        statusMsg_.find("Wrong")!=std::string::npos||
-                       statusMsg_.find("incorrecta")!=std::string::npos;
+                       statusMsg_.find("incorrecta")!=std::string::npos||
+                       statusMsg_.find("SIN INTERNET")!=std::string::npos||
+                       statusMsg_.find("no internet")!=std::string::npos;
             cv::Scalar sc=isErr?cv::Scalar(0,0,220):cv::Scalar(0,200,80);
             int bl2=0; cv::Size ms=cv::getTextSize(statusMsg_,cv::FONT_HERSHEY_PLAIN,0.95,1,&bl2);
-            cv::putText(frame,statusMsg_,{(W-ms.width)/2, H - 25},cv::FONT_HERSHEY_PLAIN,0.95,sc,1,cv::LINE_AA);        }
+            cv::putText(frame,statusMsg_,{(W-ms.width)/2, H - 25},cv::FONT_HERSHEY_PLAIN,0.95,sc,1,cv::LINE_AA);
+        }
     }
 };
-
 // =============================================================================
 //  Navegación e Items
 // =============================================================================
@@ -2270,6 +2361,10 @@ public:
                         }
                         active_lifecycle_nodes.clear();
                         stopCmdToRun = activeStopCmd;
+                        if (activeMode == "yaren_dice_con_ayuda") {
+                            std::string homeCmd = "ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"";
+                            std::thread([homeCmd]() { std::system(homeCmd.c_str()); }).detach();
+                        }
                         activeMode.clear(); activeStopCmd.clear();
                         bool radioShowing, routinesShowing;
                         {
@@ -2495,6 +2590,7 @@ public:
             std::string cmd_animal = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters animal_filter_mask' &";
             std::string cmd_landmarks = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters face_landmark_detector.py' &";
             std::string cmd_body = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice body_landmarks.py' &";
+            std::string cmd_body_help = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice body_landmarks_visual.py' &";
             std::string cmd_speak = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice speaker_node.py' &";
             std::string cmd_fondo = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters fondo_virtual.py' &";
             std::string cmd_camara = "bash -c 'source " + setup + " && ros2 run camara_usb_csi csi_cam_pub.py' &";
@@ -2510,6 +2606,7 @@ public:
             std::system(cmd_animal.c_str());
             std::system(cmd_landmarks.c_str());
             std::system(cmd_body.c_str());
+            std::system(cmd_body_help.c_str());
             std::system(cmd_speak.c_str());
             std::system(cmd_fondo.c_str());
             std::system(cmd_camara.c_str()); 
@@ -2606,6 +2703,7 @@ public:
                 configure_node("detector",                  "Deteccion de Emociones");
                 configure_node("face_filter_node",          "Filtros de Cara");
                 configure_node("body_points_detector_node", "Deteccion Corporal");
+                configure_node("body_points_detector_node_visual", "Deteccion Corporal con Ayuda");
                 configure_node("yaren_speaker_node",        "Altavoz");
                 configure_node("virtual_background_node",   "Fondo Virtual");
                 configure_node("filtro_animales",           "Filtro de Animales");
@@ -2903,15 +3001,40 @@ private:
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
             MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
             MI("yaren_chat", "CHAT", isEnglish ? "Talk with Yaren" : "Conversar con Yaren", {29,233,22}, "", "", false, "", "chat", {"llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node"}),
-            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "ros2 run yaren_dice game_manager &", "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "dice", {"csi_cam_node","body_points_detector_node", "yaren_speaker_node"}),
+            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
             MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
             MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emocion", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
             MI("yaren_filtros", isEnglish ? "FILTERS" : "FILTROS", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
         }};
+        subMenuMap["sub_yaren_dice"] = { isEnglish ? "YAREN SAYS" : "YAREN DICE", {64,171,255}, {
+            MI("yaren_dice_sin_ayuda",
+            isEnglish ? "WITHOUT HELP"  : "SIN AYUDA",
+            isEnglish ? "No visual guide" : "Sin guia visual",
+            {64,171,255},
+            "ros2 run yaren_dice game_manager --ros-args -p use_help:=false &",
+            "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done",
+            false, "", "dice",
+            {"csi_cam_node", "body_points_detector_node", "yaren_speaker_node"}),
+
+            MI("yaren_dice_con_ayuda",
+            isEnglish ? "WITH HELP"    : "CON AYUDA",
+            isEnglish ? "Shows your pose" : "Muestra tu pose",
+            {0,200,255},
+            "ros2 run yaren_dice game_manager --ros-args -p use_help:=true &",
+            "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done",
+            false, "", "dice",
+            {"csi_cam_node", "body_points_detector_node_visual", "yaren_speaker_node"}),
+
+            MI("yaren_dice_sesion",
+            isEnglish ? "SESSION"      : "SESION",
+            isEnglish ? "Coming soon"  : "Proximamente",
+            {80,80,80},
+            "", "", false, "", "dice"),
+        }};
         subMenuMap["sub_yaren"].key = "sub_yaren";
         subMenuMap["sub_yaren_movements"] = { isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", {251,64,224}, {
-            MI("yaren_rutina1", isEnglish ? "ROUTINE 1" : "RUTINA 1", isEnglish ? "Routines" : "Rutinas", {251,64,224}, ("python3 " + mvDir + "yaren_rutina1.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina1"),
-            MI("yaren_rutina2", isEnglish ? "ROUTINE 2" : "RUTINA 2", isEnglish ? "Infinite routine" : "Rutina infinita", {220,80,200}, ("python3 " + mvDir + "yaren_fullmovement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina2"),
+            MI("yaren_rutina1", isEnglish ? "ROUTINE 1" : "RUTINA 1", isEnglish ? "Routines" : "Rutinas", {251,64,224}, ("python3 " + mvDir + "yaren_movement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina1"),
+            MI("yaren_rutina2", isEnglish ? "ROUTINE 2" : "RUTINA 2", isEnglish ? " Routines" : "Rutinas", {220,80,200}, ("python3 " + mvDir + "yaren_fullmovement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina2"),
             MI("yaren_rutinanueva", isEnglish ? "PERSONAL ROUTINES" : "RUTINAS PERSONALES", isEnglish ? "manage and record" : "gestionar y grabar", {130, 80, 255}, "INTERNAL_ROUTINES", "", false, "", "rutina_nueva"),
         }};
         subMenuMap["sub_yaren_filtros"] = { isEnglish ? "FILTERS" : "FILTROS", {105,240,174}, {
@@ -2935,36 +3058,36 @@ private:
             MI("vid_susanita", isEnglish ? "LITTLE SUSAN" : "SUSANITA", isEnglish ? "Zenon's Farm" : "La Granja de Zenon", {255, 100, 200}, ("python3 " + rdDir + "susanita.py &").c_str(), "for pid in $(ps aux | grep -E 'susanita.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "susanita"),
         }};
     }
-        bool checkChatAvailable() {
-        const int TIMEOUT_SECS  = 10;
+    bool checkChatAvailable() {
+        // Reducido de 10 a 4 segundos
+        const int TIMEOUT_SECS  = 4; 
         const int POLL_INTERVAL = 1;   // segundos entre intentos
- 
+
         const char* key = std::getenv("GROQ_API_KEY");
         bool key_ok     = (key != nullptr && strlen(key) > 10);
- 
+
         if (!key_ok) {
             RCLCPP_WARN(get_logger(),
                 "[ WiFi ] GROQ_API_KEY no configurada — chat deshabilitado.");
             return false;
         }
- 
+
         RCLCPP_INFO(get_logger(),
             "[ WiFi ] Buscando conexion a internet (maximo %d segundos)...",
             TIMEOUT_SECS);
- 
+
         for (int elapsed = 0; elapsed < TIMEOUT_SECS; elapsed += POLL_INTERVAL) {
             // Verificar estado de red con nmcli (rapido, sin bloqueo prolongado)
             FILE* p = popen("nmcli -t -f STATE general 2>/dev/null", "r");
             char buf[64] = {};
             if (p) { fgets(buf, sizeof(buf), p); pclose(p); }
             bool nmcli_ok = std::string(buf).find("connected") != std::string::npos;
- 
+
             if (nmcli_ok) {
-                // nmcli dice conectado → verificar ping real (timeout 2s)
-		// Usamos curl con HTTPS (-I para solo pedir las cabeceras y -s para modo silencioso)
-		// El timeout (-m) lo dejamos en 3 segundos.
-		bool ping_ok = (std::system("curl -s -I -m 3 https://api.groq.com > /dev/null 2>&1") == 0);	
- 
+                // nmcli dice conectado → verificar ping real
+                // Se redujo el timeout de curl a 2 segundos (-m 2) para no trabar el bucle
+                bool ping_ok = (std::system("curl -s -I -m 2 https://api.groq.com > /dev/null 2>&1") == 0);    
+
                 if (ping_ok) {
                     RCLCPP_INFO(get_logger(),
                         "[ WiFi ] ✓ Internet disponible (tras %d segundo(s)).",
@@ -2972,14 +3095,14 @@ private:
                     return true;
                 }
             }
- 
+
             RCLCPP_INFO(get_logger(),
                 "[ WiFi ] Sin internet... reintentando (%d/%d)",
                 elapsed + POLL_INTERVAL, TIMEOUT_SECS);
- 
+
             std::this_thread::sleep_for(std::chrono::seconds(POLL_INTERVAL));
         }
- 
+
         RCLCPP_WARN(get_logger(),
             "[ WiFi ] ✗ No se encontro internet tras %d segundos.", TIMEOUT_SECS);
         return false;
@@ -3169,7 +3292,7 @@ private:
             if (event == cv::EVENT_LBUTTONDOWN) {
                 resetIdleTimer(); // Esto despierta la pantalla
             }
-            return; // Bloquea clics ciegos y hovers mientras Yaren duerme
+            
         }
         // 2. Si la pantalla ya está despierta, cualquier interacción (movimiento o clic) 
         // reinicia el temporizador para que no se duerma mientras la usas
@@ -3598,6 +3721,9 @@ private:
                        activeMode != "yaren_fondo" &&
                        activeMode != "yaren_radio" &&
                        activeMode != "radio_musica" &&
+                       activeMode != "yaren_rutina1" &&         
+                       activeMode != "yaren_rutina2" &&         
+                       activeMode != "yaren_dice_con_ayuda" &&  
                        activeMode.rfind("vid_", 0) != 0;
         bool hasBack = (navStack.size() > 1);
         int totalW = navW;
@@ -4214,14 +4340,26 @@ private:
                            && !isMenuMusicPlaying;
             }
 
-            // 5. LÓGICA DEL SCREENSAVER (Evitar que se active si está cargando o en WiFi)
+            // 5. LÓGICA DEL SCREENSAVER OPTIMIZADA
             auto now = std::chrono::system_clock::now();
+
+            // Si Yaren NO está inactivo (está en un menú, cámara, configuración, IA, etc.)
+            // mantenemos el reloj de inactividad congelado en el momento actual.
+            if (!currentIdle || configuring.load() || sWifi) {
+                lastInteractionTime = now;
+                if (isIdleScreenActive) {
+                    stopIdleScreen();
+                }
+            }
+
+            // Aquí el tiempo solo empezará a crecer a partir de 0 en el instante exacto 
+            // en el que currentIdle se vuelva 'true' (es decir, al regresar a la cara principal).
             double elapsedIdle = std::chrono::duration<double>(now - lastInteractionTime).count();
 
-            if (currentIdle && elapsedIdle > idleTimeoutSecs && !configuring.load() && !sWifi) {
-                if (!isIdleScreenActive) startIdleScreen();
-            } else if (!currentIdle && isIdleScreenActive) {
-                stopIdleScreen();
+            if (currentIdle && elapsedIdle > idleTimeoutSecs) {
+                if (!isIdleScreenActive) {
+                    startIdleScreen();
+                }
             }
 
             if (isIdleScreenActive && idleVideo.isOpened()) {
@@ -4358,7 +4496,7 @@ private:
     // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
     std::atomic<int>  configProgress{0};
     // FIX-A: configTotal = 11 (coincide con los 11 configure_node() llamados)
-    static constexpr int configTotal{11};
+    static constexpr int configTotal{12};
     std::string       configStatus{"Iniciando sistema..."};
     std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };
@@ -4419,7 +4557,7 @@ private:
     // --- VARIABLES DE PANTALLA DE INACTIVIDAD (AQUÍ DEBEN IR) ---
     std::chrono::system_clock::time_point lastInteractionTime;
     bool isIdleScreenActive { false };
-    double idleTimeoutSecs { 60.0 }; // Segundos de inactividad
+    double idleTimeoutSecs { 30.0 }; // Segundos de inactividad
     cv::VideoCapture idleVideo;
     Mix_Music* idleMusic { nullptr };
     std::vector<std::string> idleVideoPaths;
