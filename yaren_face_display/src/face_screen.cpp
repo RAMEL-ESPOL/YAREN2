@@ -24,7 +24,11 @@
 #include <SDL2/SDL_mixer.h>
 #include <unordered_map>
 #include <queue>
-
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <net/if.h>        // 👈 AGREGAR ESTA LÍNEA
 namespace fs = std::filesystem;
 
 struct AlsaDevice {
@@ -144,7 +148,35 @@ static void drawArrow(cv::Mat& frame, cv::Point center, bool up,
     }
     cv::fillPoly(frame, pts, color);
 }
+static std::string getIPAddress() {
+    struct ifaddrs *ifaddr, *ifa;
+    char host[NI_MAXHOST];
+    std::string ip = "No IP";
 
+    if (getifaddrs(&ifaddr) == -1) {
+        return ip;
+    }
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) continue;
+
+        // Buscar solo IPv4 y que la interfaz esté activa (IFF_RUNNING)
+        if (ifa->ifa_addr->sa_family == AF_INET && (ifa->ifa_flags & IFF_RUNNING)) {
+            std::string ifaceName = ifa->ifa_name;
+            // Ignorar la interfaz de loopback (localhost)
+            if (ifaceName == "lo") continue;
+
+            int s = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+                                host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+            if (s == 0) {
+                ip = std::string(host);
+                break;
+            }
+        }
+    }
+    freeifaddrs(ifaddr);
+    return ip;
+}
 // =============================================================================
 //  SettingsMenu
 // =============================================================================
@@ -219,7 +251,20 @@ public:
         cv::rectangle(ov, {0, 0, W, H}, cv::Scalar(4, 10, 22), cv::FILLED);
         cv::addWeighted(ov, 0.95, frame, 0.05, 0, frame);
         drawCenteredText(frame, eng() ? "SETTINGS" : "CONFIGURACION", W, 32,
-                         cv::FONT_HERSHEY_DUPLEX, 0.80, cv::Scalar(0, 229, 255), 2);
+                        cv::FONT_HERSHEY_DUPLEX, 0.80, cv::Scalar(0, 229, 255), 2);
+        
+        // ===== IP DEBAJO DEL TÍTULO (SOLO ESTO SE AGREGÓ) =====
+        std::string ip = getIPAddress();
+        cv::putText(frame, 
+                    "IP: " + ip, 
+                    {W/2 - 90, 64},
+                    cv::FONT_HERSHEY_PLAIN, 
+                    0.90, 
+                    cv::Scalar(0, 200, 255),
+                    1, 
+                    cv::LINE_AA);
+        // ===== FIN IP =====
+        
         cv::line(frame, {W/2-320, 48}, {W/2+320, 48}, cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
         int langW = 120, langH = 36;
         btnLang = {W - langW - 20, 15, langW, langH};
@@ -2910,7 +2955,7 @@ private:
     bool isMenuMusicPlaying { false };
     // FIX-E: mutex compartido para todas las operaciones SDL_mixer
     std::mutex audioMutex_;
-
+    
     void startMenuMusic() {
         std::lock_guard<std::mutex> lk(audioMutex_);
         // Detener musica de boot si aun suena
