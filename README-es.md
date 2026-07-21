@@ -236,3 +236,10 @@ pip3 install pynput  # em el venv
 sudo apt install libsdl2-dev libsdl2-mixer-dev
 pip install vosk pyaudio
 sudo apt install xdotool
+curl -fsSL https://ollama.com/install.sh | sh
+# phi3:mini es ideal para Orin Nano 8GB: ~2GB, usa GPU Ampere
+ollama pull phi3:mini
+
+# Verificar que usa GPU
+ollama run phi3:mini "hola" --verbose
+# Debe mostrar líneas de "GPU layers"

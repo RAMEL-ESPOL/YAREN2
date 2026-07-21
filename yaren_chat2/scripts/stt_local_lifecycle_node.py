@@ -38,18 +38,18 @@ def noalsaerr():
 SetLogLevel(-1)
 
 
-class STTLifecycleNode(LifecycleNode):
+class STTLocalLifecycleNode(LifecycleNode):
 
     def __init__(self):
-        super().__init__('stt_lifecycle_node')
+        super().__init__('stt_local_lifecycle_node')
 
         pkg_share_dir = get_package_share_directory('yaren_chat')
         self.ruta_es = os.path.join(pkg_share_dir, 'models', 'STT', 'vosk-model-es-0.42')
         self.ruta_en = os.path.join(pkg_share_dir, 'models', 'STT', 'vosk-model-en-us-0.22-lgraph')
 
         self.stt_listening_publisher = self.create_publisher(Bool, '/stt_listening', 10)
-        self.response_publisher      = self.create_publisher(PersonResponse, '/response_person', 10)
-        self.stt_status_publisher    = self.create_publisher(Bool, '/stt_terminado', 10)
+        self.response_publisher      = self.create_publisher(PersonResponse, '/response_person_local', 10)
+        self.stt_status_publisher    = self.create_publisher(Bool, '/stt_terminado_local', 10)
         qos_mic = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.mic_owner_pub = self.create_publisher(String, '/yaren/mic_owner', qos_mic)
         self.mic_owner = "none"
@@ -62,28 +62,28 @@ class STTLifecycleNode(LifecycleNode):
         self.is_recognizing   = False
         self.idioma_actual    = "es"
 
-        # Evento: liberado cuando el TTS termina de hablar
         self.tts_finished_event = threading.Event()
-        self.tts_finished_event.set()  # inicialmente libre
+        self.tts_finished_event.set()
 
         qos_profile = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.lang_sub = self.create_subscription(
             String, '/yaren/current_language', self.cb_cambio_idioma, qos_profile)
 
-    # ──────────────────────────────────────────────
-    # Idioma
-    # ──────────────────────────────────────────────
+        self.stt_terminado_sub = self.create_subscription(
+            Bool, '/stt_terminado_local', self._on_stt_terminado, 10)
+
     def _cb_mic_owner(self, msg):
         self.mic_owner = msg.data
-        if msg.data == "chat_stt":
+        if msg.data == "chat_stt_local":
             self.mic_owner_event.set()
         else:
             self.mic_owner_event.clear()
+
     def cb_cambio_idioma(self, msg):
         nuevo_idioma = msg.data
         if nuevo_idioma == self.idioma_actual:
             return
-        self.get_logger().info(f"🔄 Solicitud de cambio de idioma STT a: {nuevo_idioma}")
+        self.get_logger().info(f"🔄 Solicitud de cambio de idioma STT Local a: {nuevo_idioma}")
         self.idioma_actual = nuevo_idioma
         if self.vosk_model is not None:
             self._switch_model_in_memory()
@@ -96,7 +96,7 @@ class STTLifecycleNode(LifecycleNode):
                 self.recognition_thread.join()
             reiniciar_hilo = True
 
-        self.get_logger().info("🧹 Liberando RAM del modelo STT anterior...")
+        self.get_logger().info("🧹 Liberando RAM del modelo STT Local anterior...")
         del self.vosk_model
         self.vosk_model = None
         gc.collect()
@@ -105,7 +105,7 @@ class STTLifecycleNode(LifecycleNode):
         self.get_logger().info(f"⏳ Cargando nuevo modelo desde: {ruta}")
         try:
             self.vosk_model = Model(ruta)
-            self.get_logger().info("✅ Nuevo modelo STT cargado exitosamente.")
+            self.get_logger().info("✅ Nuevo modelo STT Local cargado exitosamente.")
         except Exception as e:
             self.get_logger().error(f"💥 Error al cambiar modelo: {e}")
             return
@@ -115,25 +115,14 @@ class STTLifecycleNode(LifecycleNode):
             self.recognition_thread = threading.Thread(target=self._recognize_speech)
             self.recognition_thread.start()
 
-    # ──────────────────────────────────────────────
-    # Callback: TTS terminó de hablar
-    # ──────────────────────────────────────────────
-
     def _on_stt_terminado(self, msg):
-        if not msg.data:  # False = audio worker terminó
+        if not msg.data:
             self.tts_finished_event.set()
 
-    # ──────────────────────────────────────────────
-    # Lifecycle
-    # ──────────────────────────────────────────────
-
     def on_configure(self, state):
-        self.get_logger().info('Configuring STT Node')
+        self.get_logger().info('Configuring STT Local Node')
 
-        self.tts_finished_event.set()  # reset por si venía de un ciclo anterior
-
-        self.stt_terminado_sub = self.create_subscription(
-            Bool, '/stt_terminado', self._on_stt_terminado, 10)
+        self.tts_finished_event.set()
 
         ruta = self.ruta_en if self.idioma_actual == "en" else self.ruta_es
         self.get_logger().info(f'📍 Resolved model path: {ruta}')
@@ -151,11 +140,11 @@ class STTLifecycleNode(LifecycleNode):
             return TransitionCallbackReturn.FAILURE
 
     def on_activate(self, state):
-        self.get_logger().info('Activating STT Node')
-        self.tts_finished_event.set()  # asegurar que empieza libre
+        self.get_logger().info('Activating STT Local Node')
+        self.tts_finished_event.set()
         self.is_recognizing = True
         owner_msg = String()
-        owner_msg.data = "chat_stt"
+        owner_msg.data = "chat_stt_local"
         self.mic_owner_pub.publish(owner_msg)
         self.mic_owner_event.set()
         self.recognition_thread = threading.Thread(target=self._recognize_speech)
@@ -163,9 +152,9 @@ class STTLifecycleNode(LifecycleNode):
         return TransitionCallbackReturn.SUCCESS
 
     def on_deactivate(self, state):
-        self.get_logger().info('Deactivating STT Node')
+        self.get_logger().info('Deactivating STT Local Node')
         self.is_recognizing = False
-        self.tts_finished_event.set()  # desbloquear si estaba esperando
+        self.tts_finished_event.set()
         owner_msg = String()
         owner_msg.data = "none"
         self.mic_owner_pub.publish(owner_msg)
@@ -173,9 +162,11 @@ class STTLifecycleNode(LifecycleNode):
             self.recognition_thread.join()
         return TransitionCallbackReturn.SUCCESS
 
-    # ──────────────────────────────────────────────
-    # Reconocimiento
-    # ──────────────────────────────────────────────
+    def _publish_listening(self, is_listening: bool):
+        """Publica el estado de escucha en /stt_listening."""
+        msg = Bool()
+        msg.data = is_listening
+        self.stt_listening_publisher.publish(msg)
 
     def _recognize_speech(self):
         with noalsaerr():
@@ -186,17 +177,15 @@ class STTLifecycleNode(LifecycleNode):
         recognizer = KaldiRecognizer(self.vosk_model, 16000)
 
         try:
-            self.get_logger().info("🎤 Listening...")
-            listen_msg = Bool()
-            listen_msg.data = True
-            self.stt_listening_publisher.publish(listen_msg)
+            self.get_logger().info("🎤 Listening (Local)...")
+            # ── Primer aviso: turno del niño ──
+            self._publish_listening(True)
 
             while self.is_recognizing:
                 if not self.mic_owner_event.wait(timeout=0.1):
                     continue
                 data = stream.read(4000, exception_on_overflow=False)
 
-                # Si el TTS aún no terminó, descartar audio acumulado
                 if not self.tts_finished_event.is_set():
                     recognizer = KaldiRecognizer(self.vosk_model, 16000)
                     continue
@@ -207,23 +196,25 @@ class STTLifecycleNode(LifecycleNode):
                     text       = result.get("text", "").lower().strip()
 
                     if text:
-                        # Bloquear evento antes de publicar (evita race condition)
                         self.tts_finished_event.clear()
+
+                        # Avisar que el niño dejó de tener el turno (Yaren va a hablar)
+                        self._publish_listening(False)
 
                         response_msg           = PersonResponse()
                         response_msg.text      = text
                         response_msg.timestamp = self.get_clock().now().to_msg()
                         self.response_publisher.publish(response_msg)
-                        self.get_logger().info(f"🗣️ Person: {text}")
+                        self.get_logger().info(f"🗣️ Person (Local): {text}")
 
                         status_msg      = Bool()
                         status_msg.data = True
                         self.stt_status_publisher.publish(status_msg)
 
-                        self.get_logger().info("⏸️ Esperando que Yaren termine de hablar...")
+                        self.get_logger().info("⏸️ Esperando que Yaren Local termine de hablar...")
                         self.tts_finished_event.wait()
 
-                        # Vaciar todo el audio acumulado en el buffer mientras Yaren hablaba
+                        # Vaciar buffer acumulado mientras Yaren hablaba
                         time.sleep(0.5)
                         try:
                             while stream.get_read_available() > 0:
@@ -235,15 +226,13 @@ class STTLifecycleNode(LifecycleNode):
                             pass
 
                         recognizer = KaldiRecognizer(self.vosk_model, 16000)
-                        listen_msg = Bool()
-                        listen_msg.data = True
-                        self.stt_listening_publisher.publish(listen_msg)
-                        self.get_logger().info("🎤 Listening...")
+
+                        # ── Volver a avisar: ahora es el turno del niño ──
+                        self.get_logger().info("🎤 Listening (Local)...")
+                        self._publish_listening(True)
 
         finally:
-            listen_msg      = Bool()
-            listen_msg.data = False
-            self.stt_listening_publisher.publish(listen_msg)
+            self._publish_listening(False)
             stream.stop_stream()
             stream.close()
             p.terminate()
@@ -251,7 +240,7 @@ class STTLifecycleNode(LifecycleNode):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = STTLifecycleNode()
+    node = STTLocalLifecycleNode()
     rclpy.spin(node)
     rclpy.shutdown()
 

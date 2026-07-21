@@ -5,6 +5,10 @@ _node_dir = os.path.dirname(os.path.realpath(__file__))
 if _node_dir not in sys.path:
     sys.path.insert(0, _node_dir)
 
+# ← AGREGAR ESTO
+_utils_dir = os.path.join(_node_dir, "utils")
+if _utils_dir not in sys.path:
+    sys.path.insert(0, _utils_dir)
 import rclpy
 import threading
 from rclpy.executors import MultiThreadedExecutor
@@ -20,7 +24,7 @@ from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 
 
@@ -48,6 +52,7 @@ class LLMLifecycleNode(LifecycleNode):
             self.cb_cambio_idioma, 
             qos_profile
         )
+        self.stt_listening_publisher = self.create_publisher(Bool, '/stt_listening', 10)
 
     def cb_cambio_idioma(self, msg):
         """Actualiza el idioma en el que debe responder el LLM."""
@@ -176,6 +181,9 @@ class LLMLifecycleNode(LifecycleNode):
 
             ai_response = result["messages"][-1].content
             buffer = ""
+            listen_msg = Bool()
+            listen_msg.data = False
+            self.stt_listening_publisher.publish(listen_msg)
 
             for char in ai_response:
                 if goal_handle.is_cancel_requested:

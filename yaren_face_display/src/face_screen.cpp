@@ -2449,11 +2449,17 @@ public:
 
         sttListeningSubscription_ = this->create_subscription<std_msgs::msg::Bool>(
             "/stt_listening", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                if (msg->data && activeMode == "yaren_chat" && !first_listen_done) {
-                    first_listen_done = true;
-                    std::thread([this]() {
-                        showCustomOverlay(FaceOverlay::MIC_PLAYING, isEnglish ? "Yaren is listening..." : "Yaren te escucha...", 2.0);
-                    }).detach();
+                if (activeMode == "yaren_chat" || activeMode == "yaren_chat_local") {
+                    if (msg->data) {
+                        // Es el turno del niño
+                        std::thread([this]() {
+                            showCustomOverlay(FaceOverlay::MIC_PLAYING,
+                                isEnglish ? "Your turn Speak now" : "Tu turno, Habla ahora",
+                                2.0);
+                        }).detach();
+                    } else {
+                        
+                    }
                 }
             }
         );
@@ -2594,6 +2600,9 @@ public:
             std::string cmd_speak = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice speaker_node.py' &";
             std::string cmd_fondo = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters fondo_virtual.py' &";
             std::string cmd_camara = "bash -c 'source " + setup + " && ros2 run camara_usb_csi csi_cam_pub.py' &";
+            std::string cmd_llm_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 llm_local_lifecycle_node.py' &";
+            std::string cmd_stt_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 stt_local_lifecycle_node.py' &";
+            std::string cmd_tts_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 tts_local_lifecycle_node.py' &";
 
             std::system(cmd_wake.c_str());
             std::system(cmd_voice.c_str());
@@ -2610,6 +2619,9 @@ public:
             std::system(cmd_speak.c_str());
             std::system(cmd_fondo.c_str());
             std::system(cmd_camara.c_str()); 
+            std::system(cmd_llm_local.c_str());
+            std::system(cmd_stt_local.c_str());
+            std::system(cmd_tts_local.c_str());
 
                         std::thread([this, setup]() {
                 // ── a) Pausa inicial para que se vea la animación ──
@@ -2696,10 +2708,13 @@ public:
                     configProgress++;
                     std::this_thread::sleep_for(std::chrono::seconds(2));
                 };
- 
-                configure_node("llm_lifecycle_node",        "Inteligencia Artificial");
-                configure_node("stt_lifecycle_node",        "Reconocimiento de Voz");
-                configure_node("tts_lifecycle_node",        "Sintesis de Voz");
+                
+                configure_node("llm_lifecycle_node",        "Inteligencia Artificial (Cloud)");
+                configure_node("llm_local_lifecycle_node",  "Inteligencia Artificial (Local)");               
+                configure_node("stt_lifecycle_node",        "Reconocimiento de Voz (Cloud)");
+                configure_node("tts_lifecycle_node",        "Sintesis de Voz (Cloud)");
+                configure_node("stt_local_lifecycle_node",        "Reconocimiento de Voz (Local)");
+                configure_node("tts_local_lifecycle_node",        "Sintesis de Voz (Local)");
                 configure_node("detector",                  "Deteccion de Emociones");
                 configure_node("face_filter_node",          "Filtros de Cara");
                 configure_node("body_points_detector_node", "Deteccion Corporal");
@@ -3000,11 +3015,33 @@ private:
         }};
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
             MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
-            MI("yaren_chat", "CHAT", isEnglish ? "Talk with Yaren" : "Conversar con Yaren", {29,233,22}, "", "", false, "", "chat", {"llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node"}),
-            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
+            MI("yaren_ai", "IA", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
             MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
             MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emocion", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
             MI("yaren_filtros", isEnglish ? "FILTERS" : "FILTROS", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
+        }};
+        subMenuMap["sub_yaren_ai"] = { isEnglish ? "ARTIFICIAL INTELLIGENCE" : "INTELIGENCIA ARTIFICIAL", {29,233,22}, {
+            MI("yaren_chat", 
+            isEnglish ? "CLOUD AI" : "IA EN LA NUBE", 
+            isEnglish ? "Chat with Yaren using Groq" : "Chatea con Yaren usando Groq", 
+            {29,233,22}, 
+            "", 
+            "", 
+            false, 
+            "", 
+            "chat", 
+            {"llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node"}),
+            
+            MI("yaren_chat_local", 
+            isEnglish ? "LOCAL AI" : "IA LOCAL", 
+            isEnglish ? "Chat with Yaren using local LLM" : "Chatea con Yaren usando LLM local", 
+            {255,200,50}, 
+            "", 
+            "", 
+            false, 
+            "", 
+            "chat", 
+            {"llm_local_lifecycle_node", "stt_local_lifecycle_node", "tts_local_lifecycle_node"}),
         }};
         subMenuMap["sub_yaren_dice"] = { isEnglish ? "YAREN SAYS" : "YAREN DICE", {64,171,255}, {
             MI("yaren_dice_sin_ayuda",
@@ -3429,7 +3466,6 @@ private:
                             navStack.push_back(lvl);
                         }
                     }
-                    startMenuMusic();
                 }
                 return;
             }
@@ -4408,7 +4444,6 @@ private:
 
     void audioPlayingCallback(const std_msgs::msg::Bool::SharedPtr msg) {
         ttsActive = msg->data;
-        // FIX-E: proteger Mix_PauseMusic/ResumeMusic con audioMutex_
         std::lock_guard<std::mutex> lk(audioMutex_);
         if (isMenuMusicPlaying) {
             if (ttsActive) Mix_PauseMusic();
@@ -4496,7 +4531,7 @@ private:
     // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
     std::atomic<int>  configProgress{0};
     // FIX-A: configTotal = 11 (coincide con los 11 configure_node() llamados)
-    static constexpr int configTotal{12};
+    static constexpr int configTotal{16};
     std::string       configStatus{"Iniciando sistema..."};
     std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };
