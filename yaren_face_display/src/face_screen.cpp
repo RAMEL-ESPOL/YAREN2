@@ -2603,6 +2603,9 @@ public:
             std::string cmd_llm_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 llm_local_lifecycle_node.py' &";
             std::string cmd_stt_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 stt_local_lifecycle_node.py' &";
             std::string cmd_tts_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 tts_local_lifecycle_node.py' &";
+            std::string cmd_chistes = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chistes chistes_node' &";
+            std::string cmd_memoria = "bash -c 'source " + setup + " && ros2 run yaren_juegos memoria_node' &";
+            std::string cmd_dance = "bash -c 'source " + setup + " && ros2 run yaren_juegos dance_game_node' &"; // NUEVO
 
             std::system(cmd_wake.c_str());
             std::system(cmd_voice.c_str());
@@ -2622,6 +2625,10 @@ public:
             std::system(cmd_llm_local.c_str());
             std::system(cmd_stt_local.c_str());
             std::system(cmd_tts_local.c_str());
+            std::system(cmd_memoria.c_str());
+            std::system(cmd_dance.c_str());
+            std::system(cmd_chistes.c_str());
+
 
                         std::thread([this, setup]() {
                 // ── a) Pausa inicial para que se vea la animación ──
@@ -2724,6 +2731,9 @@ public:
                 configure_node("filtro_animales",           "Filtro de Animales");
                 configure_node("face_landmark_publisher",   "Landmarks Faciales");
                 configure_node("csi_cam_node",              "Camara Principal");
+                configure_node("chistes_node", "Modulo de Chistes");
+                configure_node("memoria_node",  "Juego de Memoria");
+                configure_node("dance_game_node", "Juego de Baile");
  
                 // ── e) Finalizar pantalla de carga ──
                 {
@@ -3015,7 +3025,7 @@ private:
         }};
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
             MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
-            MI("yaren_ai", "IA", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
+            MI("yaren_ai", "IA", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            
             MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
             MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emocion", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
             MI("yaren_filtros", isEnglish ? "FILTERS" : "FILTROS", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
@@ -3081,8 +3091,17 @@ private:
         }};
         subMenuMap["sub_yaren_p2"] = { "YAREN", {0,229,255}, {
             MI("yaren_radio", "YAREN RADIO", isEnglish ? "music and animation" : "musica y animacion", {255,80,160}, "", "", true, "sub_yaren_radio", "radio"),
+            MI("yaren_juegos", isEnglish ? "GAMES" : "JUEGOS", isEnglish ? "Play with Yaren" : "Juega con Yaren", {255, 140, 50}, "", "", true, "sub_yaren_juegos", "dice"),
         }};
         subMenuMap["sub_yaren_p2"].key = "sub_yaren_p2";
+
+        subMenuMap["sub_yaren_juegos"] = { isEnglish ? "GAMES" : "JUEGOS", {255, 140, 50}, {
+            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
+            MI("yaren_chistes", isEnglish ? "JOKES" : "CHISTES", isEnglish ? "Yaren tells jokes" : "Yaren cuenta chistes", {255, 200, 50}, "", "for pid in $(ps aux | grep -E 'chistes_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "chistes", {"chistes_node"}),
+            MI("yaren_memoria", isEnglish ? "MEMORY GAME" : "JUEGO MEMORIA", isEnglish ? "Remember the colors" : "Acuerdate de los colores", {80, 200, 255}, "", "", false, "", "dice", {"memoria_node"}),
+            MI("yaren_dance", isEnglish ? "DANCE GAME" : "JUEGO DE BAILE", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "movements", {"dance_game_node"}),
+        }};
+        subMenuMap["sub_yaren_juegos"].key = "sub_yaren_juegos";
         subMenuMap["sub_yaren_radio"] = { "YAREN RADIO", {255,80,160}, {
             MI("radio_musica", isEnglish ? "MUSIC" : "MUSICA", isEnglish ? "play music" : "reproducir musica", {255,120,200}, "INTERNAL_RADIO", "", false, "", "musica"),
             MI("radio_videos", "VIDEOS", isEnglish ? "play videos" : "reproducir videos", {200,60,140}, "", "", true, "sub_yaren_videos", "video"),
@@ -3447,6 +3466,7 @@ private:
                 activeMode = ""; activeStopCmd = "";
                 navStack.clear();
                 hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
+                stopMenuMusic();
                 // FIX-I: publicar y ejecutar stop fuera del lock no es posible aquí
                 // porque estamos bajo navMutex. Lanzamos en thread para el system call.
                 auto msg = std_msgs::msg::String(); msg.data = "idle";
@@ -3466,6 +3486,7 @@ private:
                             navStack.push_back(lvl);
                         }
                     }
+                    startMenuMusic();
                 }
                 return;
             }
@@ -4530,8 +4551,7 @@ private:
     std::atomic<bool> configuring{true};
     // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
     std::atomic<int>  configProgress{0};
-    // FIX-A: configTotal = 11 (coincide con los 11 configure_node() llamados)
-    static constexpr int configTotal{16};
+    static constexpr int configTotal{19};
     std::string       configStatus{"Iniciando sistema..."};
     std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };

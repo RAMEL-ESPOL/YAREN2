@@ -1,5 +1,6 @@
 {
     "python.analysis.extraPaths": [
         "./yaren_chat/scripts/utils"
-    ]
+    ],
+    "cmake.sourceDirectory": "/home/roberto/robotis_ws/src/YAREN2/yaren_interfaces"
 }

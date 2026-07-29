@@ -55,6 +55,7 @@ class TTSLifecycleNode(LifecycleNode):
         self.audio_playing_publisher = self.create_publisher(Bool, '/audio_playing', 10)
         self.tts_text_pub = self.create_publisher(String, '/yaren/tts_text', 10)
         self.create_subscription(PersonResponse, '/response_person', self.process_input_person, 10)
+        self.create_subscription(String, '/yaren/speak_direct', self._cb_speak_direct, 10)
 
         qos_profile = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.lang_sub = self.create_subscription(
@@ -106,7 +107,14 @@ class TTSLifecycleNode(LifecycleNode):
         threading.Thread(target=self._audio_worker, daemon=True).start()
         # Arrancar pipeline LLM
         threading.Thread(target=self._send_goal_and_receive_chunks, daemon=True).start()
-
+    def _cb_speak_direct(self, msg):
+        self.get_logger().info(f"🗣️ TTS Directo recibido: {msg.data}")
+        # Lo lanzamos en un hilo para no bloquear los callbacks de ROS 2
+        threading.Thread(
+            target=self._play_audio, 
+            args=(msg.data,), 
+            daemon=True
+        ).start()
     def on_activate(self, state):
         self.get_logger().info('Activating TTS Node')
         self._action_client = ActionClient(self, ProcessResponse, '/response_llama')

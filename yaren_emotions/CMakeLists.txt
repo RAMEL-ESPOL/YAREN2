@@ -17,21 +17,19 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  scripts/detect_emotion_tflite.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(PROGRAMS
   scripts/csi_cam_pub.py
   DESTINATION lib/${PROJECT_NAME}
 )
+
 install(DIRECTORY
   launch
   DESTINATION share/${PROJECT_NAME}
 )
+
 # ========== Instalación común ==========
+# Aquí agregamos la carpeta "emojis" para que se copie al compilar
 install(DIRECTORY
-  models scripts utils
+  models scripts utils emojis
   DESTINATION share/${PROJECT_NAME}
 )
 
