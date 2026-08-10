@@ -27,8 +27,10 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
+            # Formato: 'nombre_del_ejecutable = nombre_del_paquete.nombre_del_archivo:main'
             'dance_game_node = yaren_juegos.dance_game:main',
             'memoria_node    = yaren_juegos.memoria_node:main',
+            'ahorcado_node   = yaren_juegos.ahorcado_game:main',
         ],
     },
 )

@@ -3,6 +3,7 @@
 #include <std_msgs/msg/string.hpp>
 #include <lifecycle_msgs/srv/change_state.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
+#include <lifecycle_msgs/srv/get_state.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <cv_bridge/cv_bridge.hpp>
@@ -2214,7 +2215,10 @@ public:
         loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png"); loadIcon("piopio", "piopio.png");
         loadIcon("gallinaturuleca", "gallinaturuleca.png"); loadIcon("susanita", "susanita.png"); loadIcon("vacalola", "vacalola.png");
         loadIcon("video", "video.png"); loadIcon("musica", "musica.png"); loadIcon("radio", "radio.png");
-        loadIcon("rutina_nueva", "rutina_nueva.png");
+        loadIcon("ahorcado", "juegoahorcado.png"); loadIcon("chistes", "chistes.png");
+        loadIcon("juegobaile", "juegobaile.png"); loadIcon("memoria", "memoria.png");
+        loadIcon("rutinapersonal", "rutinapersonal.png"); 
+
         ttsActive = false; isBlinking = false; hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
         activeMode = ""; activeStopCmd = ""; running = true;
@@ -2572,7 +2576,7 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|csi_cam_pub|fondo_virtual' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|csi_cam_pub|fondo_virtual|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
         const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
@@ -2604,8 +2608,9 @@ public:
             std::string cmd_stt_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 stt_local_lifecycle_node.py' &";
             std::string cmd_tts_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 tts_local_lifecycle_node.py' &";
             std::string cmd_chistes = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chistes chistes_node' &";
-            std::string cmd_memoria = "bash -c 'source " + setup + " && ros2 run yaren_juegos memoria_node' &";
-            std::string cmd_dance = "bash -c 'source " + setup + " && ros2 run yaren_juegos dance_game_node' &"; // NUEVO
+            std::string cmd_memoria = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_juegos memoria_node' &";
+            std::string cmd_dance = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_juegos dance_game_node' &"; // NUEVO
+            std::string cmd_ahorcado = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_juegos ahorcado_node' &";
 
             std::system(cmd_wake.c_str());
             std::system(cmd_voice.c_str());
@@ -2628,6 +2633,7 @@ public:
             std::system(cmd_memoria.c_str());
             std::system(cmd_dance.c_str());
             std::system(cmd_chistes.c_str());
+            std::system(cmd_ahorcado.c_str());
 
 
                         std::thread([this, setup]() {
@@ -2734,6 +2740,7 @@ public:
                 configure_node("chistes_node", "Modulo de Chistes");
                 configure_node("memoria_node",  "Juego de Memoria");
                 configure_node("dance_game_node", "Juego de Baile");
+                configure_node("ahorcado_node", "Juego del Ahorcado");
  
                 // ── e) Finalizar pantalla de carga ──
                 {
@@ -2844,8 +2851,8 @@ public:
         // FIX-F: verificar joinable antes de join en testThread
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
-    }
+            std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
+        }
 
     void drawWindow() {
         // FIX-C: copiar frame con lock, luego mostrar fuera del lock
@@ -3026,6 +3033,7 @@ private:
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
             MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
             MI("yaren_ai", "IA", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            
+            MI("yaren_juegos", isEnglish ? "GAMES" : "JUEGOS", isEnglish ? "Play with Yaren" : "Juega con Yaren", {255, 140, 50}, "", "", true, "sub_yaren_juegos", "dice"),
             MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
             MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emocion", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
             MI("yaren_filtros", isEnglish ? "FILTERS" : "FILTROS", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
@@ -3082,7 +3090,7 @@ private:
         subMenuMap["sub_yaren_movements"] = { isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", {251,64,224}, {
             MI("yaren_rutina1", isEnglish ? "ROUTINE 1" : "RUTINA 1", isEnglish ? "Routines" : "Rutinas", {251,64,224}, ("python3 " + mvDir + "yaren_movement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina1"),
             MI("yaren_rutina2", isEnglish ? "ROUTINE 2" : "RUTINA 2", isEnglish ? " Routines" : "Rutinas", {220,80,200}, ("python3 " + mvDir + "yaren_fullmovement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina2"),
-            MI("yaren_rutinanueva", isEnglish ? "PERSONAL ROUTINES" : "RUTINAS PERSONALES", isEnglish ? "manage and record" : "gestionar y grabar", {130, 80, 255}, "INTERNAL_ROUTINES", "", false, "", "rutina_nueva"),
+            MI("yaren_rutinanueva", isEnglish ? "PERSONAL ROUTINES" : "RUTINAS PERSONALES", isEnglish ? "manage and record" : "gestionar y grabar", {130, 80, 255}, "INTERNAL_ROUTINES", "", false, "", "rutinapersonal"),
         }};
         subMenuMap["sub_yaren_filtros"] = { isEnglish ? "FILTERS" : "FILTROS", {105,240,174}, {
             MI("yaren_animales", isEnglish ? "ANIMALS" : "ANIMALES", isEnglish ? "animal filter" : "filtro animal", {105,240,174}, "", "", false, "", "animales", {"csi_cam_node","face_landmark_publisher", "filtro_animales"}),
@@ -3091,15 +3099,15 @@ private:
         }};
         subMenuMap["sub_yaren_p2"] = { "YAREN", {0,229,255}, {
             MI("yaren_radio", "YAREN RADIO", isEnglish ? "music and animation" : "musica y animacion", {255,80,160}, "", "", true, "sub_yaren_radio", "radio"),
-            MI("yaren_juegos", isEnglish ? "GAMES" : "JUEGOS", isEnglish ? "Play with Yaren" : "Juega con Yaren", {255, 140, 50}, "", "", true, "sub_yaren_juegos", "dice"),
         }};
         subMenuMap["sub_yaren_p2"].key = "sub_yaren_p2";
 
         subMenuMap["sub_yaren_juegos"] = { isEnglish ? "GAMES" : "JUEGOS", {255, 140, 50}, {
             MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
             MI("yaren_chistes", isEnglish ? "JOKES" : "CHISTES", isEnglish ? "Yaren tells jokes" : "Yaren cuenta chistes", {255, 200, 50}, "", "for pid in $(ps aux | grep -E 'chistes_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "chistes", {"chistes_node"}),
-            MI("yaren_memoria", isEnglish ? "MEMORY GAME" : "JUEGO MEMORIA", isEnglish ? "Remember the colors" : "Acuerdate de los colores", {80, 200, 255}, "", "", false, "", "dice", {"memoria_node"}),
-            MI("yaren_dance", isEnglish ? "DANCE GAME" : "JUEGO DE BAILE", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "movements", {"dance_game_node"}),
+            MI("yaren_memoria", isEnglish ? "MEMORY GAME" : "JUEGO MEMORIA", isEnglish ? "Remember the colors" : "Acuerdate de los colores", {80, 200, 255}, "", "", false, "", "memoria", {"memoria_node"}),
+            MI("yaren_ahorcado",isEnglish ? "HANGMAN" : "AHORCADO",isEnglish ? "Guess the word" : "Adivina la palabra",{220, 100, 255},"", "",false, "", "ahorcado",   {"ahorcado_node"}),
+            MI("yaren_dance", isEnglish ? "DANCE GAME" : "JUEGO DE BAILE", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "juegobaile", {"dance_game_node"}),
         }};
         subMenuMap["sub_yaren_juegos"].key = "sub_yaren_juegos";
         subMenuMap["sub_yaren_radio"] = { "YAREN RADIO", {255,80,160}, {
@@ -3591,14 +3599,12 @@ private:
             activeMode    = item.id;
             activeStopCmd = item.stopCmd;
             active_lifecycle_nodes = item.lifecycle_nodes;
-            for (const auto& node : item.lifecycle_nodes)
-                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
+            for (const auto& node : active_lifecycle_nodes)ensure_lifecycle_active(node);
         } else {
             activeMode    = item.id;
             activeStopCmd = item.stopCmd;
             active_lifecycle_nodes = item.lifecycle_nodes;
-            for (const auto& node : active_lifecycle_nodes)
-                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
+            for (const auto& node : active_lifecycle_nodes)ensure_lifecycle_active(node);
         }
 
         std::string cleanCmd = item.cmd;
@@ -3773,6 +3779,7 @@ private:
         const int btnH = 40, btnY = SY+TH+40, gap = 16, stopW = 300, navW = 150;
         bool hasStop = !activeMode.empty() && (!activeStopCmd.empty() || !active_lifecycle_nodes.empty()) &&
                        activeMode != "yaren_emotions" &&
+                       activeMode != "yaren_ahorcado" &&
                        activeMode != "yaren_animales" &&
                        activeMode != "yaren_accesorios" &&
                        activeMode != "yaren_fondo" &&
@@ -4551,7 +4558,7 @@ private:
     std::atomic<bool> configuring{true};
     // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
     std::atomic<int>  configProgress{0};
-    static constexpr int configTotal{19};
+    static constexpr int configTotal{20};
     std::string       configStatus{"Iniciando sistema..."};
     std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };
@@ -4562,6 +4569,37 @@ private:
     std::string activeStopCmd {};
     std::vector<std::string> active_lifecycle_nodes;
     std::map<std::string, rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr> lifecycle_clients_;
+    std::map<std::string, rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr> lifecycle_state_clients_;
+    
+    uint8_t get_lifecycle_state(const std::string& node_name) {
+    std::string service = "/" + node_name + "/get_state";
+    if (lifecycle_state_clients_.find(node_name) == lifecycle_state_clients_.end()) {
+        lifecycle_state_clients_[node_name] =
+            this->create_client<lifecycle_msgs::srv::GetState>(service);
+    }
+    auto& client = lifecycle_state_clients_[node_name];
+    if (!client->wait_for_service(std::chrono::milliseconds(500)))
+        return 0;
+    auto future = client->async_send_request(
+        std::make_shared<lifecycle_msgs::srv::GetState::Request>());
+    if (future.wait_for(std::chrono::milliseconds(800)) == std::future_status::ready)
+        return future.get()->current_state.id;
+    return 0;
+}
+
+void ensure_lifecycle_active(const std::string& node_name) {
+    uint8_t state = get_lifecycle_state(node_name);
+    if (state == 1) { // unconfigured → configure primero
+        RCLCPP_WARN(get_logger(),
+            "[LC] %s en unconfigured, configurando antes de activar...",
+            node_name.c_str());
+        change_lifecycle_state(node_name,
+            lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+    change_lifecycle_state(node_name,
+        lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
+}
 
     void change_lifecycle_state(const std::string& node_name, uint8_t transition_id) {
         std::string service = "/" + node_name + "/change_state";

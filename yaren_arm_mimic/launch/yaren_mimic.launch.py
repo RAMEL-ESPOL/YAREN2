@@ -15,12 +15,6 @@ def generate_launch_description():
             description='Use simulation (Gazebo) clock if true'),
         
         Node(
-            package='yaren_face_display',
-            executable='face_screen',
-            name='face_screen',
-            output='screen'
-        ),
-        Node(
             package='yaren_arm_mimic',
             executable='csi_cam_pub.py',
             name='csi_cam_pub',

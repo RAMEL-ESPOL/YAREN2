@@ -45,7 +45,10 @@ set(ROS_DEPENDENCIES
   std_srvs
   lifecycle_msgs
 )
-ament_target_dependencies(face_screen ${ROS_DEPENDENCIES})
+ament_target_dependencies(face_screen 
+rclcpp
+lifecycle_msgs
+${ROS_DEPENDENCIES})
 
 # Vinculación corregida: usamos las librerías obtenidas por PkgConfig
 target_link_libraries(face_screen 

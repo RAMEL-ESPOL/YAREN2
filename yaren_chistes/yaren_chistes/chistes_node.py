@@ -46,6 +46,9 @@ class ChistesNode(LifecycleNode):
         self.get_logger().info('[chistes_node] Configurando...')
 
         try:
+            if pygame.mixer.get_init():
+                pygame.mixer.quit()
+            pygame.mixer.pre_init(44100, -16, 2, 2048)
             pygame.mixer.init()
             if os.path.exists(SOUND_PATH):
                 self._risa = pygame.mixer.Sound(SOUND_PATH)

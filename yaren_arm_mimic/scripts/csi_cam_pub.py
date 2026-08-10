@@ -23,10 +23,10 @@ class CSICameraPublisher(Node):
     def __init__(self):
         super().__init__('csi_cam_pub')
         self.declare_parameter('sensor_id',      0)
-        self.declare_parameter('capture_width',  1920)
-        self.declare_parameter('capture_height', 1080)
-        self.declare_parameter('display_width',  1920)
-        self.declare_parameter('display_height', 1080)
+        self.declare_parameter('capture_width',  640)
+        self.declare_parameter('capture_height', 480)
+        self.declare_parameter('display_width',  640)
+        self.declare_parameter('display_height', 480)
         self.declare_parameter('framerate',      30)
         self.declare_parameter('flip_method',    0)
 
@@ -39,41 +39,34 @@ class CSICameraPublisher(Node):
         flip_method    = self.get_parameter('flip_method').value
 
         self.publisher_ = self.create_publisher(Image, 'csi_camera/image_raw', 10)
-        self.bridge = CvBridge()
+        self.bridge    = CvBridge()
+        self.framerate = framerate
 
-        pipeline = gstreamer_pipeline(
-            sensor_id=sensor_id, capture_width=capture_width,
-            capture_height=capture_height, display_width=display_width,
-            display_height=display_height, framerate=framerate,
-            flip_method=flip_method,
-        )
-        self.get_logger().info(f'GStreamer pipeline:\n{pipeline}')
-        #CON CAMARA CSI:
-        #self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        # CON CAMARA USB:
-        self.cap = cv2.VideoCapture(0,cv2.CAP_V4L2)
+        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
         if not self.cap.isOpened():
-            self.get_logger().error('Unable to open CSI camera!')
+            self.get_logger().error('No se pudo abrir la cámara USB')
             raise RuntimeError('Camera not available')
+
         self.create_timer(1.0 / framerate, self.timer_callback)
-        self.get_logger().info('CSI Camera Publisher started.')
         self.frame_count = 0
-    # 2. En timer_callback, añade contador y fallback:
+        self.get_logger().info('CSI Camera Publisher iniciado')
+
     def timer_callback(self):
         ret, frame = self.cap.read()
         if not ret:
-            if self.frame_count % 30 == 0:  # Log cada ~1s para no saturar
-                self.get_logger().warning('️ cap.read() falló. Verifica conexión o cierra otras apps de cámara.')
+            if self.frame_count % 30 == 0:
+                self.get_logger().warning('cap.read() falló')
             return
-        
+
+        # ── Volteo vertical (cambia 0 por 1 si necesitas solo horizontal) ──
+        frame = cv2.flip(frame, 0)   # 0 = vertical, 1 = horizontal, -1 = ambos
+
         self.frame_count += 1
-        if self.frame_count % 90 == 0:  # Cada ~3s confirma actividad
-            self.get_logger().info(f'✅ Publicando frames: {self.frame_count}')
-            
         msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp    = self.get_clock().now().to_msg()
         msg.header.frame_id = 'csi_camera'
         self.publisher_.publish(msg)
+
     def destroy_node(self):
         self.cap.release()
         super().destroy_node()
