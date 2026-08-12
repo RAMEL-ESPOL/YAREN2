@@ -3,16 +3,7 @@
 dance_game.py  --  Yaren Dance (OpenCV)
 =========================================
 Juego estilo Just Dance renderizado con OpenCV. Adaptado a LifecycleNode.
-Rutina fija y unica por cancion. Al terminar la rutina -> SUMMARY automatico.
-
-Integración de cámara:
-  · YOLOv8-pose corre en un hilo de fondo (no bloquea el render).
-  · Al inicio del juego se muestra "📷 Cámara activada — ¡Baila!" 2 s antes
-    del PREPARATE! normal.
-  · La detección retorna frozenset de poses activas; el hold de 0.4 s ocurre
-    dentro del hilo y dispara handle_input_pose(detected_set) en el juego.
-  · Teclado y cámara son OR: cualquiera de los dos sirve para puntuar.
-  · Validación estricta añadida y detección de cámara diferida hasta inicio del baile.
+Sigue el mismo formato que memoria_node.py y body_points_detector_node_visual.py
 """
 
 import math
@@ -31,12 +22,14 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from std_msgs.msg import Bool, String
 
 # =============================================================================
-#  PATHS
+#  PATHS UNIVERSALES
 # =============================================================================
-AUDIO_DIR  = "/home/roberto/robotis_ws/src/YAREN2/yaren_radio/audios"
-FONDOS_DIR = "/home/roberto/robotis_ws/src/YAREN2/yaren_juegos/fondos"
-YOLO_MODEL = os.path.expanduser(
-    "~/robotis_ws/install/yaren_dice/share/yaren_dice/models/yolov8s-pose.pt")
+HOME_DIR = os.path.expanduser("~")
+BASE_WS  = os.path.join(HOME_DIR, "robotis_ws", "src", "YAREN2")
+
+AUDIO_DIR  = os.path.join(BASE_WS, "yaren_radio", "audios")
+FONDOS_DIR = os.path.join(BASE_WS, "yaren_juegos", "fondos")
+YOLO_MODEL = os.path.join(HOME_DIR, "robotis_ws", "install", "yaren_dice", "share", "yaren_dice", "models", "yolov8s-pose.pt")
 
 SONG_MUSIC = {
     "song_1":  os.path.join(AUDIO_DIR, "Balada.mp3"),
@@ -57,7 +50,7 @@ SONG_MUSIC = {
 MUSIC_VOLUME = 0.6
 
 # =============================================================================
-#  CONFIG  —  800×480
+#  CONFIG  --  800x480
 # =============================================================================
 WIN_NAME = "Yaren Dance"
 WIN_W    = 800
@@ -85,14 +78,35 @@ UI_DIVIDER = ( 55,  42, 78)
 UI_CORRECT = ( 80, 200,  70)
 UI_WRONG   = ( 60,  60, 210)
 
-# Keypoints COCO
+# Keypoints COCO (YOLO)
 LEFT_SHOULDER  = 5;  RIGHT_SHOULDER = 6
 LEFT_ELBOW     = 7;  RIGHT_ELBOW    = 8
 LEFT_WRIST     = 9;  RIGHT_WRIST    = 10
 LEFT_HIP       = 11; RIGHT_HIP      = 12
 
-POSE_HOLD_NEEDED = 0.4   # segundos de hold para confirmar pose
-CAM_INFER_SIZE   = 320   # resolución de inferencia YOLO
+POSE_HOLD_NEEDED = 0.4
+CAM_INFER_SIZE   = 320
+
+# =============================================================================
+#  PIPELINE GSTREAMER PARA CSI
+# =============================================================================
+def gstreamer_pipeline(
+    sensor_id=0,
+    capture_width=1280,
+    capture_height=720,
+    display_width=640,
+    display_height=480,
+    framerate=30,
+    flip_method=0,
+):
+    return (
+        f"nvarguscamerasrc sensor-id={sensor_id} ! "
+        f"video/x-raw(memory:NVMM), width=(int){capture_width}, height=(int){capture_height}, framerate=(fraction){framerate}/1 ! "
+        f"nvvidconv flip-method={flip_method} ! "
+        f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink drop=true"
+    )
 
 
 class GameState:
@@ -105,10 +119,9 @@ class GameState:
 
 
 # =============================================================================
-#  DETECCIÓN DE POSE
+#  DETECCION DE POSE
 # =============================================================================
-
-def detect_pose(kpts) -> frozenset:
+def detect_pose(kpts):
     if kpts is None or len(kpts) < 13:
         return frozenset()
 
@@ -117,29 +130,30 @@ def detect_pose(kpts) -> frozenset:
     le = kpts[LEFT_ELBOW];     re = kpts[RIGHT_ELBOW]
     lh = kpts[LEFT_HIP];       rh = kpts[RIGHT_HIP]
 
-    def valid(p): return p[0] > 5 and p[1] > 5
+    def valid(p):
+        return p[0] > 5 and p[1] > 5
 
     sw = abs(ls[0] - rs[0])
     if sw < 10:
         return frozenset()
 
     v_thresh = sw * 0.40
-    side_h   = sw * 0.50   # umbral horizontal para brazo lateral (permisivo)
-    side_v   = sw * 0.65   # tolerancia vertical para brazo lateral
-    down_x   = sw * 0.85   # muñeca no puede estar muy separada para DOWN
+    side_h   = sw * 0.50
+    side_v   = sw * 0.65
+    down_x   = sw * 0.85
 
     mid_shoulder_y = (ls[1] + rs[1]) / 2
 
     detected = set()
 
-    # ── UP ───────────────────────────────────────────────────────────────────
+    # UP
     if valid(lw) and valid(rw) and valid(le) and valid(re):
         if ((ls[1] - lw[1]) > v_thresh and (rs[1] - rw[1]) > v_thresh and
                 (ls[1] - le[1]) > v_thresh * 0.3 and
                 (rs[1] - re[1]) > v_thresh * 0.3):
             detected.add("UP")
 
-    # ── DOWN: brazos pegados al cuerpo ────────────────────────────────────────
+    # DOWN
     if valid(lw) and valid(rw) and "UP" not in detected:
         lw_below = lw[1] > mid_shoulder_y + sw * 0.3
         rw_below = rw[1] > mid_shoulder_y + sw * 0.3
@@ -148,134 +162,24 @@ def detect_pose(kpts) -> frozenset:
         if lw_below and rw_below and lw_near and rw_near:
             detected.add("DOWN")
 
-    # ── LEFT (brazo izquierdo del usuario → x mayor en imagen espejada) ──────
+    # LEFT
+    if valid(rw) and valid(re):
+        rw_lateral_x = (rs[0] - rw[0])
+        rw_v_diff    = abs(rw[1] - rs[1]) 
+        if rw_lateral_x > side_h and rw_v_diff < side_v:
+            detected.add("LEFT")
+
+    # RIGHT
     if valid(lw) and valid(le):
-        lw_lateral_x = (lw[0] - ls[0])   # positivo = muñeca a DERECHA del hombro
+        lw_lateral_x = (lw[0] - ls[0])
         lw_v_diff    = abs(lw[1] - ls[1])
         if lw_lateral_x > side_h and lw_v_diff < side_v:
-            detected.add("RIGHT") # <-- Invertido según petición
+            detected.add("RIGHT")
 
-    # ── RIGHT (brazo derecho del usuario → x menor en imagen espejada) ───────
-    if valid(rw) and valid(re):
-        rw_lateral_x = (rs[0] - rw[0])   # positivo = muñeca a IZQUIERDA del hombro
-        rw_v_diff    = abs(rw[1] - rs[1])
-        if rw_lateral_x > side_h and rw_v_diff < side_v:
-            detected.add("LEFT") # <-- Invertido según petición
-
-    # DOWN no coexiste con LEFT/RIGHT
     if "DOWN" in detected and ("LEFT" in detected or "RIGHT" in detected):
         detected.discard("DOWN")
 
     return frozenset(detected)
-
-
-# =============================================================================
-#  HILO DE CÁMARA
-# =============================================================================
-
-class PoseCamera:
-    """
-    Corre YOLOv8-pose en un hilo de fondo.
-    Expone `current_pose: frozenset` actualizado en tiempo real.
-    Llama a `on_pose_confirmed(pose_set)` cuando se sostiene 0.4 s.
-    """
-
-    def __init__(self, model_path=YOLO_MODEL, cam_index=0,
-                 on_pose_confirmed=None, infer_size=CAM_INFER_SIZE):
-        self.model_path         = model_path
-        self.cam_index          = cam_index
-        self.on_pose_confirmed  = on_pose_confirmed
-        self.infer_size         = infer_size
-        self.current_pose       = frozenset()
-        self.camera_ok          = False
-        self._running           = False
-        self.active_detection   = False  # Controla si procesar el tiempo de la pose
-        self._thread            = None
-        self._lock              = threading.Lock()
-
-    def start(self):
-        self._running = True
-        self.camera_ok = False
-        self.active_detection = False
-        self._thread  = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._running = False
-
-    def _loop(self):
-        try:
-            from ultralytics import YOLO
-            model = YOLO(self.model_path)
-        except Exception as e:
-            print(f"[PoseCamera] No se pudo cargar el modelo: {e}")
-            return
-
-        cap = cv2.VideoCapture(self.cam_index)
-        if not cap.isOpened():
-            print(f"[PoseCamera] No se pudo abrir la cámara {self.cam_index}")
-            return
-
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.camera_ok = True
-        print("[PoseCamera] Cámara lista ✓")
-
-        hold_pose = frozenset()
-        hold_t    = 0.0
-        last_t    = time.time()
-        
-        last_debug_pose = frozenset()
-
-        while self._running:
-            ret, frame = cap.read()
-            if not ret:
-                time.sleep(0.05)
-                continue
-
-            now = time.time()
-            dt  = now - last_t
-            last_t = now
-
-            frame = cv2.flip(frame, 1)
-
-            try:
-                results  = model(frame, imgsz=self.infer_size, verbose=False)
-                kpts_raw = results[0].keypoints
-                kpts     = None
-                if kpts_raw is not None and len(kpts_raw.xy) > 0:
-                    kpts = kpts_raw.xy[0].cpu().numpy()
-            except Exception:
-                kpts = None
-
-            detected = detect_pose(kpts)
-
-            if detected != last_debug_pose:
-                if detected:
-                    print(f"👀 [YOLO CÁMARA] Movimiento detectado: {list(detected)}")
-                else:
-                    print(f"👀 [YOLO CÁMARA] (Ninguna pose activa)")
-                last_debug_pose = detected
-
-            with self._lock:
-                self.current_pose = detected
-
-            if self.active_detection:
-                if detected and detected == hold_pose:
-                    hold_t += dt
-                    if hold_t >= POSE_HOLD_NEEDED:
-                        hold_t = 0.0
-                        if self.on_pose_confirmed:
-                            self.on_pose_confirmed(detected)
-                else:
-                    hold_pose = detected
-                    hold_t    = 0.0
-            else:
-                hold_pose = frozenset()
-                hold_t    = 0.0
-
-        cap.release()
-        print("[PoseCamera] Hilo de cámara terminado.")
 
 
 # =============================================================================
@@ -514,7 +418,6 @@ SONGS = [
     },
 ]
 
-# Mapeo teclas → nombres de pose (mismo formato que detect_pose)
 KEY_MAP = {
     ord('w'): "UP",    82: "UP",
     ord('s'): "DOWN",  84: "DOWN",
@@ -770,14 +673,13 @@ class DanceRenderer:
 
 
 # =============================================================================
-#  LÓGICA DEL JUEGO
+#  LOGICA DEL JUEGO
 # =============================================================================
 class DanceGame:
     SONGS_PER_PAGE = 6
-    # Tiempo extra antes del PREPARATE para mostrar "Cámara activada"
     CAM_ANNOUNCE_DUR = 2.0
 
-    def __init__(self, music, pose_camera: PoseCamera, is_english=False):
+    def __init__(self, music, pose_camera, is_english=False):
         self.is_english   = is_english
         self.music        = music
         self.pose_camera  = pose_camera
@@ -792,9 +694,6 @@ class DanceGame:
         self._finishing       = False
         self._menu_page       = 0
 
-        # start_delay tiene dos fases:
-        #   > CAM_ANNOUNCE_DUR  → mostrando "Cámara activada"
-        #   0..CAM_ANNOUNCE_DUR → mostrando "PREPARATE!"
         self.start_delay = 0.0
 
         self.score  = 0
@@ -839,7 +738,6 @@ class DanceGame:
         self._routine_total   = len(self._routine)
         self._enqueue_next_steps()
         self.state       = GameState.PLAYING
-        # Fase 1: CAM_ANNOUNCE_DUR + fase 2: 2.0 s de PREPARATE
         self.start_delay = self.CAM_ANNOUNCE_DUR + 2.0
         self.music.play(self._current_song_id)
 
@@ -860,13 +758,7 @@ class DanceGame:
     def _show_rating(self, txt, col):
         self.rating_txt = txt; self.rating_col = col; self.rating_timer = 0.75
 
-    # ── handle_input: acepta un string (teclado) o un frozenset (cámara) ─────
-
     def handle_input(self, direction_or_set):
-        """
-        direction_or_set: str como "UP" (teclado) o frozenset{"LEFT","RIGHT"} (cámara).
-        Un paso se completa cuando TODOS sus keys están cubiertos.
-        """
         if self.state != GameState.PLAYING:
             return
         active = next((q for q in self.queue
@@ -874,20 +766,17 @@ class DanceGame:
         if not active:
             return
 
-        # Normalizar a set de strings en mayúsculas
         if isinstance(direction_or_set, str):
             incoming = {direction_or_set.upper()}
         else:
             incoming = {d.upper() for d in direction_or_set}
 
         if not isinstance(direction_or_set, str):
-            # Si el input viene de la cámara (set/frozenset) -> Validación Estricta
             target_set = set(k.upper() for k in active["step"]["keys"])
             if incoming != target_set:
-                return # Si detecta algo que no es exactamente lo pedido, lo ignora
-            active["pending"] = [] # Validado por completo
+                return
+            active["pending"] = []
         else:
-            # Si el input viene del teclado (str) -> Quita del pending los que coincidan
             pending_set = set(k.upper() for k in active["pending"])
             matched = pending_set & incoming
             if not matched:
@@ -900,7 +789,6 @@ class DanceGame:
         
         active["hit_flash"] = 1.0
 
-        # Si se completaron todos los keys del paso
         if not active["pending"]:
             p = active["progress"]
             self.stats_attempted += 1
@@ -925,10 +813,9 @@ class DanceGame:
             self.start_delay -= dt
             return
             
-        # Activar detección de cámara al terminar el delay
         if self.pose_camera and not self.pose_camera.active_detection:
             self.pose_camera.active_detection = True
-            print("▶️ [JUEGO] El baile comenzó. Cámara activa para puntuar.")
+            print("[JUEGO] El baile comenzo. Camara activa para puntuar.")
             
         for q in self.queue:
             q["anim_t"] += dt
@@ -988,13 +875,11 @@ class DanceGame:
         bx, by, bw, bh = rect
         return bx <= self.mx <= bx+bw and by <= self.my <= by+bh
 
-    # ── render ────────────────────────────────────────────────────────────────
-
     def render(self):
         self.temp_rects = {}
         frame = np.zeros((WIN_H, WIN_W, 3), dtype=np.uint8)
         if   self.state == GameState.WELCOME:      self._render_welcome(frame)
-        elif self.state == GameState.MENU:          self._render_menu(frame)
+        elif self.state == GameState.MENU:         self._render_menu(frame)
         elif self.state == GameState.PLAYING:       self._render_playing(frame)
         elif self.state == GameState.SUMMARY:       self._render_summary(frame)
         elif self.state == GameState.CONFIRM_EXIT:  self._render_confirm_exit(frame)
@@ -1007,8 +892,6 @@ class DanceGame:
         with self.btn_lock:
             self.buttons_rects = self.temp_rects
         return frame
-
-    # ─ Welcome ────────────────────────────────────────────────────────────────
 
     def _render_welcome(self, frame):
         frame[:] = _dark_gradient(WIN_H, WIN_W, (8,6,18), (22,14,38))
@@ -1027,8 +910,6 @@ class DanceGame:
         self.temp_rects["btn_start_welcome"] = self.renderer.draw_button(
             frame, "INICIAR" if not self.is_english else "START",
             bx, by, bw, bh, (50,90,30), hov)
-
-    # ─ Menu ───────────────────────────────────────────────────────────────────
 
     def _render_menu(self, frame):
         frame[:] = _dark_gradient(WIN_H, WIN_W, (10,8,22), (20,14,40))
@@ -1072,8 +953,6 @@ class DanceGame:
                 frame, "SIGUIENTE >" if not self.is_english else "NEXT >",
                 nx, nav_y, nav_bw, nav_bh, (40,50,75), hov)
 
-    # ─ Summary ────────────────────────────────────────────────────────────────
-
     def _render_summary(self, frame):
         frame[:] = _dark_gradient(WIN_H, WIN_W, (8,6,18), (22,14,38))
         if self.stats_attempted > 0:
@@ -1107,8 +986,6 @@ class DanceGame:
             frame, "REPETIR" if not self.is_english else "PLAY AGAIN",
             bx2, by, bw, bh, (30,80,150), hov2)
 
-    # ─ Confirm exit ───────────────────────────────────────────────────────────
-
     def _render_confirm_exit(self, frame):
         frame[:] = _dark_gradient(WIN_H, WIN_W, (20,8,8), (40,14,14))
         _rounded_rect(frame, (WIN_W//2-260,150), (WIN_W//2+260, WIN_H-150),
@@ -1125,8 +1002,6 @@ class DanceGame:
         self.temp_rects["btn_confirm_no"] = self.renderer.draw_button(
             frame, "NO", bx2, by, bw, bh, (50,45,80), hov2)
 
-    # ─ Playing ────────────────────────────────────────────────────────────────
-
     def _render_playing(self, frame):
         R = self.renderer
         R.draw_background(frame, self.t)
@@ -1138,28 +1013,24 @@ class DanceGame:
         GHOST_X  = int(WIN_W*0.72)
         FIG_Y    = int(WIN_H*0.52)
 
-        # ── Pantalla de anuncio de cámara ────────────────────────────────────
         if self.start_delay > 2.0:
             cam_ok = self.pose_camera.camera_ok if self.pose_camera else False
-            icon   = "OK" if cam_ok else "..."
-            line1  = f"Camara activada [{icon}]" if not self.is_english else f"Camera active [{icon}]"
-            line2  = "iBAILA!" if not self.is_english else "DANCE!"
-            R.text(frame, line1, WIN_W/2, WIN_H/2 - 30, 1.4, C_LIME,   bold=True)
+            icon = "OK" if cam_ok else "..."
+            line1 = f"Camara activada [{icon}]" if not self.is_english else f"Camera active [{icon}]"
+            line2 = "BAILA!" if not self.is_english else "DANCE!"
+            R.text(frame, line1, WIN_W/2, WIN_H/2 - 30, 1.4, C_LIME, bold=True)
             R.text(frame, line2, WIN_W/2, WIN_H/2 + 30, 1.8, UI_ACCENT, bold=True)
             R.draw_step_bar(frame, 1.0)
             return
 
-        # ── Pantalla de PREPARATE ────────────────────────────────────────────
         if self.start_delay > 0:
             txt = "GET READY!" if self.is_english else "PREPARATE!"
             R.text(frame, txt, WIN_W/2, WIN_H/2, 2.0, C_GOLD, bold=True)
             R.draw_step_bar(frame, 1.0)
-            # Score/combo
             _rounded_rect(frame, (54,18), (162,70), (22,18,42), radius=10)
             R.text(frame, str(self.score), 108, 38, 0.95, UI_TEXT, bold=True)
             return
 
-        # ── Juego normal ─────────────────────────────────────────────────────
         pending_steps = sorted(
             [q for q in self.queue if not q["done"]],
             key=lambda q: q["progress"], reverse=True)
@@ -1209,17 +1080,14 @@ class DanceGame:
         _rounded_rect(frame, (cx_box,18), (cx_box+cw,60), (20,16,38), radius=12)
         R.text(frame, closest_name, WIN_W/2, 39, 1.05, UI_TEXT, bold=True)
 
-        # Score y combo
         _rounded_rect(frame, (54,18), (162,70), (22,18,42), radius=10)
         R.text(frame, str(self.score), 108, 38, 0.95, UI_TEXT, bold=True)
         if self.combo > 1:
             R.text(frame, f"x{self.combo}", 108, 62, 0.75, C_LIME, bold=True)
 
-        # Hint controles
         hint = "W A S D / flechas  |  X = salir"
         R.text(frame, hint, WIN_W/2, WIN_H-10, 0.48, (110,100,140))
 
-        # Rating flash
         if self.rating_timer > 0:
             alpha = min(self.rating_timer/0.3, 1.0)
             if alpha > 0:
@@ -1228,17 +1096,155 @@ class DanceGame:
 
 
 # =============================================================================
-#  LIFECYCLE NODE
+#  HILO DE CAMARA CON OPENCV DIRECTO
+# =============================================================================
+class PoseCamera:
+    def __init__(self, model_path=YOLO_MODEL, frame_provider=None,
+                 on_pose_confirmed=None, infer_size=CAM_INFER_SIZE):
+        self.model_path         = model_path
+        self.frame_provider     = frame_provider
+        self.on_pose_confirmed  = on_pose_confirmed
+        self.infer_size         = infer_size
+        self.current_pose       = frozenset()
+        self.camera_ok          = False
+        self._running           = False
+        self.active_detection   = False
+        self._thread            = None
+        self._lock              = threading.Lock()
+        self.model              = None
+        self._last_warning_time = 0
+        
+        try:
+            from ultralytics import YOLO
+            print(f"[PoseCamera] Cargando modelo YOLO desde: {self.model_path} ...")
+            if not os.path.exists(self.model_path):
+                print(f"[PoseCamera] Modelo no encontrado. Modo solo teclado.")
+                self.model = None
+            else:
+                self.model = YOLO(self.model_path)
+                dummy = np.zeros((self.infer_size, self.infer_size, 3), dtype=np.uint8)
+                self.model(dummy, verbose=False)
+                print("[PoseCamera] YOLO listo.")
+        except Exception as e:
+            print(f"[PoseCamera] Error cargando modelo: {e}. Modo solo teclado.")
+            self.model = None
+
+    def start(self):
+        self._running = True
+        self.camera_ok = False
+        self.active_detection = False
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+
+    def _loop(self):
+        if self.model is None:
+            print("[PoseCamera] Modelo no disponible. Modo solo teclado.")
+            while self._running:
+                time.sleep(0.1)
+            return
+
+        print("[PoseCamera] Obteniendo frames de camara...")
+
+        hold_pose = frozenset()
+        hold_t    = 0.0
+        last_t    = time.time()
+        last_debug_pose = frozenset()
+        empty_frame_count = 0
+
+        while self._running:
+            frame = self.frame_provider() if self.frame_provider else None
+            
+            if frame is None:
+                empty_frame_count += 1
+                current_time = time.time()
+                if current_time - self._last_warning_time > 5.0:
+                    if empty_frame_count > 30:
+                        print("[PoseCamera] Esperando frames de camara...")
+                        self._last_warning_time = current_time
+                time.sleep(0.03)
+                continue
+                
+            empty_frame_count = 0
+                    
+            if not self.camera_ok:
+                self.camera_ok = True
+                print("[PoseCamera] Camara lista (frames recibidos)")
+
+            now = time.time()
+            dt  = now - last_t
+            last_t = now
+
+            try:
+                results = self.model(frame, imgsz=self.infer_size, verbose=False)
+                kpts_raw = results[0].keypoints
+                kpts = None
+                if kpts_raw is not None and len(kpts_raw.xy) > 0:
+                    kpts = kpts_raw.xy[0].cpu().numpy()
+            except Exception as e:
+                print(f"[PoseCamera] Error en inferencia: {e}")
+                kpts = None
+
+            detected = detect_pose(kpts)
+
+            if detected != last_debug_pose:
+                if detected:
+                    print(f"[YOLO CAMARA] Movimiento detectado: {list(detected)}")
+                last_debug_pose = detected
+
+            with self._lock:
+                self.current_pose = detected
+
+            if self.active_detection:
+                if detected and detected == hold_pose:
+                    hold_t += dt
+                    if hold_t >= POSE_HOLD_NEEDED:
+                        hold_t = 0.0
+                        if self.on_pose_confirmed:
+                            self.on_pose_confirmed(detected)
+                else:
+                    hold_pose = detected
+                    hold_t    = 0.0
+            else:
+                hold_pose = frozenset()
+                hold_t    = 0.0
+
+        print("[PoseCamera] Hilo terminado.")
+
+
+# =============================================================================
+#  NODO PRINCIPAL - SIGUE EL FORMATO DE memoria_node.py
 # =============================================================================
 class DanceGameNode(LifecycleNode):
     def __init__(self):
         super().__init__("dance_game_node")
-        self._active   = False
+        self._active = False
         self.is_english = False
-        self._mode_pub  = None
-        self._lang_sub  = None
-        self.game       = None
+        self._mode_pub = None
+        self._lang_sub = None
+        self.game = None
+        self.cap = None
+        self.model = None
+        self._show_window = False
+        
+        # Cargar modelo YOLO al inicio
+        try:
+            from ultralytics import YOLO
+            if os.path.exists(YOLO_MODEL):
+                self.model = YOLO(YOLO_MODEL)
+                self.get_logger().info('YOLO cargado correctamente')
+            else:
+                self.get_logger().warn('Modelo YOLO no encontrado')
+        except Exception as e:
+            self.get_logger().error(f'Error cargando YOLO: {e}')
 
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    
     def on_configure(self, state):
         self.get_logger().info('DanceGameNode: configurando...')
         try:
@@ -1254,128 +1260,246 @@ class DanceGameNode(LifecycleNode):
     def on_activate(self, state):
         self.get_logger().info('DanceGameNode: ACTIVO')
         self._active = True
+        self._show_window = True
+        
+        # ABRIR CAMARA DIRECTAMENTE
+        self.get_logger().info('Intentando abrir camara...')
+        
+        # Intentar CSI primero
+        try:
+            pipeline = gstreamer_pipeline(display_width=640, display_height=480, framerate=30)
+            self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            if self.cap.isOpened():
+                # ¡IMPORTANTE! Leer un frame de prueba para confirmar que el pipeline GStreamer no falló silenciosamente
+                ret, test_frame = self.cap.read()
+                if ret and test_frame is not None:
+                    self.get_logger().info('Camara CSI abierta y generando frames (GStreamer)')
+                else:
+                    self.get_logger().warn('CSI pipeline abierta pero NO genera frames (Error CaptureSession). Reintentando con USB...')
+                    self.cap.release()
+                    self.cap = None
+            else:
+                self.cap.release()
+                self.cap = None
+                self.get_logger().warn('CSI fallo al abrir, intentando USB...')
+        except Exception as e:
+            self.get_logger().warn(f'Error CSI: {e}')
+            self.cap = None
+        
+        # Fallback a USB
+        if self.cap is None:
+            try:
+                self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+                if self.cap.isOpened():
+                    ret, test_frame = self.cap.read()
+                    if ret and test_frame is not None:
+                        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        self.cap.set(cv2.CAP_PROP_FPS, 30)
+                        self.get_logger().info('Camara USB abierta correctamente')
+                    else:
+                        self.get_logger().error('USB detectada pero no lee frames.')
+                        self.cap.release()
+                        self.cap = None
+                else:
+                    self.cap.release()
+                    self.cap = None
+            except Exception as e:
+                self.get_logger().warn(f'Error USB: {e}')
+                self.cap = None
+        
+        if self.cap is None:
+            self.get_logger().error('No se pudo abrir ninguna camara - modo solo teclado')
+        
         return super().on_activate(state)
 
     def on_deactivate(self, state):
         self.get_logger().info('DanceGameNode: INACTIVO')
         self._active = False
+        self._show_window = False
+        # Se elimina self.cap.release() para evitar doble liberado
+        cv2.destroyAllWindows()
         return super().on_deactivate(state)
 
     def on_cleanup(self, state):
-        if self._mode_pub: self.destroy_publisher(self._mode_pub)
-        if self._lang_sub: self.destroy_subscription(self._lang_sub)
+        if self._mode_pub:
+            self.destroy_publisher(self._mode_pub)
+        if self._lang_sub:
+            self.destroy_subscription(self._lang_sub)
+        # Se elimina self.cap.release() para evitar doble liberado
+        cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state):
         self._active = False
+        self._show_window = False
+        # Se elimina self.cap.release() para evitar doble liberado
+        cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
 
     def _cb_lang(self, msg):
         self.is_english = msg.data
-        if self.game: self.game.is_english = self.is_english
+        if self.game:
+            self.game.is_english = self.is_english
+
+    def get_frame(self):
+        if self.cap is None or not self.cap.isOpened():
+            return None
+        ret, frame = self.cap.read()
+        if ret and frame is not None:
+            return cv2.flip(frame, 1)
+        return None
 
     def publish_idle(self):
         if self._mode_pub:
-            msg = String(); msg.data = "idle"; self._mode_pub.publish(msg)
+            msg = String(); msg.data = "idle"
+            self._mode_pub.publish(msg)
+
+    def _mouse_callback(self, event, x, y, flags, param):
+        """Detecta clics en la ventana de OpenCV para cerrarla y detener el juego."""
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if self.game:
+                self.game.process_mouse(x, y, True)
+
+    # ── Display loop (DEBE correr en el main thread) ──
+    
+    def run_display_main_thread(self):
+        """
+        Llamado desde main() en el hilo principal.
+        Espera a que on_activate haya puesto _active=True, abre la ventana
+        OpenCV, hace el bucle de render y al salir destruye la ventana.
+        """
+        # Esperar a que el nodo se active
+        while not self._active and rclpy.ok():
+            time.sleep(0.05)
+
+        if not rclpy.ok():
+            return
+
+        music = MusicManager()
+
+        def get_camera_frame():
+            return self.get_frame()
+
+        pose_camera = PoseCamera(model_path=YOLO_MODEL, frame_provider=get_camera_frame)
+
+        window_created = False
+        game = None
+        last = time.time()
+
+        def on_pose_confirmed(pose_set):
+            if game:
+                game.handle_input(pose_set)
+
+        # ── Abrir ventana en el main thread ──
+        cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WIN_NAME, WIN_W, WIN_H)
+        # Comentado WINDOW_FULLSCREEN para evitar que OpenCV reporte la ventana como invisible
+        # cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_TOPMOST, 1)
+        cv2.setMouseCallback(WIN_NAME, self._mouse_callback)
+
+        def _focus():
+            time.sleep(0.4)
+            os.system(f"xdotool search --sync --name '{WIN_NAME}' "
+                      "windowactivate --sync windowraise 2>/dev/null")
+        threading.Thread(target=_focus, daemon=True).start()
+
+        # ── Bucle de render ────────────────────────────────────────────────
+        while rclpy.ok() and self._active:
+            if not window_created:
+                game = DanceGame(music=music,
+                                 pose_camera=pose_camera,
+                                 is_english=self.is_english)
+                self.game = game
+
+                pose_camera.on_pose_confirmed = on_pose_confirmed
+                pose_camera.start()
+                
+                window_created = True
+                last = time.time()
+
+            now = time.time()
+            dt = min(now-last, 0.05)
+            last = now
+            
+            if game.is_english != self.is_english:
+                game.is_english = self.is_english
+                
+            if game.state == GameState.EXITED:
+                self._active = False
+                self.publish_idle()
+                break
+
+            game.update(dt)
+            frame = game.render()
+            cv2.imshow(WIN_NAME, frame)
+
+            key = cv2.waitKey(int(1000/FPS)) & 0xFF
+            if key == 27:
+                if game.state == GameState.PLAYING:
+                    music.stop()
+                    game.state = GameState.SUMMARY
+                elif game.state in [GameState.WELCOME, GameState.MENU]:
+                    game.state = GameState.CONFIRM_EXIT
+                else:
+                    game.state = GameState.MENU
+
+            direction = KEY_MAP.get(key)
+            if direction:
+                game.handle_input(direction)
+
+            # Si la ventana se cerró externamente
+            try:
+                is_visible = cv2.getWindowProperty(WIN_NAME, cv2.WND_PROP_VISIBLE)
+                if is_visible < 1:
+                    # En lugar de cerrar el bucle, solo registramos la advertencia.
+                    # Esto evita el "suicidio" del programa si el WM o SSH tarda en reportar la visibilidad.
+                    self.get_logger().warn(f"Ventana reportada como no visible ({is_visible}). Ignorando cierre automático.")
+                    # self._active = False
+                    # self.publish_idle()
+                    # break
+            except Exception:
+                pass
+
+        # ── Limpieza SEGURA (Evita errores de Argus) ──
+        pose_camera.stop()
+        
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+            time.sleep(0.5) # Tiempo para que el daemon de Argus libere los "client objects"
+            
+        music.quit()
+        cv2.destroyAllWindows()
+        self.publish_idle()
 
 
 # =============================================================================
-#  MAIN
+#  MAIN - SIGUE EL FORMATO DE memoria_node.py
 # =============================================================================
 def main(args=None):
     rclpy.init(args=args)
     node = DanceGameNode()
-    ros_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
-    ros_thread.start()
 
-    music       = MusicManager()
-    pose_camera = PoseCamera(model_path=YOLO_MODEL, cam_index=0)
-    # NO .start() aquí — se activa solo cuando el modo está activo
-
-    window_created = False
-    game           = None
-    last           = time.time()
-
-    def mouse_callback(event, x, y, flags, param):
-        if game and node._active:
-            if event == cv2.EVENT_MOUSEMOVE:
-                game.process_mouse(x, y, False)
-            elif event == cv2.EVENT_LBUTTONDOWN:
-                game.process_mouse(x, y, True)
-
-    # Callback que dispara el hilo de cámara cuando detecta pose sostenida
-    def on_pose_confirmed(pose_set):
-        if game:
-            game.handle_input(pose_set)
+    # rclpy.spin en hilo secundario
+    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spin_thread.start()
 
     try:
-        while rclpy.ok():
-            if node._active:
-                if not window_created:
-                    game = DanceGame(music=music,
-                                     pose_camera=pose_camera,
-                                     is_english=node.is_english)
-                    node.game = game
-
-                    # Arranca la cámara junto con el juego
-                    pose_camera.on_pose_confirmed = on_pose_confirmed
-                    pose_camera.start()
-
-                    cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
-                    cv2.resizeWindow(WIN_NAME, WIN_W, WIN_H)
-                    cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_FULLSCREEN,
-                                          cv2.WINDOW_FULLSCREEN)
-                    cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_TOPMOST, 1)
-                    cv2.setMouseCallback(WIN_NAME, mouse_callback)
-                    def _focus():
-                        time.sleep(0.4)
-                        os.system(f"xdotool search --sync --name '{WIN_NAME}' "
-                                  "windowactivate --sync windowraise 2>/dev/null")
-                    threading.Thread(target=_focus, daemon=True).start()
-                    window_created = True
-                    last = time.time()
-
-                now = time.time(); dt = min(now-last, 0.05); last = now
-                if game.is_english != node.is_english:
-                    game.is_english = node.is_english
-                if game.state == GameState.EXITED:
-                    node._active = False; node.publish_idle(); continue
-
-                game.update(dt)
-                frame = game.render()
-                cv2.imshow(WIN_NAME, frame)
-
-                key = cv2.waitKey(int(1000/FPS)) & 0xFF
-                if key == 27:
-                    if game.state == GameState.PLAYING:
-                        music.stop(); game.state = GameState.SUMMARY
-                    elif game.state in [GameState.WELCOME, GameState.MENU]:
-                        game.state = GameState.CONFIRM_EXIT
-                    else:
-                        game.state = GameState.MENU
-
-                # Teclado → handle_input con string
-                direction = KEY_MAP.get(key)
-                if direction:
-                    game.handle_input(direction)
-
-            else:
-                if window_created:
-                    music.stop()
-                    pose_camera.stop()   # detiene hilo de cámara
-                    cv2.destroyWindow(WIN_NAME)
-                    window_created = False; game = None; node.game = None
-                time.sleep(0.1)
-
-    except Exception as e:
-        node.get_logger().error(f"Fallo en loop: {e}\n{traceback.format_exc()}")
+        # El display loop OpenCV DEBE vivir en el main thread
+        node.run_display_main_thread()
+    except KeyboardInterrupt:
+        pass
     finally:
-        pose_camera.stop()
-        music.quit()
-        if window_created: cv2.destroyAllWindows()
-        node.publish_idle()
+        node._active = False
+        node._show_window = False
+        cv2.destroyAllWindows()
         node.destroy_node()
-        if rclpy.ok(): rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
+        spin_thread.join(timeout=3.0)
 
 
 if __name__ == "__main__":

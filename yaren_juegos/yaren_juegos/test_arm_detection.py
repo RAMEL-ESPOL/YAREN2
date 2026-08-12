@@ -6,19 +6,18 @@ Script standalone para probar la detección de direcciones con los brazos
 usando YOLOv8-pose. Sin ROS2, sin dependencias extra.
 
 Mapeo de direcciones (retorna SET de activas simultáneamente):
-  UP            → ambos brazos arriba (muñecas sobre hombros)
-  DOWN          → ambos brazos pegados al cuerpo (muñecas cerca de caderas/muslos)
-  LEFT          → brazo izquierdo extendido lateral
-  RIGHT         → brazo derecho extendido lateral
+  UP          → ambos brazos arriba (muñecas sobre hombros)
+  DOWN        → ambos brazos pegados al cuerpo (muñecas cerca de caderas/muslos)
+  LEFT        → brazo izquierdo extendido lateral
+  RIGHT       → brazo derecho extendido lateral
   LEFT + RIGHT  → T-pose (ambos brazos laterales al mismo tiempo)
   UP + LEFT     → brazo izquierdo arriba, derecho lateral
   UP + RIGHT    → brazo derecho arriba, izquierdo lateral
 
 Ejecutar:
-  python3 test_arm_detection.py
-  python3 test_arm_detection.py --source /dev/video0
-  python3 test_arm_detection.py --source 0
-  python3 test_arm_detection.py --model /ruta/al/yolov8s-pose.pt
+  python3 test_arm_detection.py --csi   <-- PARA USAR CÁMARA CSI EN LA JETSON
+  python3 test_arm_detection.py         <-- PARA USAR CÁMARA USB NORMAL
+  python3 test_arm_detection.py --csi --flip 2  <-- GIRAR CÁMARA 180 GRADOS
 """
 
 import argparse
@@ -76,22 +75,31 @@ POSE_NAMES = {
 W, H = 800, 480
 
 
+# ─── Pipeline GStreamer para CSI ─────────────────────────────────────────────
+def gstreamer_pipeline(
+    sensor_id=0,
+    capture_width=1280,
+    capture_height=720,
+    display_width=640,
+    display_height=480,
+    framerate=30,
+    flip_method=0,
+):
+    return (
+        f"nvarguscamerasrc sensor-id={sensor_id} ! "
+        f"video/x-raw(memory:NVMM), width=(int){capture_width}, height=(int){capture_height}, framerate=(fraction){framerate}/1 ! "
+        f"nvvidconv flip-method={flip_method} ! "
+        f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink drop=true"
+    )
+
 # ─── Detección de dirección ───────────────────────────────────────────────────
 
 def detect_direction(kpts):
     """
     kpts: array (17, 2) con coordenadas (x, y) en píxeles.
     Retorna: (frozenset de strings activos, dict debug)
-
-    Ejemplo de retorno: (frozenset({"LEFT", "RIGHT"}), {...})
-
-    Lógica por componente:
-      UP    → ambas muñecas claramente por encima de ambos hombros
-      DOWN  → ambas muñecas a la altura de caderas/muslos y cerca del cuerpo
-      LEFT  → muñeca izquierda extendida lateralmente (x menor que hombro izq)
-      RIGHT → muñeca derecha extendida lateralmente (x mayor que hombro der)
-
-    Umbrales adaptativos basados en el ancho entre hombros (sw).
     """
     if kpts is None or len(kpts) < 13:
         return frozenset(), {}
@@ -108,16 +116,14 @@ def detect_direction(kpts):
     def valid(p):
         return p[0] > 5 and p[1] > 5
 
-    sw = abs(ls[0] - rs[0])   # ancho entre hombros — referencia de escala
+    sw = abs(ls[0] - rs[0])  # ancho entre hombros — referencia de escala
     if sw < 10:
         return frozenset(), {}
 
     # ── Umbrales adaptativos ──────────────────────────────────────────────────
     v_thresh  = sw * 0.40    # diferencia vertical para "arriba"
     side_h    = sw * 0.50    # separación horizontal mínima para brazo lateral
-                             # (más permisivo que antes: era 0.65)
     side_v    = sw * 0.65    # tolerancia vertical para brazo lateral
-                             # (más permisivo: era 0.50)
     down_x    = sw * 0.35    # muñeca no puede estar muy separada lateralmente para DOWN
 
     mid_shoulder_y = (ls[1] + rs[1]) / 2
@@ -143,12 +149,9 @@ def detect_direction(kpts):
             detected.add("UP")
 
     # ── DOWN: ambas muñecas cerca del cuerpo a la altura de caderas/muslos ────
-    # La condición es: muñecas por debajo del nivel del hombro Y cerca del eje
-    # del cuerpo en X (no extendidas lateralmente).
     if valid(lw) and valid(rw):
         lw_below_shoulder = lw[1] > mid_shoulder_y + sw * 0.3
         rw_below_shoulder = rw[1] > mid_shoulder_y + sw * 0.3
-        # No deben estar muy separadas del cuerpo lateralmente
         lw_near_body = abs(lw[0] - ls[0]) < down_x + sw * 0.5
         rw_near_body = abs(rw[0] - rs[0]) < down_x + sw * 0.5
         debug["lw_below_shoulder"] = lw_below_shoulder
@@ -156,30 +159,28 @@ def detect_direction(kpts):
         debug["lw_near_body"]      = lw_near_body
         debug["rw_near_body"]      = rw_near_body
         if lw_below_shoulder and rw_below_shoulder and lw_near_body and rw_near_body:
-            # Solo si UP no está activo (evitar ambigüedad)
             if "UP" not in detected:
                 detected.add("DOWN")
 
-    # ── RIGHT: muñeca derecha extendida lateralmente hacia la derecha ─────────
-    # En imagen espejada (webcam), el brazo DERECHO del usuario
-    # aparece a la IZQUIERDA de la pantalla (x menor que el hombro derecho).
+    # ── LEFT: brazo izquierdo físico del usuario (Lado Izq. de la pantalla) ─────────
+    # En espejo, el brazo izquierdo del usuario es captado como brazo derecho (rw) por YOLO.
     if valid(rw) and valid(re):
-        # Extensión lateral: muñeca más separada que el hombro en X
-        rw_lateral_x = (rs[0] - rw[0])    # positivo = muñeca a izquierda del hombro (imagen espejada)
-        rw_v_diff    = abs(rw[1] - rs[1])  # diferencia vertical con hombro
+        rw_lateral_x = (rs[0] - rw[0])    # positivo = muñeca a izquierda del hombro (espejo)
+        rw_v_diff    = abs(rw[1] - rs[1]) 
         debug["rw_lateral_x"] = rw_lateral_x
         debug["rw_v_diff"]    = rw_v_diff
         if rw_lateral_x > side_h and rw_v_diff < side_v:
-            detected.add("RIGHT")
+            detected.add("LEFT") # <--- CORREGIDO: AHORA DEVUELVE LEFT
 
-    # ── LEFT: muñeca izquierda extendida lateralmente hacia la izquierda ──────
+    # ── RIGHT: brazo derecho físico del usuario (Lado Der. de la pantalla) ──────
+    # En espejo, el brazo derecho del usuario es captado como brazo izquierdo (lw) por YOLO.
     if valid(lw) and valid(le):
         lw_lateral_x = (lw[0] - ls[0])    # positivo = muñeca a derecha del hombro
         lw_v_diff    = abs(lw[1] - ls[1])
         debug["lw_lateral_x"] = lw_lateral_x
         debug["lw_v_diff"]    = lw_v_diff
         if lw_lateral_x > side_h and lw_v_diff < side_v:
-            detected.add("LEFT")
+            detected.add("RIGHT") # <--- CORREGIDO: AHORA DEVUELVE RIGHT
 
     # DOWN no puede coexistir con LEFT o RIGHT
     if "DOWN" in detected and ("LEFT" in detected or "RIGHT" in detected):
@@ -223,9 +224,6 @@ def draw_skeleton(frame, kpts, color=(0, 255, 0)):
 
 
 def draw_direction_indicators(frame, detected, confidence_t):
-    """
-    Dibuja flechas para cada dirección activa en el set `detected`.
-    """
     cx, cy = W // 2, H // 2
     color  = POSE_COLORS.get(detected, (100, 100, 100))
     pulse  = 0.75 + 0.25 * math.sin(confidence_t * 8.0)
@@ -236,7 +234,6 @@ def draw_direction_indicators(frame, detected, confidence_t):
                     cv2.FONT_HERSHEY_DUPLEX, 0.7, (100, 100, 100), 1, cv2.LINE_AA)
         return
 
-    # Una flecha por cada dirección activa
     arrow_offsets = {
         "UP":    (0, -110),
         "DOWN":  (0,  110),
@@ -264,28 +261,23 @@ def draw_hud(frame, detected, fps, debug, hold_t, confirmed):
     color = POSE_COLORS.get(detected, (100, 100, 100))
     pose_name = POSE_NAMES.get(detected, "+".join(sorted(detected)) if detected else "NEUTRAL")
 
-    # Barra inferior
     bar_y = H - 60
     cv2.rectangle(frame, (0, bar_y), (W, H), (12, 10, 22), -1)
 
-    # Nombre de la pose
     (tw, _), _ = cv2.getTextSize(pose_name, cv2.FONT_HERSHEY_DUPLEX, 1.2, 2)
     cv2.putText(frame, pose_name, (W // 2 - tw // 2 + 2, bar_y + 42),
                 cv2.FONT_HERSHEY_DUPLEX, 1.2, C_BLACK, 4, cv2.LINE_AA)
     cv2.putText(frame, pose_name, (W // 2 - tw // 2, bar_y + 40),
                 cv2.FONT_HERSHEY_DUPLEX, 1.2, color, 2, cv2.LINE_AA)
 
-    # FPS
     cv2.putText(frame, f"FPS:{fps:.0f}", (8, bar_y + 20),
                 cv2.FONT_HERSHEY_PLAIN, 0.9, C_GRAY, 1, cv2.LINE_AA)
 
-    # Hold timer
     HOLD_NEEDED = 0.4
     bar_w = int(min(hold_t / HOLD_NEEDED, 1.0) * 200)
     cv2.rectangle(frame, (8, bar_y + 28), (208, bar_y + 38), (40, 35, 55), -1)
     cv2.rectangle(frame, (8, bar_y + 28), (8 + bar_w, bar_y + 38), color, -1)
 
-    # CONFIRMED flash
     if confirmed:
         ov = frame.copy()
         cv2.rectangle(ov, (0, 0), (W, H), color, -1)
@@ -294,7 +286,6 @@ def draw_hud(frame, detected, fps, debug, hold_t, confirmed):
         cv2.putText(frame, "CONFIRMED", (W // 2 - cw // 2, 60),
                     cv2.FONT_HERSHEY_DUPLEX, 1.2, color, 2, cv2.LINE_AA)
 
-    # Debug info
     if debug:
         dy = 20
         sw = debug.get("sw", 0)
@@ -337,7 +328,11 @@ def draw_guide(frame):
 def main():
     parser = argparse.ArgumentParser(description="Test detección de brazos con YOLOv8-pose")
     parser.add_argument("--source", default="0",
-                        help="Fuente de video: 0,1,2 (cámara) o ruta a archivo")
+                        help="Fuente de video: 0,1,2 (cámara USB) o ruta a archivo")
+    parser.add_argument("--csi", action="store_true", default=False,
+                        help="Usar cámara CSI de la Jetson a través de GStreamer")
+    parser.add_argument("--flip", type=int, default=0,
+                        help="Rotación GStreamer/Cámara (0=Normal, 1=90° Izq, 2=180°, 3=90° Der, 6=Espejo Vertical)")
     parser.add_argument("--model",
                         default=os.path.expanduser(
                             "~/robotis_ws/install/yaren_dice/share/yaren_dice/models/yolov8s-pose.pt"),
@@ -345,7 +340,7 @@ def main():
     parser.add_argument("--infer-size", type=int, default=320,
                         help="Tamaño de inferencia YOLO (320 o 640)")
     parser.add_argument("--mirror", action="store_true", default=True,
-                        help="Espejo horizontal (para webcam estándar)")
+                        help="Espejo horizontal de la imagen en pantalla")
     parser.add_argument("--no-mirror", dest="mirror", action="store_false")
     parser.add_argument("--debug", action="store_true", default=True,
                         help="Mostrar valores de debug")
@@ -360,14 +355,21 @@ def main():
         print(f"[ERROR] No se pudo cargar el modelo: {e}")
         return
 
-    src = int(args.source) if args.source.isdigit() else args.source
-    cap = cv2.VideoCapture(src)
+    # Selección de cámara (CSI vs USB/Video)
+    if args.csi:
+        pipeline = gstreamer_pipeline(display_width=640, display_height=480, framerate=30, flip_method=args.flip)
+        print(f"[INFO] Abriendo cámara CSI con pipeline (flip={args.flip}):\n{pipeline}")
+        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+    else:
+        src = int(args.source) if args.source.isdigit() else args.source
+        cap = cv2.VideoCapture(src)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        print(f"[INFO] Cámara abierta (V4L2): {args.source}")
+
     if not cap.isOpened():
-        print(f"[ERROR] No se pudo abrir la fuente: {args.source}")
+        print("[ERROR] No se pudo abrir la cámara. Verifica la conexión.")
         return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    print(f"[INFO] Cámara abierta: {args.source}")
 
     WIN = "Yaren - Test Detección Brazos"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
@@ -398,6 +400,17 @@ def main():
         if not ret:
             time.sleep(0.05)
             continue
+            
+        # Si NO es CSI pero pidieron flip, lo hacemos por software en OpenCV
+        if not args.csi and args.flip > 0:
+            if args.flip == 1:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            elif args.flip == 2:
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+            elif args.flip == 3:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            elif args.flip == 6:
+                frame = cv2.flip(frame, 0) # Espejo vertical
 
         now = time.time()
         dt  = now - last_time

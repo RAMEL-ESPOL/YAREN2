@@ -865,7 +865,8 @@ public:
         currentSong = idx;
         state = RadioState::PLAYING;
         playStart = std::chrono::steady_clock::now();
-        std::string audioPath = pkgDir + "/audios/" + songs[idx].audioFile;
+	std::string absCwd = std::filesystem::current_path().string();
+	std::string audioPath = absCwd + "/src/YAREN2/yaren_radio/audios/" + songs[idx].audioFile;
         if (!fs::exists(audioPath)) {
             state = RadioState::SELECTING;
             currentSong = -1;
@@ -3107,7 +3108,7 @@ private:
             MI("yaren_chistes", isEnglish ? "JOKES" : "CHISTES", isEnglish ? "Yaren tells jokes" : "Yaren cuenta chistes", {255, 200, 50}, "", "for pid in $(ps aux | grep -E 'chistes_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "chistes", {"chistes_node"}),
             MI("yaren_memoria", isEnglish ? "MEMORY GAME" : "JUEGO MEMORIA", isEnglish ? "Remember the colors" : "Acuerdate de los colores", {80, 200, 255}, "", "", false, "", "memoria", {"memoria_node"}),
             MI("yaren_ahorcado",isEnglish ? "HANGMAN" : "AHORCADO",isEnglish ? "Guess the word" : "Adivina la palabra",{220, 100, 255},"", "",false, "", "ahorcado",   {"ahorcado_node"}),
-            MI("yaren_dance", isEnglish ? "DANCE GAME" : "JUEGO DE BAILE", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "juegobaile", {"dance_game_node"}),
+            MI("yaren_dance", isEnglish ? "DANCE GAME" : "JUEGO DE BAILE", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "juegobaile", {"csi_cam_node","dance_game_node"}),
         }};
         subMenuMap["sub_yaren_juegos"].key = "sub_yaren_juegos";
         subMenuMap["sub_yaren_radio"] = { "YAREN RADIO", {255,80,160}, {

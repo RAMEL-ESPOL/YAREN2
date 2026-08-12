@@ -3,11 +3,13 @@
 ahorcado_game.py — YAREN2 Hangman Game
 LifecycleNode | OpenCV touch input | Bilingual | 3 difficulty levels
 Estructura Thread-Safe adaptada al formato de YAREN.
-Incluye seguro de salida (Overlay) y mecánica de reposición de letras.
+Incluye seguro de salida (Overlay), mecánica de reposición de letras y 
+Watchdog de auto-activación.
 """
 
 import rclpy
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn, State
+from lifecycle_msgs.msg import Transition
 from std_msgs.msg import String, Bool
 from rclpy.qos import QoSProfile, DurabilityPolicy
 import cv2
@@ -180,7 +182,7 @@ class Button:
 
     def is_clicked(self, mx, my):
         x, y, w, h = self.rect
-        return x <= mx <= x+w and y <= my <= y+h
+        return x <= mx <= x+w and y <= my+h
 
 # ─────────────────────────────────────────────
 #  MAIN NODE
@@ -227,12 +229,18 @@ class AhorcadoNode(LifecycleNode):
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
         if self._lang_sub:
             self.destroy_subscription(self._lang_sub)
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except:
+            pass
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
         self._active = False
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except:
+            pass
         return TransitionCallbackReturn.SUCCESS
 
     # ── ROS Callbacks ───────────────────────
@@ -448,7 +456,6 @@ class AhorcadoNode(LifecycleNode):
                         idx = self.letters_shown.index(letter)
                         self.letters_shown[idx] = '' # Vaciamos el slot temporalmente
                         
-                        # FIX: l != '' evita que se cuenten los espacios vacíos como letras ganadoras
                         correct_on_screen = sum(1 for l in self.letters_shown if l != '' and l in norm and l != ' ')
                         unguessed_correct = [l for l in set(norm) if l not in self.guessed and l not in self.letters_shown and l != ' ']
                         
@@ -765,6 +772,13 @@ class AhorcadoNode(LifecycleNode):
             win_name = 'YAREN - Ahorcado'
             cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(win_name, W, H)
+            
+            # --- SOLUCIÓN: DIBUJAR FRAME FALSO ANTES DE LAS PROPIEDADES ---
+            dummy_frame = np.zeros((H, W, 3), dtype=np.uint8)
+            cv2.imshow(win_name, dummy_frame)
+            cv2.waitKey(1)
+            # --------------------------------------------------------------
+
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_mouse)
@@ -777,9 +791,12 @@ class AhorcadoNode(LifecycleNode):
             frame = np.zeros((H, W, 3), dtype=np.uint8)
 
             while rclpy.ok() and self._active:
-                if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
-                    self._active = False
-                    break
+                try:
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
+                        self._active = False
+                        break
+                except Exception:
+                    pass
 
                 frame[:] = BG_DARK
 
@@ -801,7 +818,11 @@ class AhorcadoNode(LifecycleNode):
                     self._active = False
                     break
 
-            cv2.destroyAllWindows()
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
+                
             msg = Bool()
             msg.data = False
             self._game_active_pub.publish(msg)
@@ -815,14 +836,46 @@ def main(args=None):
     
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
-    
+
+    # ──────────────────────────────────────────────────────────────────
+    #  WATCHDOG DE AUTO-ACTIVACIÓN (FALLBACK)
+    # ──────────────────────────────────────────────────────────────────
+    def _watchdog():
+        node.get_logger().info("Watchdog iniciado. Esperando activacion externa...")
+        # Esperamos 5 segundos a que face_screen envíe la transición normal
+        time.sleep(5.0) 
+        
+        if not node._active and rclpy.ok():
+            node.get_logger().warn("El nodo no fue activado externamente. Auto-activando (Fallback)...")
+            
+            # 1. Intentamos asegurar la fase "Configure" por si también se atascó
+            try:
+                node.trigger_transition(Transition.TRANSITION_CONFIGURE)
+            except Exception:
+                pass # Si ya estaba configurado, tirará un error ignorable
+            
+            time.sleep(0.5)
+            
+            # 2. Forzamos la fase "Activate"
+            try:
+                node.trigger_transition(Transition.TRANSITION_ACTIVATE)
+            except Exception as e:
+                node.get_logger().error(f"Fallo al forzar auto-activacion: {e}")
+
+    # Arrancamos el Watchdog en paralelo para que no bloquee a nadie
+    threading.Thread(target=_watchdog, daemon=True).start()
+    # ──────────────────────────────────────────────────────────────────
+
     try:
         node.run_display_main_thread()
     except KeyboardInterrupt:
         pass
     finally:
         node._active = False
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
