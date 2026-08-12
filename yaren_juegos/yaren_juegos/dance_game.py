@@ -4,6 +4,8 @@ dance_game.py  --  Yaren Dance (OpenCV)
 =========================================
 Juego estilo Just Dance renderizado con OpenCV. Adaptado a LifecycleNode.
 Sigue el mismo formato que memoria_node.py y body_points_detector_node_visual.py
+
+Cámara: recibe frames via /csi_camera/image_raw (igual que emotion_detection_node).
 """
 
 import math
@@ -20,6 +22,8 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from std_msgs.msg import Bool, String
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
 
 # =============================================================================
 #  PATHS UNIVERSALES
@@ -87,27 +91,6 @@ LEFT_HIP       = 11; RIGHT_HIP      = 12
 POSE_HOLD_NEEDED = 0.4
 CAM_INFER_SIZE   = 320
 
-# =============================================================================
-#  PIPELINE GSTREAMER PARA CSI
-# =============================================================================
-def gstreamer_pipeline(
-    sensor_id=0,
-    capture_width=1280,
-    capture_height=720,
-    display_width=640,
-    display_height=480,
-    framerate=30,
-    flip_method=0,
-):
-    return (
-        f"nvarguscamerasrc sensor-id={sensor_id} ! "
-        f"video/x-raw(memory:NVMM), width=(int){capture_width}, height=(int){capture_height}, framerate=(fraction){framerate}/1 ! "
-        f"nvvidconv flip-method={flip_method} ! "
-        f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
-        "videoconvert ! "
-        "video/x-raw, format=(string)BGR ! appsink drop=true"
-    )
-
 
 class GameState:
     WELCOME      = 0
@@ -165,7 +148,7 @@ def detect_pose(kpts):
     # LEFT
     if valid(rw) and valid(re):
         rw_lateral_x = (rs[0] - rw[0])
-        rw_v_diff    = abs(rw[1] - rs[1]) 
+        rw_v_diff    = abs(rw[1] - rs[1])
         if rw_lateral_x > side_h and rw_v_diff < side_v:
             detected.add("LEFT")
 
@@ -482,7 +465,7 @@ def _dark_gradient(h, w, top=(10, 8, 20), bot=(22, 12, 38)):
 
 
 # =============================================================================
-#  MUSIC MANAGER
+#  MUSIC MANAGER (Blindado contra fallos de Pygame)
 # =============================================================================
 class MusicManager:
     def __init__(self):
@@ -490,7 +473,8 @@ class MusicManager:
         self._current_song_id = None
         try:
             import pygame
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
             pygame.mixer.music.set_volume(MUSIC_VOLUME)
             self._pygame = pygame
             self._available = True
@@ -505,17 +489,20 @@ class MusicManager:
             print(f"[MusicManager] No encontrado: {path}")
             self.stop(); return
         try:
-            self._pygame.mixer.music.stop()
+            if self._pygame.mixer.music.get_busy():
+                self._pygame.mixer.music.stop()
             self._pygame.mixer.music.load(path)
             self._pygame.mixer.music.set_volume(MUSIC_VOLUME)
             self._pygame.mixer.music.play(loops=-1)
             self._current_song_id = song_id
         except Exception as e:
-            print(f"[MusicManager] Error: {e}")
+            print(f"[MusicManager] Error reproduciendo {song_id}: {e}")
 
     def stop(self):
         if not self._available: return
-        try: self._pygame.mixer.music.stop()
+        try: 
+            if self._pygame.mixer.get_init():
+                self._pygame.mixer.music.stop()
         except Exception: pass
         self._current_song_id = None
 
@@ -714,7 +701,7 @@ class DanceGame:
         self.btn_lock      = threading.Lock()
         self.buttons_rects = {}
         self.temp_rects    = {}
-        
+
         if self.pose_camera:
             self.pose_camera.active_detection = False
 
@@ -786,7 +773,7 @@ class DanceGame:
                     if k.upper() == m:
                         active["pending"].remove(k)
                         break
-        
+
         active["hit_flash"] = 1.0
 
         if not active["pending"]:
@@ -812,11 +799,11 @@ class DanceGame:
         if self.start_delay > 0:
             self.start_delay -= dt
             return
-            
+
         if self.pose_camera and not self.pose_camera.active_detection:
             self.pose_camera.active_detection = True
             print("[JUEGO] El baile comenzo. Camara activa para puntuar.")
-            
+
         for q in self.queue:
             q["anim_t"] += dt
             if not q["done"]: q["progress"] += dt / STEP_DUR
@@ -1096,24 +1083,26 @@ class DanceGame:
 
 
 # =============================================================================
-#  HILO DE CAMARA CON OPENCV DIRECTO
+#  POSECAMERA — recibe frames desde el nodo via callback, sin cerrarse abruptamente
 # =============================================================================
 class PoseCamera:
-    def __init__(self, model_path=YOLO_MODEL, frame_provider=None,
-                 on_pose_confirmed=None, infer_size=CAM_INFER_SIZE):
-        self.model_path         = model_path
-        self.frame_provider     = frame_provider
-        self.on_pose_confirmed  = on_pose_confirmed
-        self.infer_size         = infer_size
-        self.current_pose       = frozenset()
-        self.camera_ok          = False
-        self._running           = False
-        self.active_detection   = False
-        self._thread            = None
-        self._lock              = threading.Lock()
-        self.model              = None
-        self._last_warning_time = 0
-        
+    def __init__(self, model_path=YOLO_MODEL, on_pose_confirmed=None,
+                 infer_size=CAM_INFER_SIZE):
+        self.model_path        = model_path
+        self.on_pose_confirmed = on_pose_confirmed
+        self.infer_size        = infer_size
+        self.current_pose      = frozenset()
+        self.camera_ok         = False
+        self._running          = False
+        self.active_detection  = False
+        self._thread           = None
+        self._lock             = threading.Lock()
+        self.model             = None
+
+        # Frame compartido: el nodo lo escribe, el hilo YOLO lo lee
+        self._latest_frame      = None
+        self._frame_lock        = threading.Lock()
+
         try:
             from ultralytics import YOLO
             print(f"[PoseCamera] Cargando modelo YOLO desde: {self.model_path} ...")
@@ -1129,7 +1118,16 @@ class PoseCamera:
             print(f"[PoseCamera] Error cargando modelo: {e}. Modo solo teclado.")
             self.model = None
 
+    def push_frame(self, frame: np.ndarray):
+        """Llamado desde el image_callback del nodo con el frame BGR ya convertido."""
+        with self._frame_lock:
+            self._latest_frame = frame
+        if not self.camera_ok:
+            self.camera_ok = True
+
     def start(self):
+        if self._running:
+            return
         self._running = True
         self.camera_ok = False
         self.active_detection = False
@@ -1145,43 +1143,32 @@ class PoseCamera:
     def _loop(self):
         if self.model is None:
             print("[PoseCamera] Modelo no disponible. Modo solo teclado.")
+            # IMPORTANTE: Mantenemos el hilo vivo aunque no haya modelo, 
+            # de lo contrario run_display_main_thread podría romperse.
             while self._running:
                 time.sleep(0.1)
             return
-
-        print("[PoseCamera] Obteniendo frames de camara...")
 
         hold_pose = frozenset()
         hold_t    = 0.0
         last_t    = time.time()
         last_debug_pose = frozenset()
-        empty_frame_count = 0
 
         while self._running:
-            frame = self.frame_provider() if self.frame_provider else None
-            
+            with self._frame_lock:
+                frame = self._latest_frame
+                self._latest_frame = None
+
             if frame is None:
-                empty_frame_count += 1
-                current_time = time.time()
-                if current_time - self._last_warning_time > 5.0:
-                    if empty_frame_count > 30:
-                        print("[PoseCamera] Esperando frames de camara...")
-                        self._last_warning_time = current_time
                 time.sleep(0.03)
                 continue
-                
-            empty_frame_count = 0
-                    
-            if not self.camera_ok:
-                self.camera_ok = True
-                print("[PoseCamera] Camara lista (frames recibidos)")
 
             now = time.time()
             dt  = now - last_t
             last_t = now
 
             try:
-                results = self.model(frame, imgsz=self.infer_size, verbose=False)
+                results  = self.model(frame, imgsz=self.infer_size, verbose=False)
                 kpts_raw = results[0].keypoints
                 kpts = None
                 if kpts_raw is not None and len(kpts_raw.xy) > 0:
@@ -1218,33 +1205,22 @@ class PoseCamera:
 
 
 # =============================================================================
-#  NODO PRINCIPAL - SIGUE EL FORMATO DE memoria_node.py
+#  NODO PRINCIPAL — mismo patrón que memoria_node.py
 # =============================================================================
 class DanceGameNode(LifecycleNode):
     def __init__(self):
         super().__init__("dance_game_node")
-        self._active = False
-        self.is_english = False
-        self._mode_pub = None
-        self._lang_sub = None
-        self.game = None
-        self.cap = None
-        self.model = None
-        self._show_window = False
-        
-        # Cargar modelo YOLO al inicio
-        try:
-            from ultralytics import YOLO
-            if os.path.exists(YOLO_MODEL):
-                self.model = YOLO(YOLO_MODEL)
-                self.get_logger().info('YOLO cargado correctamente')
-            else:
-                self.get_logger().warn('Modelo YOLO no encontrado')
-        except Exception as e:
-            self.get_logger().error(f'Error cargando YOLO: {e}')
+        self._active      = False
+        self.is_english   = False
+        self._mode_pub    = None
+        self._lang_sub    = None
+        self._cam_sub     = None      # suscripción a /csi_camera/image_raw
+        self._bridge      = CvBridge()
+        self._pose_camera = None      # se crea en run_display_main_thread
+        self.game         = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
-    
+
     def on_configure(self, state):
         self.get_logger().info('DanceGameNode: configurando...')
         try:
@@ -1260,224 +1236,184 @@ class DanceGameNode(LifecycleNode):
     def on_activate(self, state):
         self.get_logger().info('DanceGameNode: ACTIVO')
         self._active = True
-        self._show_window = True
-        
-        # ABRIR CAMARA DIRECTAMENTE
-        self.get_logger().info('Intentando abrir camara...')
-        
-        # Intentar CSI primero
-        try:
-            pipeline = gstreamer_pipeline(display_width=640, display_height=480, framerate=30)
-            self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            if self.cap.isOpened():
-                # ¡IMPORTANTE! Leer un frame de prueba para confirmar que el pipeline GStreamer no falló silenciosamente
-                ret, test_frame = self.cap.read()
-                if ret and test_frame is not None:
-                    self.get_logger().info('Camara CSI abierta y generando frames (GStreamer)')
-                else:
-                    self.get_logger().warn('CSI pipeline abierta pero NO genera frames (Error CaptureSession). Reintentando con USB...')
-                    self.cap.release()
-                    self.cap = None
-            else:
-                self.cap.release()
-                self.cap = None
-                self.get_logger().warn('CSI fallo al abrir, intentando USB...')
-        except Exception as e:
-            self.get_logger().warn(f'Error CSI: {e}')
-            self.cap = None
-        
-        # Fallback a USB
-        if self.cap is None:
-            try:
-                self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-                if self.cap.isOpened():
-                    ret, test_frame = self.cap.read()
-                    if ret and test_frame is not None:
-                        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                        self.cap.set(cv2.CAP_PROP_FPS, 30)
-                        self.get_logger().info('Camara USB abierta correctamente')
-                    else:
-                        self.get_logger().error('USB detectada pero no lee frames.')
-                        self.cap.release()
-                        self.cap = None
-                else:
-                    self.cap.release()
-                    self.cap = None
-            except Exception as e:
-                self.get_logger().warn(f'Error USB: {e}')
-                self.cap = None
-        
-        if self.cap is None:
-            self.get_logger().error('No se pudo abrir ninguna camara - modo solo teclado')
-        
+
+        # Suscribirse a la cámara igual que emotion_detection_node
+        self._cam_sub = self.create_subscription(
+            Image, '/csi_camera/image_raw', self._image_callback, 10)
+        self.get_logger().info('Suscrito a /csi_camera/image_raw')
+
         return super().on_activate(state)
 
     def on_deactivate(self, state):
         self.get_logger().info('DanceGameNode: INACTIVO')
         self._active = False
-        self._show_window = False
-        # Se elimina self.cap.release() para evitar doble liberado
+
+        # Destruir suscripción de cámara
+        if self._cam_sub is not None:
+            self.destroy_subscription(self._cam_sub)
+            self._cam_sub = None
+
         cv2.destroyAllWindows()
         return super().on_deactivate(state)
 
     def on_cleanup(self, state):
         if self._mode_pub:
             self.destroy_publisher(self._mode_pub)
+            self._mode_pub = None
         if self._lang_sub:
             self.destroy_subscription(self._lang_sub)
-        # Se elimina self.cap.release() para evitar doble liberado
+            self._lang_sub = None
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state):
         self._active = False
-        self._show_window = False
-        # Se elimina self.cap.release() para evitar doble liberado
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
+
+    # ── Callbacks ─────────────────────────────────────────────────────────────
 
     def _cb_lang(self, msg):
         self.is_english = msg.data
         if self.game:
             self.game.is_english = self.is_english
 
-    def get_frame(self):
-        if self.cap is None or not self.cap.isOpened():
-            return None
-        ret, frame = self.cap.read()
-        if ret and frame is not None:
-            return cv2.flip(frame, 1)
-        return None
+    def _image_callback(self, msg):
+        """Recibe frames de /csi_camera/image_raw y los pasa a PoseCamera."""
+        if not self._active or self._pose_camera is None:
+            return
+        try:
+            frame = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
+            # cv2.flip(frame, -1) voltea la imagen vertical Y horizontalmente (rotación 180°)
+            frame = cv2.flip(frame, -1)
+            self._pose_camera.push_frame(frame)
+        except Exception as e:
+            self.get_logger().error(f'image_callback error: {e}')
+
+    def _mouse_callback(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if self.game:
+                self.game.process_mouse(x, y, True)
 
     def publish_idle(self):
         if self._mode_pub:
             msg = String(); msg.data = "idle"
             self._mode_pub.publish(msg)
 
-    def _mouse_callback(self, event, x, y, flags, param):
-        """Detecta clics en la ventana de OpenCV para cerrarla y detener el juego."""
-        if event == cv2.EVENT_LBUTTONDOWN:
-            if self.game:
-                self.game.process_mouse(x, y, True)
+    # ── Display loop (DEBE correr en el main thread) ──────────────────────────
 
-    # ── Display loop (DEBE correr en el main thread) ──
-    
     def run_display_main_thread(self):
         """
         Llamado desde main() en el hilo principal.
         Espera a que on_activate haya puesto _active=True, abre la ventana
-        OpenCV, hace el bucle de render y al salir destruye la ventana.
+        OpenCV, hace el bucle de render y al salir destruye la ventana,
+        quedando a la espera de una nueva activación.
         """
-        # Esperar a que el nodo se active
-        while not self._active and rclpy.ok():
-            time.sleep(0.05)
+        win_name = WIN_NAME
 
-        if not rclpy.ok():
-            return
+        # BUCLE EXTERIOR: Permite activar y desactivar el juego múltiples veces
+        while rclpy.ok():
+            # Esperar a que el nodo se active
+            while not self._active and rclpy.ok():
+                time.sleep(0.05)
 
-        music = MusicManager()
-
-        def get_camera_frame():
-            return self.get_frame()
-
-        pose_camera = PoseCamera(model_path=YOLO_MODEL, frame_provider=get_camera_frame)
-
-        window_created = False
-        game = None
-        last = time.time()
-
-        def on_pose_confirmed(pose_set):
-            if game:
-                game.handle_input(pose_set)
-
-        # ── Abrir ventana en el main thread ──
-        cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WIN_NAME, WIN_W, WIN_H)
-        # Comentado WINDOW_FULLSCREEN para evitar que OpenCV reporte la ventana como invisible
-        # cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_TOPMOST, 1)
-        cv2.setMouseCallback(WIN_NAME, self._mouse_callback)
-
-        def _focus():
-            time.sleep(0.4)
-            os.system(f"xdotool search --sync --name '{WIN_NAME}' "
-                      "windowactivate --sync windowraise 2>/dev/null")
-        threading.Thread(target=_focus, daemon=True).start()
-
-        # ── Bucle de render ────────────────────────────────────────────────
-        while rclpy.ok() and self._active:
-            if not window_created:
-                game = DanceGame(music=music,
-                                 pose_camera=pose_camera,
-                                 is_english=self.is_english)
-                self.game = game
-
-                pose_camera.on_pose_confirmed = on_pose_confirmed
-                pose_camera.start()
-                
-                window_created = True
-                last = time.time()
-
-            now = time.time()
-            dt = min(now-last, 0.05)
-            last = now
-            
-            if game.is_english != self.is_english:
-                game.is_english = self.is_english
-                
-            if game.state == GameState.EXITED:
-                self._active = False
-                self.publish_idle()
+            if not rclpy.ok():
                 break
 
-            game.update(dt)
-            frame = game.render()
-            cv2.imshow(WIN_NAME, frame)
+            music = MusicManager()
 
-            key = cv2.waitKey(int(1000/FPS)) & 0xFF
-            if key == 27:
-                if game.state == GameState.PLAYING:
-                    music.stop()
-                    game.state = GameState.SUMMARY
-                elif game.state in [GameState.WELCOME, GameState.MENU]:
-                    game.state = GameState.CONFIRM_EXIT
-                else:
-                    game.state = GameState.MENU
+            # Crear PoseCamera sin frame_provider: recibe frames via push_frame()
+            pose_camera = PoseCamera(model_path=YOLO_MODEL)
+            self._pose_camera = pose_camera
 
-            direction = KEY_MAP.get(key)
-            if direction:
-                game.handle_input(direction)
+            game = None
+            last = time.time()
 
-            # Si la ventana se cerró externamente
+            def on_pose_confirmed(pose_set):
+                if game:
+                    game.handle_input(pose_set)
+
+            pose_camera.on_pose_confirmed = on_pose_confirmed
+            pose_camera.start()
+
+            # ── Abrir ventana fullscreen en el main thread ──
+            cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(win_name, WIN_W, WIN_H)
+            cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
+            cv2.setMouseCallback(win_name, self._mouse_callback)
+
+            def _focus():
+                time.sleep(0.4)
+                os.system(f"xdotool search --sync --name '{win_name}' "
+                          "windowactivate --sync windowraise 2>/dev/null")
+            threading.Thread(target=_focus, daemon=True).start()
+
+            # ── Bucle de render ────────────────────────────────────────────────────
+            game = DanceGame(music=music, pose_camera=pose_camera,
+                             is_english=self.is_english)
+            self.game = game
+            last = time.time()
+
+            while rclpy.ok() and self._active:
+                
+                # VALIDACIÓN SEGURA PARA JETSON/LINUX
+                try:
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
+                        self._active = False
+                        self.publish_idle()
+                        break
+                except Exception:
+                    self._active = False
+                    self.publish_idle()
+                    break
+
+                now = time.time()
+                dt  = min(now - last, 0.05)
+                last = now
+
+                if game.is_english != self.is_english:
+                    game.is_english = self.is_english
+
+                if game.state == GameState.EXITED:
+                    self._active = False
+                    self.publish_idle()
+                    break
+
+                game.update(dt)
+                frame = game.render()
+                cv2.imshow(win_name, frame)
+
+                key = cv2.waitKey(int(1000 / FPS)) & 0xFF
+                if key == 27:
+                    if game.state == GameState.PLAYING:
+                        music.stop()
+                        game.state = GameState.SUMMARY
+                    elif game.state in [GameState.WELCOME, GameState.MENU]:
+                        game.state = GameState.CONFIRM_EXIT
+                    else:
+                        game.state = GameState.MENU
+
+                direction = KEY_MAP.get(key)
+                if direction:
+                    game.handle_input(direction)
+
+            # ── Limpieza al Desactivar ─────────────────────────────────────────────
+            pose_camera.stop()
+            music.quit()
+            self._pose_camera = None
+            
             try:
-                is_visible = cv2.getWindowProperty(WIN_NAME, cv2.WND_PROP_VISIBLE)
-                if is_visible < 1:
-                    # En lugar de cerrar el bucle, solo registramos la advertencia.
-                    # Esto evita el "suicidio" del programa si el WM o SSH tarda en reportar la visibilidad.
-                    self.get_logger().warn(f"Ventana reportada como no visible ({is_visible}). Ignorando cierre automático.")
-                    # self._active = False
-                    # self.publish_idle()
-                    # break
+                cv2.destroyAllWindows()
+                cv2.waitKey(1)
             except Exception:
                 pass
-
-        # ── Limpieza SEGURA (Evita errores de Argus) ──
-        pose_camera.stop()
-        
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
-            time.sleep(0.5) # Tiempo para que el daemon de Argus libere los "client objects"
             
-        music.quit()
-        cv2.destroyAllWindows()
-        self.publish_idle()
+            self.publish_idle()
 
 
 # =============================================================================
-#  MAIN - SIGUE EL FORMATO DE memoria_node.py
+#  MAIN — mismo patrón que memoria_node.py
 # =============================================================================
 def main(args=None):
     rclpy.init(args=args)
@@ -1494,7 +1430,6 @@ def main(args=None):
         pass
     finally:
         node._active = False
-        node._show_window = False
         cv2.destroyAllWindows()
         node.destroy_node()
         if rclpy.ok():

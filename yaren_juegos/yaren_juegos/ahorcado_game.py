@@ -3,8 +3,7 @@
 ahorcado_game.py — YAREN2 Hangman Game
 LifecycleNode | OpenCV touch input | Bilingual | 3 difficulty levels
 Estructura Thread-Safe adaptada al formato de YAREN.
-Incluye seguro de salida (Overlay), mecánica de reposición de letras y 
-Watchdog de auto-activación.
+Incluye seguro de salida (Overlay) y mecánica de reposición de letras.
 """
 
 import rclpy
@@ -76,7 +75,7 @@ DIVIDER        = (60, 45, 85)
 WHITE          = (240, 240, 240)
 TEXT_LIGHT     = (240, 235, 255)
 TEXT_DIM       = (160, 145, 190)
-YELLOW         = (0, 220, 255)  
+YELLOW         = (0, 220, 255)
 GREEN          = (80, 210, 90)
 RED            = (60, 60, 220)
 ORANGE         = (50, 165, 255)
@@ -151,7 +150,8 @@ def draw_hangman(frame, errors, ox=160, oy=140, scale=1.0):
 #  BUTTON HELPER
 # ─────────────────────────────────────────────
 class Button:
-    def __init__(self, x, y, w, h, text, bg_color=PANEL_COLOR, text_color=TEXT_LIGHT, border_color=DIVIDER, font_scale=0.8, radius=12):
+    def __init__(self, x, y, w, h, text, bg_color=PANEL_COLOR, text_color=TEXT_LIGHT,
+                 border_color=DIVIDER, font_scale=0.8, radius=12):
         self.rect = (x, y, w, h)
         self.text = text
         self.bg_color = bg_color
@@ -164,10 +164,10 @@ class Button:
     def draw(self, frame):
         x, y, w, h = self.rect
         if self.hovered:
-            b_color = tuple(min(c + 40, 255) for c in self.bg_color)
+            b_color  = tuple(min(c + 40, 255) for c in self.bg_color)
             br_color = YELLOW
         else:
-            b_color = self.bg_color
+            b_color  = self.bg_color
             br_color = self.border_color
 
         _draw_rounded_rect(frame, (x, y), (x+w, y+h), b_color, radius=self.radius, thickness=-1)
@@ -182,7 +182,7 @@ class Button:
 
     def is_clicked(self, mx, my):
         x, y, w, h = self.rect
-        return x <= mx <= x+w and y <= my+h
+        return x <= mx <= x + w and y <= my <= y + h
 
 # ─────────────────────────────────────────────
 #  MAIN NODE
@@ -200,27 +200,25 @@ class AhorcadoNode(LifecycleNode):
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Configuring ahorcado_node...')
         self._game_active_pub = self.create_publisher(Bool, '/yaren/game_active', 10)
-        
+
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._lang_sub = self.create_subscription(Bool, '/yaren/is_english', self._lang_cb, qos)
-        
+
         self._reset_game_state()
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Activating ahorcado_node...')
-        self._active  = True
+        self._active = True
         msg = Bool()
         msg.data = True
         self._game_active_pub.publish(msg)
-        
         self._reset_game_state()
-        
         return super().on_activate(state)
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Deactivating ahorcado_node...')
-        self._active  = False
+        self._active = False
         msg = Bool()
         msg.data = False
         self._game_active_pub.publish(msg)
@@ -231,7 +229,7 @@ class AhorcadoNode(LifecycleNode):
             self.destroy_subscription(self._lang_sub)
         try:
             cv2.destroyAllWindows()
-        except:
+        except Exception:
             pass
         return TransitionCallbackReturn.SUCCESS
 
@@ -239,7 +237,7 @@ class AhorcadoNode(LifecycleNode):
         self._active = False
         try:
             cv2.destroyAllWindows()
-        except:
+        except Exception:
             pass
         return TransitionCallbackReturn.SUCCESS
 
@@ -247,37 +245,35 @@ class AhorcadoNode(LifecycleNode):
     def _lang_cb(self, msg):
         self.is_english = msg.data
         self.language = 'en' if self.is_english else 'es'
-        
-        if getattr(self, 'screen', None) == 'intro': self._build_intro_buttons()
-        elif getattr(self, 'screen', None) == 'level': self._build_level_buttons()
-        elif getattr(self, 'screen', None) == 'word_result': self._build_word_result_buttons()
+        if getattr(self, 'screen', None) == 'intro':          self._build_intro_buttons()
+        elif getattr(self, 'screen', None) == 'level':        self._build_level_buttons()
+        elif getattr(self, 'screen', None) == 'word_result':  self._build_word_result_buttons()
         elif getattr(self, 'screen', None) == 'level_complete': self._build_level_complete_buttons()
-        elif getattr(self, 'screen', None) == 'game_over': self._build_game_over_buttons()
+        elif getattr(self, 'screen', None) == 'game_over':    self._build_game_over_buttons()
         self._build_confirm_buttons()
 
     # ── Game State ───────────────────────
     def _reset_game_state(self):
-        self.screen       = 'intro'
-        self.language     = 'en' if self.is_english else 'es'
-        self.level        = 'facil'
-        self.word_list    = []
-        self.word_index   = 0
-        self.current_word = ''
-        self.guessed      = set()
-        self.errors       = 0
-        self.max_lives    = 6
+        self.screen        = 'intro'
+        self.language      = 'en' if self.is_english else 'es'
+        self.level         = 'facil'
+        self.word_list     = []
+        self.word_index    = 0
+        self.current_word  = ''
+        self.guessed       = set()
+        self.errors        = 0
+        self.max_lives     = 6
         self.letters_shown = []
         self.remaining_pool = []
-        self.result_msg   = ''
-        self.result_win   = False
-        self.buttons      = {}
+        self.result_msg    = ''
+        self.result_win    = False
+        self.buttons       = {}
         self.show_exit_confirm = False
-        
         self._build_intro_buttons()
         self._build_confirm_buttons()
 
     def _start_level(self):
-        cfg = LEVEL_CONFIG[self.level]
+        cfg  = LEVEL_CONFIG[self.level]
         bank = WORD_BANK[self.language][self.level].copy()
         random.shuffle(bank)
         self.word_list  = bank[:cfg['words']]
@@ -295,18 +291,17 @@ class AhorcadoNode(LifecycleNode):
 
     def _generate_letters(self):
         word_letters = list(set(self.current_word))
-        alpha = ALPHABET_EN if self.language == 'en' else ALPHABET_ES
+        alpha   = ALPHABET_EN if self.language == 'en' else ALPHABET_ES
         fillers = [l for l in alpha if l not in word_letters]
-        
+
         random.shuffle(word_letters)
         random.shuffle(fillers)
-        
+
         num_correct_initial = min(3, len(word_letters))
         initial_letters = word_letters[:num_correct_initial] + fillers[:10 - num_correct_initial]
         random.shuffle(initial_letters)
-        
-        self.letters_shown = initial_letters
-        
+
+        self.letters_shown  = initial_letters
         self.remaining_pool = word_letters[num_correct_initial:] + fillers[10 - num_correct_initial:]
         random.shuffle(self.remaining_pool)
 
@@ -317,18 +312,15 @@ class AhorcadoNode(LifecycleNode):
         norm = self._normalize(self.current_word)
         return all(ch in self.guessed or ch == ' ' for ch in norm)
 
-    # ── Construcción de UI Perfecta para 800x480 ────────────────────────
+    # ── Construcción de UI ──────────────────────────────────────────────
     def _build_intro_buttons(self):
         btn_y1 = H - 90
         btn_h  = 58
         btn_w  = 200
-
         sx1 = W // 2 - btn_w - 12
         bx1 = W // 2 + 12
-
         start_lbl = "START"  if self.is_english else "EMPEZAR"
         back_lbl  = "BACK"   if self.is_english else "VOLVER"
-
         self.buttons = {
             'start': Button(sx1, btn_y1, btn_w, btn_h, start_lbl, ACCENT2, TEXT_LIGHT, ACCENT, 1.05, 14),
             'back':  Button(bx1, btn_y1, btn_w, btn_h, back_lbl, (40, 30, 60), TEXT_DIM, DIVIDER, 1.05, 14),
@@ -344,22 +336,22 @@ class AhorcadoNode(LifecycleNode):
 
     def _build_letter_buttons(self):
         self.buttons = {}
-        cols = 5
+        cols  = 5
         btn_w, btn_h = 75, 55
         gap_x, gap_y = 12, 12
         total_w = cols * btn_w + (cols - 1) * gap_x
         start_x = 310 + (460 - total_w) // 2
-        start_y = 310 
+        start_y = 310
 
         for i, letter in enumerate(self.letters_shown):
-            if letter == '': 
-                continue 
-            
+            if letter == '':
+                continue
             row = i // cols
             col = i % cols
             x = start_x + col * (btn_w + gap_x)
             y = start_y + row * (btn_h + gap_y)
-            self.buttons[f'letter_{letter}'] = Button(x, y, btn_w, btn_h, letter, PANEL_COLOR, TEXT_LIGHT, DIVIDER, 0.85, 12)
+            self.buttons[f'letter_{letter}'] = Button(x, y, btn_w, btn_h, letter,
+                                                      PANEL_COLOR, TEXT_LIGHT, DIVIDER, 0.85, 12)
 
     def _build_word_result_buttons(self):
         if self.result_win:
@@ -407,7 +399,6 @@ class AhorcadoNode(LifecycleNode):
         if event != cv2.EVENT_LBUTTONDOWN:
             return
 
-        # Si el panel de confirmación está abierto, interceptar los clicks
         if self.show_exit_confirm:
             if self.confirm_buttons['yes'].is_clicked(x, y):
                 self.show_exit_confirm = False
@@ -415,8 +406,7 @@ class AhorcadoNode(LifecycleNode):
             elif self.confirm_buttons['no'].is_clicked(x, y):
                 self.show_exit_confirm = False
             return
-            
-        # Click en la "X" para salir
+
         if x < 60 and y < 60:
             if self.screen == 'intro':
                 self._active = False
@@ -430,7 +420,6 @@ class AhorcadoNode(LifecycleNode):
                 self._build_level_buttons()
             elif self.buttons.get('back') and self.buttons['back'].is_clicked(x, y):
                 self._active = False
-                return
 
         elif self.screen == 'level':
             for lvl in ('facil', 'medio', 'dificil'):
@@ -451,29 +440,32 @@ class AhorcadoNode(LifecycleNode):
                         norm = self._normalize(self.current_word)
                         if letter not in norm:
                             self.errors += 1
-                            
-                        # ─── MECÁNICA DE REPOSICIÓN ───
-                        idx = self.letters_shown.index(letter)
-                        self.letters_shown[idx] = '' # Vaciamos el slot temporalmente
-                        
-                        correct_on_screen = sum(1 for l in self.letters_shown if l != '' and l in norm and l != ' ')
-                        unguessed_correct = [l for l in set(norm) if l not in self.guessed and l not in self.letters_shown and l != ' ']
-                        
-                        new_letter = ''
-                        if correct_on_screen == 0 and unguessed_correct:
-                            new_letter = unguessed_correct[0]
-                            if new_letter in self.remaining_pool:
-                                self.remaining_pool.remove(new_letter)
-                        elif self.remaining_pool:
-                            new_letter = self.remaining_pool.pop(0)
-                            
-                        self.letters_shown[idx] = new_letter
-                        self._build_letter_buttons()
-                        # ──────────────────────────────
+
+                        try:
+                            idx = self.letters_shown.index(letter)
+                        except ValueError:
+                            idx = None
+
+                        if idx is not None:
+                            self.letters_shown[idx] = ''
+
+                            correct_on_screen  = sum(1 for l in self.letters_shown if l != '' and l in norm and l != ' ')
+                            unguessed_correct  = [l for l in set(norm) if l not in self.guessed and l not in self.letters_shown and l != ' ']
+
+                            new_letter = ''
+                            if correct_on_screen == 0 and unguessed_correct:
+                                new_letter = unguessed_correct[0]
+                                if new_letter in self.remaining_pool:
+                                    self.remaining_pool.remove(new_letter)
+                            elif self.remaining_pool:
+                                new_letter = self.remaining_pool.pop(0)
+
+                            self.letters_shown[idx] = new_letter
+                            self._build_letter_buttons()
 
                         if self._check_win():
                             self.result_win = True
-                            self.result_msg = self._t('Correcto! La palabra era: ','Correct! The word was: ') + self.current_word
+                            self.result_msg = self._t('Correcto! La palabra era: ', 'Correct! The word was: ') + self.current_word
                             if self.word_index >= len(self.word_list) - 1:
                                 self.screen = 'level_complete'
                                 self._build_level_complete_buttons()
@@ -482,7 +474,7 @@ class AhorcadoNode(LifecycleNode):
                                 self._build_word_result_buttons()
                         elif self.errors >= self.max_lives:
                             self.result_win = False
-                            self.result_msg = self._t('Perdiste! La palabra era: ','You lost! The word was: ') + self.current_word
+                            self.result_msg = self._t('Perdiste! La palabra era: ', 'You lost! The word was: ') + self.current_word
                             self.screen = 'game_over'
                             self._build_game_over_buttons()
                     break
@@ -491,6 +483,11 @@ class AhorcadoNode(LifecycleNode):
             if self.buttons.get('next') and self.buttons['next'].is_clicked(x, y):
                 self.word_index += 1
                 self._load_word()
+            elif self.buttons.get('restart') and self.buttons['restart'].is_clicked(x, y):
+                self._start_level()
+            elif self.buttons.get('levels') and self.buttons['levels'].is_clicked(x, y):
+                self.screen = 'level'
+                self._build_level_buttons()
 
         elif self.screen == 'level_complete':
             if self.buttons.get('next_level') and self.buttons['next_level'].is_clicked(x, y):
@@ -557,9 +554,7 @@ class AhorcadoNode(LifecycleNode):
         tx = W // 2 - tw // 2
         cv2.putText(frame, title, (tx + 2, 66), font_d, 1.4, (10, 6, 20), 3, cv2.LINE_AA)
         cv2.putText(frame, title, (tx, 64), font_d, 1.4, ACCENT, 3, cv2.LINE_AA)
-
         cv2.line(frame, (px1 + 40, 84), (px2 - 40, 84), DIVIDER, 1)
-
         draw_hangman(frame, 6, ox=W//2, oy=90, scale=0.5)
 
         if self.is_english:
@@ -584,11 +579,10 @@ class AhorcadoNode(LifecycleNode):
                 continue
             scale = 0.60
             (lw, lh), _ = cv2.getTextSize(line, font_s, scale, 1)
-            lx = W // 2 - lw // 2
+            lx  = W // 2 - lw // 2
             col = ACCENT if highlight else TEXT_DIM
             thick = 2 if highlight else 1
-            cv2.putText(frame, line, (lx, y_text), font_s, scale,
-                        col, thick, cv2.LINE_AA)
+            cv2.putText(frame, line, (lx, y_text), font_s, scale, col, thick, cv2.LINE_AA)
             y_text += lh + 16
 
         for btn in self.buttons.values():
@@ -608,7 +602,7 @@ class AhorcadoNode(LifecycleNode):
             cx = cx_list[i]
             _draw_rounded_rect(frame, (cx-105, 140), (cx+105, 360), DARK_GRAY, radius=15)
             stars = '*' * (i+1) + '-' * (2-i)
-            font = cv2.FONT_HERSHEY_DUPLEX
+            font  = cv2.FONT_HERSHEY_DUPLEX
             cv2.putText(frame, stars, (cx-85, 180), font, 0.8, col, 1, cv2.LINE_AA)
             cv2.putText(frame, words, (cx-85, 310), font, 0.55, WHITE, 1, cv2.LINE_AA)
             cv2.putText(frame, lives, (cx-85, 340), font, 0.55, WHITE, 1, cv2.LINE_AA)
@@ -619,10 +613,9 @@ class AhorcadoNode(LifecycleNode):
 
     def _render_playing(self, frame):
         self._draw_bg(frame)
-        cfg = LEVEL_CONFIG[self.level]
+        cfg  = LEVEL_CONFIG[self.level]
         font = cv2.FONT_HERSHEY_DUPLEX
 
-        # ─── HEADER YAREN ───
         cv2.rectangle(frame, (0, 0), (W, 55), BG_PANEL, -1)
         cv2.line(frame, (0, 55), (W, 55), DIVIDER, 2)
         self._draw_close_button(frame)
@@ -634,29 +627,25 @@ class AhorcadoNode(LifecycleNode):
         (pw, _), _ = cv2.getTextSize(prog_txt, font, 0.7, 1)
         cv2.putText(frame, prog_txt, ((W-pw)//2, 36), font, 0.7, TEXT_LIGHT, 1, cv2.LINE_AA)
 
-        lives_left = self.max_lives - self.errors
+        lives_left   = self.max_lives - self.errors
         heart_x_start = W - 30 - (self.max_lives * 25)
         for i in range(self.max_lives):
-            hx = heart_x_start + i * 25
-            hy = 28
+            hx    = heart_x_start + i * 25
+            hy    = 28
             color = HEART_COLOR if i < lives_left else (60, 50, 75)
             self._draw_heart(frame, hx, hy, color, scale=1.1)
 
-        # ─── PANEL AHORCADO (Izquierda) ───
         _draw_rounded_rect(frame, (30, 80), (290, 450), BG_PANEL, radius=15, alpha=0.8)
         draw_hangman(frame, self.errors, ox=160, oy=130, scale=1.1)
 
-        # ─── PANEL PALABRA (Derecha) ───
-        norm = self._normalize(self.current_word)
-        max_w = 460
+        norm   = self._normalize(self.current_word)
+        max_w  = 460
         ideal_w = len(norm) * 50 + (len(norm) - 1) * 10
-        scale = min(1.0, max_w / ideal_w) if ideal_w > 0 else 1.0
-        
+        scale  = min(1.0, max_w / ideal_w) if ideal_w > 0 else 1.0
         slot_w = int(50 * scale)
         slot_h = int(60 * scale)
-        gap = int(10 * scale)
+        gap    = int(10 * scale)
         total_w = len(norm) * slot_w + (len(norm) - 1) * gap
-        
         start_x = 310 + (460 - total_w) // 2
         start_y = 160
 
@@ -664,14 +653,12 @@ class AhorcadoNode(LifecycleNode):
             x = start_x + i * (slot_w + gap)
             _draw_rounded_rect(frame, (x, start_y), (x+slot_w, start_y+slot_h), (25, 18, 35), radius=8)
             _draw_rounded_rect(frame, (x, start_y), (x+slot_w, start_y+slot_h), DIVIDER, radius=8, thickness=2)
-            
             if ch in self.guessed or ch == ' ':
                 (lw, lh), _ = cv2.getTextSize(ch, font, 1.4 * scale, 2)
                 lx = x + (slot_w - lw) // 2
                 ly = start_y + (slot_h + lh) // 2
                 cv2.putText(frame, ch, (lx, ly), font, 1.4 * scale, YELLOW, 2, cv2.LINE_AA)
 
-        # ─── ERRORES ───
         wrong = [l for l in sorted(self.guessed) if l not in norm]
         if wrong:
             wrong_txt = self._t('Errores: ','Errors: ') + ' '.join(wrong)
@@ -683,10 +670,9 @@ class AhorcadoNode(LifecycleNode):
         (hw, _), _ = cv2.getTextSize(hint, font, 0.5, 1)
         cv2.putText(frame, hint, (310 + (460-hw)//2, 290), font, 0.5, TEXT_DIM, 1, cv2.LINE_AA)
 
-        # ─── TECLADO ───
         for btn in self.buttons.values():
-            btn.bg_color = PANEL_COLOR
-            btn.text_color = TEXT_LIGHT
+            btn.bg_color    = PANEL_COLOR
+            btn.text_color  = TEXT_LIGHT
             btn.border_color = DIVIDER
             btn.draw(frame)
 
@@ -694,7 +680,6 @@ class AhorcadoNode(LifecycleNode):
         self._draw_bg(frame)
         _draw_rounded_rect(frame, (100, 90), (700, 390), BG_PANEL, radius=20, alpha=0.95)
         _draw_rounded_rect(frame, (100, 90), (700, 390), DIVIDER, radius=20, thickness=2)
-
         color = GREEN if self.result_win else RED
         icon  = self._t('Correcto!', 'Correct!') if self.result_win else self._t('Incorrecto!','Incorrect!')
         self._draw_title(frame, icon, 170, color, 1.4)
@@ -711,7 +696,6 @@ class AhorcadoNode(LifecycleNode):
         self._draw_bg(frame)
         _draw_rounded_rect(frame, (100, 90), (700, 390), BG_PANEL, radius=20, alpha=0.95)
         _draw_rounded_rect(frame, (100, 90), (700, 390), DIVIDER, radius=20, thickness=2)
-
         self._draw_title(frame, self._t('NIVEL COMPLETADO!','LEVEL COMPLETE!'), 160, GREEN, 1.3)
         cfg = LEVEL_CONFIG[self.level]
         msg = self._t(f'Completaste el nivel {cfg["label_es"]}',
@@ -734,7 +718,6 @@ class AhorcadoNode(LifecycleNode):
         self._draw_bg(frame)
         _draw_rounded_rect(frame, (100, 90), (700, 390), BG_PANEL, radius=20, alpha=0.95)
         _draw_rounded_rect(frame, (100, 90), (700, 390), DIVIDER, radius=20, thickness=2)
-
         self._draw_title(frame, self._t('GAME OVER!','GAME OVER!'), 160, RED, 1.5)
         self._draw_text_center(frame, self.result_msg, 220, WHITE, 0.75)
         draw_hangman(frame, 6, ox=W//2, oy=250, scale=0.6)
@@ -743,60 +726,56 @@ class AhorcadoNode(LifecycleNode):
         self._draw_close_button(frame)
 
     def _render_confirm_overlay(self, frame):
-        # Panel oscuro semitransparente
         ov = frame.copy()
         cv2.rectangle(ov, (0, 0), (W, H), (0, 0, 0), -1)
         cv2.addWeighted(ov, 0.75, frame, 0.25, 0, frame)
-
-        # Panel central flotante
         pw, ph = 420, 200
         px, py = (W - pw) // 2, (H - ph) // 2
         _draw_rounded_rect(frame, (px, py), (px + pw, py + ph), BG_PANEL, radius=18)
         _draw_rounded_rect(frame, (px, py), (px + pw, py + ph), DIVIDER, radius=18, thickness=2)
-
         msg = self._t('Seguro que quieres salir?', 'Are you sure you want to quit?')
         self._draw_text_center(frame, msg, py + 70, WHITE, 0.75)
-
         for btn in self.confirm_buttons.values():
             btn.draw(frame)
 
-    # ── Main Display Loop (Main Thread) ────────────────────────
+    # ── Main Display Loop ────────────────────────────────────────────────────
     def run_display_main_thread(self):
+        win_name = 'YAREN - Ahorcado'
+
         while rclpy.ok():
+            # Esperar a que el nodo sea activado externamente (sin watchdog)
             while not self._active and rclpy.ok():
                 time.sleep(0.05)
 
             if not rclpy.ok():
                 break
 
-            win_name = 'YAREN - Ahorcado'
+            # ── Abrir ventana en el main thread ──────────────────────────
             cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(win_name, W, H)
-            
-            # --- SOLUCIÓN: DIBUJAR FRAME FALSO ANTES DE LAS PROPIEDADES ---
-            dummy_frame = np.zeros((H, W, 3), dtype=np.uint8)
-            cv2.imshow(win_name, dummy_frame)
-            cv2.waitKey(1)
-            # --------------------------------------------------------------
-
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_mouse)
 
             def _focus():
                 time.sleep(0.4)
-                os.system(f"xdotool search --sync --name '{win_name}' windowactivate --sync windowraise 2>/dev/null")
+                os.system(f"xdotool search --sync --name '{win_name}' "
+                          "windowactivate --sync windowraise 2>/dev/null")
             threading.Thread(target=_focus, daemon=True).start()
 
             frame = np.zeros((H, W, 3), dtype=np.uint8)
 
+            # ── Loop de render ────────────────────────────────────────────
             while rclpy.ok() and self._active:
+                
+                # FIX: Verificación segura de cierre de ventana en Linux (AUTOSIZE)
                 try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
                         self._active = False
                         break
                 except Exception:
-                    pass
+                    self._active = False
+                    break
 
                 frame[:] = BG_DARK
 
@@ -807,25 +786,30 @@ class AhorcadoNode(LifecycleNode):
                 elif self.screen == 'level_complete': self._render_level_complete(frame)
                 elif self.screen == 'game_over':      self._render_game_over(frame)
 
-                # Si el usuario quiere salir, dibujar el overlay encima de todo
                 if self.show_exit_confirm:
                     self._render_confirm_overlay(frame)
 
                 cv2.imshow(win_name, frame)
-                
                 key = cv2.waitKey(1000 // FPS) & 0xFF
-                if key == 27:  
+                if key == 27:
                     self._active = False
                     break
 
+            # ── Limpieza al salir del loop ────────────────────────────────
             try:
                 cv2.destroyAllWindows()
+                cv2.waitKey(1)
             except Exception:
                 pass
-                
+
             msg = Bool()
             msg.data = False
             self._game_active_pub.publish(msg)
+
+            if not rclpy.ok():
+                break
+            break
+
 
 # ─────────────────────────────────────────────
 #  ENTRY POINT
@@ -833,38 +817,9 @@ class AhorcadoNode(LifecycleNode):
 def main(args=None):
     rclpy.init(args=args)
     node = AhorcadoNode()
-    
+
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
-
-    # ──────────────────────────────────────────────────────────────────
-    #  WATCHDOG DE AUTO-ACTIVACIÓN (FALLBACK)
-    # ──────────────────────────────────────────────────────────────────
-    def _watchdog():
-        node.get_logger().info("Watchdog iniciado. Esperando activacion externa...")
-        # Esperamos 5 segundos a que face_screen envíe la transición normal
-        time.sleep(5.0) 
-        
-        if not node._active and rclpy.ok():
-            node.get_logger().warn("El nodo no fue activado externamente. Auto-activando (Fallback)...")
-            
-            # 1. Intentamos asegurar la fase "Configure" por si también se atascó
-            try:
-                node.trigger_transition(Transition.TRANSITION_CONFIGURE)
-            except Exception:
-                pass # Si ya estaba configurado, tirará un error ignorable
-            
-            time.sleep(0.5)
-            
-            # 2. Forzamos la fase "Activate"
-            try:
-                node.trigger_transition(Transition.TRANSITION_ACTIVATE)
-            except Exception as e:
-                node.get_logger().error(f"Fallo al forzar auto-activacion: {e}")
-
-    # Arrancamos el Watchdog en paralelo para que no bloquee a nadie
-    threading.Thread(target=_watchdog, daemon=True).start()
-    # ──────────────────────────────────────────────────────────────────
 
     try:
         node.run_display_main_thread()
@@ -874,12 +829,14 @@ def main(args=None):
         node._active = False
         try:
             cv2.destroyAllWindows()
+            cv2.waitKey(1)
         except Exception:
             pass
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
         spin_thread.join(timeout=3.0)
+
 
 if __name__ == '__main__':
     main()
