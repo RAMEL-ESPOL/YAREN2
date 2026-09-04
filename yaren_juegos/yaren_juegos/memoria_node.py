@@ -432,11 +432,9 @@ class MemoriaNode(LifecycleNode):
             (sx1, sy1), (sx2, sy2) = _INTRO_BTN_START
             (bx1, by1), (bx2, by2) = _INTRO_BTN_BACK
             if sx1 <= x <= sx2 and sy1 <= y <= sy2:
-                self._sound.play("acierto")
                 self._intro_choice = "start"
                 self._intro_event.set()
             elif bx1 <= x <= bx2 and by1 <= y <= by2:
-                self._sound.play("acierto")
                 self._intro_choice = "back"
                 self._intro_event.set()
             return
@@ -444,7 +442,6 @@ class MemoriaNode(LifecycleNode):
         if state == State.GAME_OVER:
             (bx1, by1), (bx2, by2) = _GO_BTN
             if bx1 <= x <= bx2 and by1 <= y <= by2:
-                self._sound.play("acierto")
                 self._publish_idle()
                 self._active = False
                 self._choice_event.set()
@@ -586,7 +583,7 @@ class MemoriaNode(LifecycleNode):
                 self._flash_color = choice
                 self._flash_until = time.time() + 0.30
 
-                self._sound.play("acierto")
+                #self._sound.play("acierto")
                 time.sleep(0.15)
 
             if not self._active or self._state == State.GAME_OVER:

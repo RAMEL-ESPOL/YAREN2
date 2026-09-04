@@ -51,28 +51,24 @@ EMOTION_COLORS = {
     "Neutral":  (150, 150, 150),
 }
 
-# =============================================================================
-#  PLAYLISTS — alternando ES / EN
-# =============================================================================
 HOME_DIR  = os.path.expanduser("~")
 MUSIC_DIR = os.path.join(HOME_DIR, "robotis_ws", "src", "YAREN2",
                          "yaren_radio", "audios")
 
-# Pon aquí los nombres EXACTOS de tus archivos mp3
 PLAYLIST_EN = [
-    "CantStopTheFeeling.mp3",   # Justin Timberlake
-    "JustTheWayYouAre.mp3",     # Milky
-    "GetLucky.mp3",             # Daft Punk
-    "YourLove.mp3",             # The Outfield
-    "SunFlower.mp3",             # Post Malone
+    "CantStopTheFeeling.mp3",
+    "JustTheWayYouAre.mp3",
+    "GetLucky.mp3",
+    "YourLove.mp3",
+    "SunFlower.mp3",
 ]
 
 PLAYLIST_ES = [
-    "Picky.mp3",                # Joey Montana
-    "TuCarcel.mp3",             # Enanitos Verdes
-    "LaBicicleta.mp3",          # Carlos Vives & Shakira
-    "LaGozadera.mp3",           # Gente de Zona ft. Marc Anthony
-    "MiGente.mp3",              # J Balvin
+    "Picky.mp3",
+    "TuCarcel.mp3",
+    "LaBicicleta.mp3",
+    "LaGozadera.mp3",
+    "MiGente.mp3",
 ]
 
 
@@ -83,12 +79,18 @@ class MusicManager:
     def __init__(self, logger=None):
         self._available    = False
         self._logger       = logger
-        self._en_index     = 0
-        self._es_index     = 0
-        self._turn_en      = True   # True = turno inglés, False = turno español
         self._running      = False
         self._check_thread = None
         self._pygame       = None
+
+        # Colas shuffled independientes para EN y ES
+        self._queue_en = list(PLAYLIST_EN)
+        self._queue_es = list(PLAYLIST_ES)
+        random.shuffle(self._queue_en)
+        random.shuffle(self._queue_es)
+        self._idx_en  = 0
+        self._idx_es  = 0
+        self._turn_en = True
 
         try:
             import pygame
@@ -108,18 +110,21 @@ class MusicManager:
             print(f"[Music] {msg}")
 
     def _get_next_path(self):
-        """Devuelve la siguiente canción alternando ES/EN y avanza el índice."""
         if self._turn_en:
-            playlist = PLAYLIST_EN
-            idx      = self._en_index % len(PLAYLIST_EN)
-            self._en_index += 1
+            idx = self._idx_en % len(self._queue_en)
+            if idx == 0 and self._idx_en > 0:
+                random.shuffle(self._queue_en)
+            path = os.path.join(MUSIC_DIR, self._queue_en[idx])
+            self._idx_en += 1
         else:
-            playlist = PLAYLIST_ES
-            idx      = self._es_index % len(PLAYLIST_ES)
-            self._es_index += 1
+            idx = self._idx_es % len(self._queue_es)
+            if idx == 0 and self._idx_es > 0:
+                random.shuffle(self._queue_es)
+            path = os.path.join(MUSIC_DIR, self._queue_es[idx])
+            self._idx_es += 1
 
-        self._turn_en = not self._turn_en  # alternar para la próxima
-        return os.path.join(MUSIC_DIR, playlist[idx])
+        self._turn_en = not self._turn_en
+        return path
 
     def _play_path(self, path):
         if not os.path.isfile(path):
@@ -136,8 +141,6 @@ class MusicManager:
             return False
 
     def _monitor_loop(self):
-        """Hilo que detecta cuando termina una canción y pone la siguiente."""
-        # Esperar un momento para que empiece a sonar
         time.sleep(1.0)
         while self._running:
             try:
@@ -152,10 +155,8 @@ class MusicManager:
         if not self._available:
             return
         self._running = True
-        # Tocar la primera canción
         path = self._get_next_path()
         self._play_path(path)
-        # Arrancar hilo monitor
         self._check_thread = threading.Thread(
             target=self._monitor_loop, daemon=True)
         self._check_thread.start()
@@ -263,7 +264,7 @@ class EmotionDetectionNode(LifecycleNode):
         self._current_emotion  = ""
         self._rain_lock        = threading.Lock()
         self.loaded_emojis     = {}
-        self._music            = None   # MusicManager
+        self._music            = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -304,7 +305,6 @@ class EmotionDetectionNode(LifecycleNode):
             self.lang_subscription = self.create_subscription(
                 Bool, '/yaren/is_english', self.language_callback, qos)
 
-            # Iniciar música
             self._music = MusicManager(logger=self.get_logger())
 
             self.get_logger().info('Modelo TF + MediaPipe + Emojis + Música listos ✓')
@@ -341,7 +341,6 @@ class EmotionDetectionNode(LifecycleNode):
             target=self._infer_loop, daemon=True)
         self._infer_thread.start()
 
-        # Arrancar música al activarse
         if self._music:
             self._music.start()
 
@@ -358,7 +357,6 @@ class EmotionDetectionNode(LifecycleNode):
             self.destroy_subscription(self.subscription)
             self.subscription = None
 
-        # Parar música al desactivarse
         if self._music:
             self._music.stop()
 
@@ -535,7 +533,7 @@ class EmotionDetectionNode(LifecycleNode):
 
                     preds       = self.model(roi, training=False)
                     preds_array = np.array(preds[0])
-                    preds_array[4] *= 4.0  # boost Sad/Triste
+                    preds_array[4] *= 4.0
 
                     emotion_list = EMOTIONS_EN if self.is_english else EMOTIONS_ES
                     probs_str = " | ".join(
