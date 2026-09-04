@@ -59,7 +59,6 @@ class CSICameraPublisher(Node):
             return
 
         # ── Volteo vertical (cambia 0 por 1 si necesitas solo horizontal) ──
-        frame = cv2.flip(frame, 0)   # 0 = vertical, 1 = horizontal, -1 = ambos
 
         self.frame_count += 1
         msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
