@@ -222,6 +222,14 @@ class AhorcadoNode(LifecycleNode):
         msg = Bool()
         msg.data = False
         self._game_active_pub.publish(msg)
+        
+        # Limpiar recursos gráficos al desactivar
+        try:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+        except Exception:
+            pass
+            
         return super().on_deactivate(state)
 
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
@@ -740,35 +748,33 @@ class AhorcadoNode(LifecycleNode):
 
     # ── Main Display Loop ────────────────────────────────────────────────────
     def run_display_main_thread(self):
-        win_name = 'YAREN - Ahorcado'
-
+        win_name = 'YAREN2 - Juego del Ahorcado'
+        
         while rclpy.ok():
-            # Esperar a que el nodo sea activado externamente (sin watchdog)
+            # Esperar activación
             while not self._active and rclpy.ok():
                 time.sleep(0.05)
-
+            
             if not rclpy.ok():
                 break
-
-            # ── Abrir ventana en el main thread ──────────────────────────
+            
+            # Crear ventana
             cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(win_name, W, H)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_mouse)
-
-            def _focus():
-                time.sleep(0.4)
-                os.system(f"xdotool search --sync --name '{win_name}' "
-                          "windowactivate --sync windowraise 2>/dev/null")
-            threading.Thread(target=_focus, daemon=True).start()
-
+            
+            # Resetear estado del juego
+            self._reset_game_state()
+            self.screen = 'intro'
+            self._build_intro_buttons()
+            self.show_exit_confirm = False
+            
+            # Bucle del juego
             frame = np.zeros((H, W, 3), dtype=np.uint8)
-
-            # ── Loop de render ────────────────────────────────────────────
-            while rclpy.ok() and self._active:
-                
-                # FIX: Verificación segura de cierre de ventana en Linux (AUTOSIZE)
+            while self._active and rclpy.ok():
+                # Verificar cierre de ventana
                 try:
                     if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
                         self._active = False
@@ -776,67 +782,58 @@ class AhorcadoNode(LifecycleNode):
                 except Exception:
                     self._active = False
                     break
-
+                
                 frame[:] = BG_DARK
-
-                if   self.screen == 'intro':          self._render_intro(frame)
-                elif self.screen == 'level':          self._render_level(frame)
-                elif self.screen == 'playing':        self._render_playing(frame)
-                elif self.screen == 'word_result':    self._render_word_result(frame)
-                elif self.screen == 'level_complete': self._render_level_complete(frame)
-                elif self.screen == 'game_over':      self._render_game_over(frame)
-
+                
+                # Renderizar según la pantalla actual
+                if self.screen == 'intro':
+                    self._render_intro(frame)
+                elif self.screen == 'level':
+                    self._render_level(frame)
+                elif self.screen == 'playing':
+                    self._render_playing(frame)
+                elif self.screen == 'word_result':
+                    self._render_word_result(frame)
+                elif self.screen == 'level_complete':
+                    self._render_level_complete(frame)
+                elif self.screen == 'game_over':
+                    self._render_game_over(frame)
+                
                 if self.show_exit_confirm:
                     self._render_confirm_overlay(frame)
-
+                
                 cv2.imshow(win_name, frame)
                 key = cv2.waitKey(1000 // FPS) & 0xFF
-                if key == 27:
+                if key == 27:  # ESC
                     self._active = False
                     break
-
-            # ── Limpieza al salir del loop ────────────────────────────────
+            
+            # Limpiar cuando se desactiva
             try:
                 cv2.destroyAllWindows()
                 cv2.waitKey(1)
             except Exception:
                 pass
-
-            msg = Bool()
-            msg.data = False
-            self._game_active_pub.publish(msg)
-
-            if not rclpy.ok():
-                break
-            break
-
-
-# ─────────────────────────────────────────────
-#  ENTRY POINT
-# ─────────────────────────────────────────────
+            
+            print("AhorcadoNode desactivado, esperando reactivación...")
+            time.sleep(0.2)
 def main(args=None):
     rclpy.init(args=args)
     node = AhorcadoNode()
-
+    node.trigger_configure()
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
-
     try:
         node.run_display_main_thread()
     except KeyboardInterrupt:
-        pass
+        print("Interrupción recibida, cerrando...")
     finally:
         node._active = False
-        try:
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
-        except Exception:
-            pass
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
-        spin_thread.join(timeout=3.0)
-
-
-if __name__ == '__main__':
+        node._sound.quit()
+        cv2.destroyAllWindows()
+        
+        print("AhorcadoNode en estado INACTIVE, listo para reactivar")
+        
+        spin_thread.join(timeout=2.0)
+if __name__ == "__main__":
     main()

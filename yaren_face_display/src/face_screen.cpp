@@ -2577,7 +2577,7 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|csi_cam_pub|fondo_virtual|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
         const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
@@ -4579,21 +4579,21 @@ private:
             this->create_client<lifecycle_msgs::srv::GetState>(service);
     }
     auto& client = lifecycle_state_clients_[node_name];
-    if (!client->wait_for_service(std::chrono::milliseconds(500)))
+    if (!client->wait_for_service(std::chrono::milliseconds(2000)))
         return 0;
     auto future = client->async_send_request(
         std::make_shared<lifecycle_msgs::srv::GetState::Request>());
-    if (future.wait_for(std::chrono::milliseconds(800)) == std::future_status::ready)
+    if (future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready)
         return future.get()->current_state.id;
     return 0;
 }
 
 void ensure_lifecycle_active(const std::string& node_name) {
+    // Esperar hasta 5s a que el servicio esté disponible
+    std::string service = "/" + node_name + "/get_state";
+    // ... 
     uint8_t state = get_lifecycle_state(node_name);
-    if (state == 1) { // unconfigured → configure primero
-        RCLCPP_WARN(get_logger(),
-            "[LC] %s en unconfigured, configurando antes de activar...",
-            node_name.c_str());
+    if (state == 1) {
         change_lifecycle_state(node_name,
             lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
         std::this_thread::sleep_for(std::chrono::seconds(3));

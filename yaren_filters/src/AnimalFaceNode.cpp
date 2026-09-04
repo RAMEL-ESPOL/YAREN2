@@ -4,7 +4,12 @@
 #include <opencv2/imgproc.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <thread>
+#include <chrono>
 #include "ament_index_cpp/get_package_share_directory.hpp"
+#include <cstdlib>
+#include <unistd.h>    // fork, execl, _exit
+#include <signal.h>    // kill, SIGTERM
+#include <sys/wait.h>  // waitpid
 
 static const int  WIN_W      = 800;
 static const int  WIN_H      = 480;
@@ -20,6 +25,21 @@ static const cv::Rect BTN_PREV(10, TOP_OFFSET + CARD_H/2 - 25, 40, 50);
 static const cv::Rect BTN_NEXT(WIN_W - 50, TOP_OFFSET + CARD_H/2 - 25, 40, 50);
 static const cv::Rect BTN_APPLY(300, 430, 200, 48);
 static const cv::Rect BTN_CLOSE(WIN_W - 55, 10, 45, 45);
+
+// ── Cooldown entre detecciones (segundos) ─────────────────────────────────
+static const double TONGUE_COOLDOWN = 3.0;
+
+// ── Config por animal ──────────────────────────────────────────────────────
+struct AnimalConfig {
+    std::string bg_file;
+    std::string sound_file;
+};
+
+static const std::map<std::string, AnimalConfig> ANIMAL_CONFIG = {
+    { "bear",   { "fondopanda.png",  "panda.mp3" } },
+    { "cat",    { "fondogato.png",   "gato.mp3"  } },
+    { "monkey", { "fondomono2.jpg",  "mono.mp3"  } },
+};
 
 struct Texts {
     std::string menu_title, btn_apply;
@@ -66,6 +86,10 @@ static const std::vector<FilterOption> FILTERS = {
 };
 
 static std::atomic<bool> g_animal_filter_ready{false};
+
+// ══════════════════════════════════════════════════════════════
+//  Helpers de UI
+// ══════════════════════════════════════════════════════════════
 
 static void overlay_rgba(cv::Mat& bg, const cv::Mat& fg, int ox, int oy) {
     if (fg.empty()) return;
@@ -211,8 +235,6 @@ static void on_cam_mouse(int event, int, int, int, void* ud) {
 static std::string show_menu(const std::vector<cv::Mat>& previews, const Texts& txt) {
     cv::namedWindow(MENU_WIN, cv::WINDOW_NORMAL);
     cv::setWindowProperty(MENU_WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-
-    // Forzar foco una sola vez al crear la ventana
     std::thread([&]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         std::string cmd = std::string("xdotool search --sync --name '")
@@ -220,7 +242,6 @@ static std::string show_menu(const std::vector<cv::Mat>& previews, const Texts& 
                         + "' windowactivate --sync windowraise 2>/dev/null";
         std::system(cmd.c_str());
     }).detach();
-
     MenuState ms;
     cv::setMouseCallback(MENU_WIN, on_menu_mouse, &ms);
     cv::Mat canvas(WIN_H, WIN_W, CV_8UC3);
@@ -235,11 +256,105 @@ static std::string show_menu(const std::vector<cv::Mat>& previews, const Texts& 
 }
 
 // ══════════════════════════════════════════════════════════════
+//  TongueDetector — detecta boca muy abierta (toggle con cooldown)
+// ══════════════════════════════════════════════════════════════
+class TongueDetector {
+public:
+    struct Result {
+        bool triggered;
+        bool turning_on;
+    };
+
+    Result check(const std::vector<cv::Point2f>& lm) {
+        if ((int)lm.size() < 468) return {false, false};
+
+        float upper_lip_y  = lm[13].y;
+        float lower_lip_y  = lm[14].y;
+        float mouth_width  = std::abs(lm[308].x - lm[78].x);
+        float mouth_open   = lower_lip_y - upper_lip_y;
+
+        bool wide_open = (mouth_open > mouth_width * 0.20f);
+        if (!wide_open) return {false, false};
+
+        auto now     = std::chrono::steady_clock::now();
+        double elapsed = std::chrono::duration<double>(now - last_trigger_).count();
+        if (elapsed < TONGUE_COOLDOWN) return {false, false};
+
+        last_trigger_ = now;
+        bool turning_on = !bg_active_;
+        bg_active_      = !bg_active_;
+        return {true, turning_on};
+    }
+
+    bool is_bg_active() const { return bg_active_; }
+
+private:
+    std::chrono::steady_clock::time_point last_trigger_{};
+    bool bg_active_ = false;
+};
+
+// ══════════════════════════════════════════════════════════════
+//  VirtualBackground — activar/desactivar con fade
+// ══════════════════════════════════════════════════════════════
+class VirtualBackground {
+public:
+    void load(const std::string& pkg_path, const std::string& filename) {
+        std::string path = pkg_path + "/imgs/backgrounds/" + filename;
+        bg_orig_ = cv::imread(path, cv::IMREAD_COLOR);
+        if (bg_orig_.empty()) {
+            std::cerr << "[VirtualBG] No se encontró: " << path << std::endl;
+        } else {
+            bg_ready_.release();
+            std::cout << "[VirtualBG] Cargado: " << path << std::endl;
+        }
+    }
+
+    void set_active(bool on) {
+        if (on != active_) {
+            transition_start_ = std::chrono::steady_clock::now();
+        }
+        active_ = on;
+    }
+
+    bool is_active() const { return active_; }
+
+    cv::Mat apply(const cv::Mat& frame) {
+        if (bg_orig_.empty()) return frame;
+
+        if (bg_ready_.size() != frame.size()) {
+            cv::resize(bg_orig_, bg_ready_, frame.size());
+        }
+
+        double elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - transition_start_).count();
+
+        double alpha;
+        if (active_) {
+            alpha = std::min(elapsed / 0.4, 1.0);
+        } else {
+            alpha = std::max(0.0, 1.0 - elapsed / 0.4);
+            if (alpha <= 0.0) return frame;
+        }
+
+        cv::Mat result;
+        cv::addWeighted(bg_ready_, alpha, frame, 1.0 - alpha, 0, result);
+        return result;
+    }
+
+private:
+    cv::Mat    bg_orig_;
+    cv::Mat    bg_ready_;
+    bool       active_ = false;
+    std::chrono::steady_clock::time_point transition_start_{};
+};
+
+// ══════════════════════════════════════════════════════════════
 //  AnimalFaceNode — implementación
 // ══════════════════════════════════════════════════════════════
 AnimalFaceNode::AnimalFaceNode()
     : rclcpp_lifecycle::LifecycleNode("filtro_animales"),
-      is_english_(false)
+      is_english_(false),
+      sound_pid_(-1)
 {
     get_logger();
 }
@@ -277,15 +392,18 @@ CallbackReturn AnimalFaceNode::on_activate(const rclcpp_lifecycle::State&)
 
     image_pub_ = this->create_publisher<ImageMsg>("filtered_image", 10);
 
+    tongue_detector_ = std::make_unique<TongueDetector>();
+    virtual_bg_      = std::make_unique<VirtualBackground>();
+
     auto wait_start = std::chrono::steady_clock::now();
     while (!language_received_.load() &&
            std::chrono::steady_clock::now() - wait_start < std::chrono::milliseconds(500)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
-    ui_running_ = true;
+    ui_running_  = true;
     cam_clicked_ = false;
-    ui_thread_ = std::thread(&AnimalFaceNode::run_ui, this);
+    ui_thread_   = std::thread(&AnimalFaceNode::run_ui, this);
 
     RCLCPP_INFO(get_logger(), "ACTIVADO — mostrando menú de animales.");
     return CallbackReturn::SUCCESS;
@@ -293,13 +411,18 @@ CallbackReturn AnimalFaceNode::on_activate(const rclcpp_lifecycle::State&)
 
 CallbackReturn AnimalFaceNode::on_deactivate(const rclcpp_lifecycle::State&)
 {
-    ui_running_ = false;
+    ui_running_  = false;
     cam_clicked_ = true;
+
+    // ── Detener audio al desactivar ──────────────────────────
+    stop_sound();
 
     if (ui_thread_.joinable()) ui_thread_.join();
 
     sync_.reset();
     image_pub_.reset();
+    tongue_detector_.reset();
+    virtual_bg_.reset();
 
     cv::destroyAllWindows();
     RCLCPP_INFO(get_logger(), "DESACTIVADO.");
@@ -316,11 +439,65 @@ CallbackReturn AnimalFaceNode::on_cleanup(const rclcpp_lifecycle::State&)
 
 CallbackReturn AnimalFaceNode::on_shutdown(const rclcpp_lifecycle::State&)
 {
-    ui_running_ = false;
+    ui_running_  = false;
     cam_clicked_ = true;
+
+    // ── Detener audio al apagar ──────────────────────────────
+    stop_sound();
+
     if (ui_thread_.joinable()) ui_thread_.join();
     cv::destroyAllWindows();
     return CallbackReturn::SUCCESS;
+}
+
+void AnimalFaceNode::load_animal_assets(const std::string& animal)
+{
+    try {
+        std::string pkg = ament_index_cpp::get_package_share_directory("yaren_filters");
+        auto it = ANIMAL_CONFIG.find(animal);
+        if (it == ANIMAL_CONFIG.end()) return;
+
+        const AnimalConfig& cfg = it->second;
+
+        if (virtual_bg_) {
+            virtual_bg_->load(pkg, cfg.bg_file);
+        }
+
+        current_sound_path_ = pkg + "/imgs/sounds/" + cfg.sound_file;
+        RCLCPP_INFO(get_logger(), "Assets cargados para: %s", animal.c_str());
+        RCLCPP_INFO(get_logger(), "Sonido: %s", current_sound_path_.c_str());
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Error cargando assets: %s", e.what());
+    }
+}
+
+// ── Para el proceso de audio si existe ────────────────────────────────────
+void AnimalFaceNode::stop_sound()
+{
+    if (sound_pid_ > 0) {
+        kill(sound_pid_, SIGTERM);
+        waitpid(sound_pid_, nullptr, WNOHANG);
+        sound_pid_ = -1;
+    }
+}
+
+// ── Toggle de audio: turn_on=true arranca mpg123 en loop,
+//                    turn_on=false lo mata ────────────────────────────────
+void AnimalFaceNode::play_sound(bool turn_on)
+{
+    // Siempre matar el proceso anterior primero
+    stop_sound();
+
+    if (!turn_on || current_sound_path_.empty()) return;
+
+    // Lanzar mpg123 en loop (-1 = infinito) y guardar el PID
+    sound_pid_ = fork();
+    if (sound_pid_ == 0) {
+        // Proceso hijo — reemplaza la imagen con mpg123
+        execl("/usr/bin/mpg123", "mpg123", "-q", "--loop", "-1",
+              current_sound_path_.c_str(), nullptr);
+        _exit(1);  // Solo llega aquí si execl falla
+    }
 }
 
 void AnimalFaceNode::run_ui()
@@ -332,18 +509,24 @@ void AnimalFaceNode::run_ui()
         if (chosen.empty() || !ui_running_) break;
 
         set_filter(chosen);
+        load_animal_assets(chosen);
+
+        // Al cambiar de animal, parar el audio anterior
+        stop_sound();
+
         cam_clicked_ = false;
 
         cv::namedWindow(CAM_WIN, cv::WINDOW_NORMAL);
         cv::setWindowProperty(CAM_WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
 
-        // Forzar foco una sola vez al crear la ventana de cámara
         std::thread([]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            std::system("xdotool search --sync --name 'Animal Filter' windowactivate --sync windowraise 2>/dev/null");
+            std::system("xdotool search --sync --name 'Animal Filter' "
+                        "windowactivate --sync windowraise 2>/dev/null");
         }).detach();
 
         cv::setMouseCallback(CAM_WIN, on_cam_mouse, &cam_clicked_);
+
         while (rclcpp::ok() && !cam_clicked_ && ui_running_) {
             cv::Mat frame;
             if (get_last_frame(frame)) cv::imshow(CAM_WIN, frame);
@@ -351,6 +534,9 @@ void AnimalFaceNode::run_ui()
         }
         cv::destroyWindow(CAM_WIN);
     }
+
+    // Al salir del loop, parar audio
+    stop_sound();
 
     if (rclcpp::ok() && ui_running_.load() && mode_pub_) {
         auto msg = std_msgs::msg::String();
@@ -366,7 +552,7 @@ void AnimalFaceNode::set_filter(const std::string& animal)
     Texts txt = make_texts(is_english_);
     std::lock_guard<std::mutex> lock(filter_mutex_);
     try {
-        current_filter_ = AnimalFilter(animal);
+        current_filter_       = AnimalFilter(animal);
         g_animal_filter_ready = true;
         RCLCPP_INFO(get_logger(), "%s%s", txt.log_filter_set.c_str(), animal.c_str());
     } catch (const std::exception& e) {
@@ -379,7 +565,7 @@ bool AnimalFaceNode::get_last_frame(cv::Mat& out)
 {
     std::lock_guard<std::mutex> lock(filter_mutex_);
     if (!has_frame_) return false;
-    out = last_frame_;
+    out        = last_frame_;
     has_frame_ = false;
     return true;
 }
@@ -391,19 +577,57 @@ void AnimalFaceNode::callback(
     Texts txt = make_texts(is_english_);
     try {
         cv::Mat frame = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
+
         std::vector<cv::Point2f> landmarks;
         for (const auto& p : lm_msg->landmarks)
             landmarks.emplace_back(p.x * frame.cols, p.y * frame.rows);
 
         cv::Mat processed;
+        bool mouth_triggered = false;
+        bool mouth_turning_on = false;
+
         {
             std::lock_guard<std::mutex> lock(filter_mutex_);
             cv::flip(frame, frame, 0);
+
+            // ── Detección de boca abierta (toggle) ────────────────────
+            std::vector<cv::Point2f> lm_norm;
+            for (const auto& p : lm_msg->landmarks)
+                lm_norm.emplace_back(p.x, p.y);
+
+            if (tongue_detector_) {
+                auto result = tongue_detector_->check(lm_norm);
+                if (result.triggered) {
+                    // Fondo: toggle igual que antes
+                    virtual_bg_->set_active(result.turning_on);
+
+                    // Audio: guardar para reproducir/detener fuera del mutex
+                    mouth_triggered  = true;
+                    mouth_turning_on = result.turning_on;
+
+                    RCLCPP_INFO(get_logger(),
+                        result.turning_on
+                            ? "Boca abierta! Fondo ON + sonido ON."
+                            : "Boca abierta! Fondo OFF + sonido OFF.");
+                }
+            }
+
+            // ── Aplicar fondo virtual ──────────────────────────────────
+            if (virtual_bg_) {
+                frame = virtual_bg_->apply(frame);
+            }
+
+            // ── Aplicar filtro de animal ───────────────────────────────
             if (g_animal_filter_ready.load()) {
                 processed = current_filter_.apply_filter(frame, landmarks);
             } else {
                 processed = frame.clone();
             }
+        }
+
+        // ── Toggle de audio fuera del mutex ───────────────────────────
+        if (mouth_triggered) {
+            play_sound(mouth_turning_on);
         }
 
         const int TW = 800, TH = 480;
@@ -416,7 +640,7 @@ void AnimalFaceNode::callback(
         {
             std::lock_guard<std::mutex> lock(filter_mutex_);
             last_frame_ = processed.clone();
-            has_frame_ = true;
+            has_frame_  = true;
         }
 
         image_pub_->publish(
@@ -431,11 +655,9 @@ int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<AnimalFaceNode>();
-
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node->get_node_base_interface());
     executor.spin();
-
     rclcpp::shutdown();
     return 0;
 }

@@ -75,6 +75,7 @@ class FaceLandmarkPublisher(LifecycleNode):
             self._face_mesh = mp.solutions.face_mesh.FaceMesh(
                 static_image_mode=False,
                 max_num_faces=max_faces,
+                refine_landmarks=True,          # <-- activa lengua (478 landmarks)
                 min_detection_confidence=det_conf,
                 min_tracking_confidence=track_conf,
             )

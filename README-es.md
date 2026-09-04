@@ -243,3 +243,4 @@ ollama pull phi3:mini
 # Verificar que usa GPU
 ollama run phi3:mini "hola" --verbose
 # Debe mostrar líneas de "GPU layers"
+sudo apt-get install mpg123

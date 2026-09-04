@@ -1285,7 +1285,7 @@ class DanceGameNode(LifecycleNode):
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
             # cv2.flip(frame, -1) voltea la imagen vertical Y horizontalmente (rotación 180°)
-            frame = cv2.flip(frame, -1)
+            frame = cv2.flip(frame, 0)
             self._pose_camera.push_frame(frame)
         except Exception as e:
             self.get_logger().error(f'image_callback error: {e}')

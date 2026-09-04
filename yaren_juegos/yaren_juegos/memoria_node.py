@@ -3,15 +3,10 @@
 memoria_node.py  –  Juego de Memoria tipo Simon Says para YAREN2
 Paquete: yaren_juegos
 
-Novedades:
-  · Pantalla de introducción con bienvenida, reglas y botones Empezar/Volver
-  · Velocidad progresiva: la secuencia se acelera cada ronda
-  · Feedback visual paso a paso: fila de "slots" que se llena con un check
-    cada vez que el jugador acierta un color, más un flash/check grande
-    sobre el cuadrante tocado
-  · Sonido en 5 momentos: al reproducir la secuencia, mientras el jugador
-    tiene tiempo para elegir, al acertar, al fallar y al terminar el juego.
-    El audio es 100% opcional.
+Fixes aplicados:
+  · SoundManager usa pygame.mixer.music para MP3 (o Sound para WAV si existen)
+  · on_deactivate sin join() bloqueante → segunda activación no falla
+  · on_activate resetea eventos y estado antes de arrancar el thread
 """
 
 import rclpy
@@ -53,9 +48,7 @@ BALL_POSITIONS = {
 W, H = 800, 480
 BALL_RADIUS = 60
 
-# Velocidad por ronda — tabla fija para 10 rondas.
-# Rondas 1-3: comodo | 4-6: difícil | 7-10: imposible
-# Tupla: (ronda, on_time, off_time)
+# Velocidad por ronda
 SPEED_TABLE = [
     (1,  0.85, 0.30),
     (2,  0.75, 0.25),
@@ -69,7 +62,6 @@ SPEED_TABLE = [
     (10, 0.08, 0.05),
 ]
 MAX_ROUNDS    = 10
-
 INPUT_TIMEOUT = 6.0
 
 # ─── Paleta UI YAREN ──────────────────────────────────────────────────────────
@@ -85,86 +77,90 @@ CORRECT_CLR= (90,  210, 80)
 WRONG_CLR  = (70,  70,  220)
 
 # ─── Audio ────────────────────────────────────────────────────────────────────
-AUDIO_BASE = "/home/roberto/robotis_ws/src/YAREN2/yaren_juegos/sounds"
+HOME_DIR   = os.path.expanduser("~")
+BASE_WS    = os.path.join(HOME_DIR, "robotis_ws", "src", "YAREN2")
+AUDIO_BASE = os.path.join(BASE_WS, "yaren_juegos", "sounds")
+# Prioridad: WAV > MP3 (pygame.mixer.Sound solo soporta WAV de forma fiable)
+def _find_sound(name):
+    for ext in ("wav", "mp3"):
+        p = os.path.join(AUDIO_BASE, f"{name}.{ext}")
+        if os.path.isfile(p):
+            return p
+    return None
 
 SOUNDS = {
-    "seq_ROJO":     os.path.join(AUDIO_BASE, "tone_red.wav"),
-    "seq_AZUL":     os.path.join(AUDIO_BASE, "tone_blue.wav"),
-    "seq_VERDE":    os.path.join(AUDIO_BASE, "tone_green.wav"),
-    "seq_AMARILLO": os.path.join(AUDIO_BASE, "tone_yellow.wav"),
-    "tap_correct":  os.path.join(AUDIO_BASE, "tap_correct.wav"),
-    "tap_wrong":    os.path.join(AUDIO_BASE, "tap_wrong.wav"),
-    "round_correct":os.path.join(AUDIO_BASE, "round_correct.wav"),
-    "round_wrong":  os.path.join(AUDIO_BASE, "round_wrong.wav"),
-    "game_over":    os.path.join(AUDIO_BASE, "game_over.wav"),
+    "acierto":  _find_sound("acierto"),
+    "error":    _find_sound("error"),
+    "gameover": _find_sound("gameover"),
 }
 
-WAITING_MUSIC = os.path.join(AUDIO_BASE, "waiting_loop.wav")
-
-
 # =============================================================================
-#  SONIDO — pygame opcional
+#  SISTEMA DE SONIDO — pygame con soporte WAV (Sound) y MP3 (music channel)
 # =============================================================================
 class _NullSound:
     def play(self, key: str): pass
-    def start_waiting_music(self): pass
-    def stop_waiting_music(self): pass
     def quit(self): pass
 
 
 class SoundManager:
+    """
+    Usa pygame.mixer.Sound para WAV (baja latencia, solapable).
+    Si solo hay MP3, cae a pygame.mixer.music (no solapable pero funciona).
+    """
     def __init__(self):
-        self._ok = False
-        self._cache: dict = {}
-        self._waiting_loaded = False
-        import pygame
-        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-        self._pygame = pygame
-        self._ok = True
-        self._load_sounds()
+        self._ok    = False
+        self._cache = {}          # key → pygame.mixer.Sound  (WAV)
+        self._mp3   = {}          # key → path str            (MP3 fallback)
+        self._pygame = None
+        try:
+            import pygame
+            pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=512)
+            pygame.mixer.init()
+            self._pygame = pygame
+            self._ok = True
+            self._load_sounds()
+        except Exception as e:
+            print(f"[SoundManager] No se pudo inicializar pygame.mixer: {e}")
 
     def _load_sounds(self):
         for key, path in SOUNDS.items():
-            if path and os.path.isfile(path):
+            if not path:
+                print(f"[SoundManager] Archivo no encontrado para: {key}")
+                continue
+            if path.lower().endswith(".wav"):
                 try:
                     self._cache[key] = self._pygame.mixer.Sound(path)
-                except Exception:
-                    pass
-        if WAITING_MUSIC and os.path.isfile(WAITING_MUSIC):
-            self._waiting_loaded = True
+                    print(f"[SoundManager] WAV cargado: {key}")
+                except Exception as e:
+                    print(f"[SoundManager] Error cargando WAV {key}: {e}")
+            else:
+                # MP3 → guardar ruta para reproducir con music
+                self._mp3[key] = path
+                print(f"[SoundManager] MP3 registrado: {key} → {path}")
 
     def play(self, key: str):
         if not self._ok:
             return
+        # Preferir WAV (Sound, solapable, baja latencia)
         snd = self._cache.get(key)
         if snd:
             try:
                 snd.play()
+                return
             except Exception:
                 pass
-
-    def start_waiting_music(self):
-        if not self._ok or not self._waiting_loaded:
-            return
-        try:
-            self._pygame.mixer.music.load(WAITING_MUSIC)
-            self._pygame.mixer.music.set_volume(0.35)
-            self._pygame.mixer.music.play(loops=-1)
-        except Exception:
-            pass
-
-    def stop_waiting_music(self):
-        if not self._ok:
-            return
-        try:
-            self._pygame.mixer.music.stop()
-        except Exception:
-            pass
+        # Fallback MP3 vía music channel
+        mp3_path = self._mp3.get(key)
+        if mp3_path:
+            try:
+                self._pygame.mixer.music.load(mp3_path)
+                self._pygame.mixer.music.play()
+            except Exception as e:
+                print(f"[SoundManager] Error reproduciendo MP3 {key}: {e}")
 
     def quit(self):
         if self._ok:
             try:
-                self._pygame.mixer.music.stop()
                 self._pygame.mixer.quit()
             except Exception:
                 pass
@@ -196,7 +192,6 @@ def _draw_rounded_rect(img, pt1, pt2, color, radius=12, thickness=-1, alpha=1.0)
         else:
             np.copyto(img, overlay)
     else:
-        # Solo borde: dibujar arcos en las esquinas sin relleno interno
         cv2.rectangle(img, (x1 + radius, y1), (x2 - radius, y1), color, thickness)
         cv2.rectangle(img, (x1 + radius, y2), (x2 - radius, y2), color, thickness)
         cv2.rectangle(img, (x1, y1 + radius), (x1, y2 - radius), color, thickness)
@@ -206,11 +201,9 @@ def _draw_rounded_rect(img, pt1, pt2, color, radius=12, thickness=-1, alpha=1.0)
         cv2.ellipse(img, (x1+radius, y2-radius), (radius, radius),  90, 0, 90, color, thickness)
         cv2.ellipse(img, (x2-radius, y2-radius), (radius, radius),   0, 0, 90, color, thickness)
 
-
 def _draw_button(frame, pt1, pt2, label, font_scale=1.0, thickness=2,
                  bg_color=None, border_color=None, text_color=None,
                  radius=12, alpha=0.95):
-    """Dibuja un botón limpio: fondo relleno + borde + texto centrado. Sin artefactos."""
     if bg_color is None:
         bg_color = ACCENT2
     if border_color is None:
@@ -221,21 +214,17 @@ def _draw_button(frame, pt1, pt2, label, font_scale=1.0, thickness=2,
     x1, y1 = pt1
     x2, y2 = pt2
 
-    # Relleno
     _draw_rounded_rect(frame, pt1, pt2, bg_color, radius=radius,
                        thickness=-1, alpha=alpha)
-    # Borde
     _draw_rounded_rect(frame, pt1, pt2, border_color, radius=radius,
                        thickness=2)
 
-    # Texto centrado (sin fondo extra)
     font = cv2.FONT_HERSHEY_DUPLEX
     (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
     tx = (x1 + x2) // 2 - tw // 2
     ty = (y1 + y2) // 2 + th // 2 - baseline // 2
     cv2.putText(frame, label, (tx, ty), font, font_scale,
                 text_color, thickness, cv2.LINE_AA)
-
 
 def _draw_glow_circle(frame, center, radius, color, intensity=0.45):
     overlay = frame.copy()
@@ -244,14 +233,12 @@ def _draw_glow_circle(frame, center, radius, color, intensity=0.45):
     cv2.addWeighted(overlay, intensity, frame, 1 - intensity, 0, frame)
     cv2.circle(frame, center, radius, color, -1)
 
-
 def _gradient_bg(h, w, top_color, bot_color):
     frame = np.zeros((h, w, 3), dtype=np.float32)
     for i in range(h):
         t = i / h
         frame[i] = [top_color[c] * (1 - t) + bot_color[c] * t for c in range(3)]
     return frame.astype(np.uint8)
-
 
 def _draw_checkmark(frame, center, size, color, thickness=4):
     cx, cy = center
@@ -260,7 +247,6 @@ def _draw_checkmark(frame, center, size, color, thickness=4):
     p3 = (cx + int(size * 0.55), cy - int(size * 0.45))
     cv2.line(frame, p1, p2, color, thickness, cv2.LINE_AA)
     cv2.line(frame, p2, p3, color, thickness, cv2.LINE_AA)
-
 
 def _draw_sequence_slots(frame, sequence_len: int, completed: list,
                          current_flash=None):
@@ -295,9 +281,7 @@ def _draw_sequence_slots(frame, sequence_len: int, completed: list,
             cv2.circle(frame, (cx, cy), radius, (35, 28, 52), -1)
             cv2.circle(frame, (cx, cy), radius, DIVIDER, 1)
 
-
 def _draw_color_dots_row(frame, cx_center, cy, radius=10, spacing=32):
-    """Dibuja una fila de bolitas de colores decorativas."""
     colors_list = list(COLORS.values())
     total = len(colors_list) * (radius * 2 + spacing) - spacing
     sx = cx_center - total // 2
@@ -306,7 +290,6 @@ def _draw_color_dots_row(frame, cx_center, cy, radius=10, spacing=32):
         bright = tuple(min(255, int(c * 1.2)) for c in col)
         _draw_glow_circle(frame, (x, cy), radius, col, intensity=0.4)
         cv2.circle(frame, (x, cy), radius, bright, 2)
-
 
 # =============================================================================
 #  ESTADOS
@@ -320,17 +303,12 @@ class State:
     FEEDBACK      = "feedback"
     GAME_OVER     = "game_over"
 
-
-# Coordenadas de los botones de la pantalla de introducción
-# Deben coincidir exactamente con lo dibujado en _make_intro_frame
 _BTN_W = 200
 _BTN_Y1, _BTN_Y2 = H - 90, H - 32
 _INTRO_BTN_START = ((W // 2 - _BTN_W - 12, _BTN_Y1), (W // 2 - 12, _BTN_Y2))
 _INTRO_BTN_BACK  = ((W // 2 + 12, _BTN_Y1), (W // 2 + _BTN_W + 12, _BTN_Y2))
 
-# Coordenadas del botón VOLVER del game over
 _GO_BTN = ((W // 2 - 120, H - 110), (W // 2 + 120, H - 42))
-
 
 # =============================================================================
 #  NODO PRINCIPAL
@@ -341,11 +319,10 @@ class MemoriaNode(LifecycleNode):
 
     def __init__(self):
         super().__init__('memoria_node')
-        self._window      = "YAREN2 - Juego de Memoria"
+        self._window          = "YAREN2 - Juego de Memoria"
         self._active          = False
         self._lock            = threading.Lock()
         self._game_thread     = None
-        self._display_thread  = None
         self.is_english       = False
 
         self._sound = _NullSound()
@@ -369,14 +346,15 @@ class MemoriaNode(LifecycleNode):
         self._user_choice    = None
         self._choice_event   = threading.Event()
 
-        # Evento para la pantalla de introducción
-        self._intro_choice   = None   # "start" | "back"
+        self._intro_choice   = None
         self._intro_event    = threading.Event()
 
         self._mode_pub = None
         self._lang_sub = None
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    #  LIFECYCLE
+    # ─────────────────────────────────────────────────────────────────────────
 
     def on_configure(self, state):
         self.get_logger().info('MemoriaNode: configurando...')
@@ -388,8 +366,7 @@ class MemoriaNode(LifecycleNode):
 
             self._sound = _make_sound_manager()
             if isinstance(self._sound, _NullSound):
-                self.get_logger().warn(
-                    'Audio no disponible (pygame/dispositivo). Sigo sin sonido.')
+                self.get_logger().warn('Audio no disponible. Sigo sin sonido.')
             else:
                 self.get_logger().info('Audio inicializado correctamente.')
 
@@ -401,11 +378,14 @@ class MemoriaNode(LifecycleNode):
     def on_activate(self, state):
         self.get_logger().info('MemoriaNode: ACTIVO')
 
-        # La ventana OpenCV/Qt DEBE vivir en el main thread.
-        # on_activate solo pone en marcha la lógica del juego;
-        # la ventana se abre en run_display_main_thread() que se llama
-        # desde main() justo después de spin_once detecta que estamos activos.
+        # FIX: resetear TODOS los eventos y estado antes de arrancar el thread
+        # para que la segunda activación empiece limpia
         self._active = True
+        self._choice_event.clear()
+        self._intro_event.clear()
+        self._intro_choice = None
+        self._user_choice  = None
+        self._frame        = None
         self._set_state(State.INTRO)
 
         self._game_thread = threading.Thread(target=self._game_loop, daemon=True)
@@ -418,12 +398,7 @@ class MemoriaNode(LifecycleNode):
         self._active = False
         self._choice_event.set()
         self._intro_event.set()
-        self._sound.stop_waiting_music()
-        if self._game_thread:
-            self._game_thread.join(timeout=3.0)
-            self._game_thread = None
-        # La ventana OpenCV la destruye run_display_main_thread() en main()
-        # cuando detecta _active=False. No tocar cv2 desde este hilo.
+        self._game_thread = None
         return super().on_deactivate(state)
 
     def on_cleanup(self, state):
@@ -438,13 +413,10 @@ class MemoriaNode(LifecycleNode):
         self._choice_event.set()
         self._intro_event.set()
         self._sound.quit()
-        if self._display_thread:
-            self._display_thread.join(timeout=2.0)
-            self._display_thread = None
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
 
-    # ── Callbacks ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _lang_cb(self, msg):
         self.is_english = msg.data
@@ -456,35 +428,35 @@ class MemoriaNode(LifecycleNode):
         with self._lock:
             state = self._state
 
-        # ── Pantalla de intro ──────────────────────────────────────────────
         if state == State.INTRO:
             (sx1, sy1), (sx2, sy2) = _INTRO_BTN_START
             (bx1, by1), (bx2, by2) = _INTRO_BTN_BACK
             if sx1 <= x <= sx2 and sy1 <= y <= sy2:
+                self._sound.play("acierto")
                 self._intro_choice = "start"
                 self._intro_event.set()
             elif bx1 <= x <= bx2 and by1 <= y <= by2:
+                self._sound.play("acierto")
                 self._intro_choice = "back"
                 self._intro_event.set()
             return
 
-        # ── Game Over: botón VOLVER ────────────────────────────────────────
         if state == State.GAME_OVER:
             (bx1, by1), (bx2, by2) = _GO_BTN
             if bx1 <= x <= bx2 and by1 <= y <= by2:
+                self._sound.play("acierto")
                 self._publish_idle()
                 self._active = False
                 self._choice_event.set()
             return
 
-        # ── Botón X (esquina) ──────────────────────────────────────────────
         if x < 60 and y < 60:
             if state not in (State.GAME_OVER, State.INTRO):
+                self._sound.play("error")
                 self._set_state(State.GAME_OVER)
                 self._choice_event.set()
             return
 
-        # ── Input del jugador ──────────────────────────────────────────────
         if state == State.PLAYER_INPUT:
             for color, ((x1, y1), (x2, y2)) in QUADRANT_CORNERS.items():
                 if x1 <= x < x2 and y1 <= y < y2:
@@ -492,60 +464,73 @@ class MemoriaNode(LifecycleNode):
                     self._choice_event.set()
                     return
 
-    # ── Display loop (DEBE correr en el main thread — Qt/OpenCV lo exigen) ────
-
     def run_display_main_thread(self):
-        """
-        Llamado desde main() en el hilo principal.
-        Espera a que on_activate haya puesto _active=True, abre la ventana
-        OpenCV (todo en el main thread), hace el bucle de render y al salir
-        destruye la ventana. rclpy.spin corre en paralelo en otro hilo.
-        """
-        # Esperar a que el nodo se active (puede tardar unos ms)
-        while not self._active and rclpy.ok():
-            time.sleep(0.05)
-
-        if not rclpy.ok():
-            return
-
-        # ── Abrir ventana en el main thread ───────────────────────────────
-        cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self._window, W, H)
-        cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN,
-                              cv2.WINDOW_FULLSCREEN)
-        cv2.setWindowProperty(self._window, cv2.WND_PROP_TOPMOST, 1)
-        cv2.setMouseCallback(self._window, self._on_click)
-
-        def _focus():
-            time.sleep(0.4)
-            os.system(f"xdotool search --sync --name '{self._window}' "
-                      "windowactivate --sync windowraise 2>/dev/null")
-        threading.Thread(target=_focus, daemon=True).start()
-
-        # ── Bucle de render ────────────────────────────────────────────────
+        win_name = 'YAREN2 - Juego de Memoria'
+        
         while rclpy.ok():
-            with self._frame_lock:
-                frame = self._frame.copy() if self._frame is not None else None
-            if frame is not None:
-                cv2.imshow(self._window, frame)
-            key = cv2.waitKey(16)
-            if key == 27:
-                self._active = False
-                self._choice_event.set()
-                self._intro_event.set()
-                self._publish_idle()
+            # Esperar activación
+            while not self._active and rclpy.ok():
+                time.sleep(0.05)
+            
+            if not rclpy.ok():
                 break
-            # Si el juego terminó y el nodo se desactivó, salir del bucle
-            if not self._active:
-                break
-
-        cv2.destroyAllWindows()
-        self._active = False
-
-    # ── Game loop ─────────────────────────────────────────────────────────────
+            
+            # Crear ventana
+            cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(win_name, W, H)
+            cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
+            cv2.setMouseCallback(win_name, self._on_click)
+            
+            # Resetear estado del juego
+            self._reset_game()
+            self._set_state(State.INTRO)
+            self._choice_event.clear()
+            self._intro_event.clear()
+            
+            # ✅ Crear frame dentro del bucle
+            frame = np.zeros((H, W, 3), dtype=np.uint8)
+            
+            # Bucle del juego (se ejecuta mientras esté activo)
+            while self._active and rclpy.ok():
+                # ✅ Verificar si la ventana sigue abierta
+                try:
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
+                        self._active = False
+                        break
+                except Exception:
+                    self._active = False
+                    break
+                
+                # ✅ Aquí va la lógica del juego (tu código existente)
+                # Por ejemplo, obtener el frame actual
+                with self._frame_lock:
+                    if self._frame is not None:
+                        frame = self._frame.copy()
+                    else:
+                        frame[:] = BG_DARK  # Fondo por defecto
+                
+                cv2.imshow(win_name, frame)
+                key = cv2.waitKey(16) & 0xFF
+                if key == 27:  # ESC
+                    self._active = False
+                    break
+            
+            # Limpiar cuando se desactiva
+            try:
+                cv2.destroyAllWindows()
+                cv2.waitKey(1)
+            except Exception:
+                pass
+            
+            # ✅ NO salir - volver al bucle externo para esperar reactivación
+            print("🔄 MemoriaNode desactivado, esperando reactivación...")
+            time.sleep(0.2)
+    # ─────────────────────────────────────────────────────────────────────────
+    #  GAME LOOP
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _game_loop(self):
-        # 1. Mostrar intro y esperar decisión
         self._set_state(State.INTRO)
         self._show_intro_screen()
 
@@ -557,7 +542,6 @@ class MemoriaNode(LifecycleNode):
             self._active = False
             return
 
-        # 2. Jugar
         self._reset_game()
         self._set_state(State.COUNTDOWN)
         self._show_countdown()
@@ -580,8 +564,6 @@ class MemoriaNode(LifecycleNode):
             round_passed = True
             total_steps  = len(self._sequence)
 
-            self._sound.start_waiting_music()
-
             for i, expected in enumerate(self._sequence):
                 choice = self._wait_for_input(step_idx=i + 1, total_steps=total_steps)
                 if not self._active or self._state == State.GAME_OVER:
@@ -593,9 +575,9 @@ class MemoriaNode(LifecycleNode):
                     self._misses += 1
                     self._flash_color = choice
                     self._flash_until = time.time() + 0.25
-                    self._sound.stop_waiting_music()
-                    self._sound.play("tap_wrong")
-                    self._sound.play("round_wrong")
+
+                    self._sound.play("error")
+
                     self._set_state(State.FEEDBACK)
                     self._show_feedback(False, expected)
                     break
@@ -603,7 +585,8 @@ class MemoriaNode(LifecycleNode):
                 self._completed_this_round.append(choice)
                 self._flash_color = choice
                 self._flash_until = time.time() + 0.30
-                self._sound.play("tap_correct")
+
+                self._sound.play("acierto")
                 time.sleep(0.15)
 
             if not self._active or self._state == State.GAME_OVER:
@@ -611,8 +594,7 @@ class MemoriaNode(LifecycleNode):
 
             if round_passed:
                 self._score += 1
-                self._sound.stop_waiting_music()
-                self._sound.play("round_correct")
+                self._sound.play("acierto")
                 self._set_state(State.FEEDBACK)
                 self._show_feedback(True, "")
 
@@ -620,9 +602,6 @@ class MemoriaNode(LifecycleNode):
                 self._set_state(State.GAME_OVER)
                 break
 
-        self._sound.stop_waiting_music()
-
-        # Si completó las 10 rondas sin perder todas las vidas
         if self._state != State.GAME_OVER and self._round >= MAX_ROUNDS:
             self._set_state(State.GAME_OVER)
             self._winner = True
@@ -633,10 +612,11 @@ class MemoriaNode(LifecycleNode):
         if not self._active:
             self._publish_idle()
 
-    # ── Pantalla de introducción ───────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    #  PANTALLA INTRO
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _show_intro_screen(self):
-        """Muestra la pantalla de bienvenida y bloquea hasta que el usuario elige."""
         self._intro_choice = None
         self._intro_event.clear()
 
@@ -653,7 +633,6 @@ class MemoriaNode(LifecycleNode):
         font_d = cv2.FONT_HERSHEY_DUPLEX
         font_s = cv2.FONT_HERSHEY_SIMPLEX
 
-        # ── Panel que ocupa casi toda la pantalla ──────────────────────────
         px1, py1 = 30, 18
         px2, py2 = W - 30, H - 18
         _draw_rounded_rect(frame, (px1, py1), (px2, py2), BG_PANEL,
@@ -661,7 +640,6 @@ class MemoriaNode(LifecycleNode):
         _draw_rounded_rect(frame, (px1, py1), (px2, py2), DIVIDER,
                            radius=20, thickness=2)
 
-        # ── Título ─────────────────────────────────────────────────────────
         title = "MEMORY GAME" if self.is_english else "JUEGO DE MEMORIA"
         (tw, th), _ = cv2.getTextSize(title, font_d, 1.55, 3)
         tx = W // 2 - tw // 2
@@ -670,13 +648,10 @@ class MemoriaNode(LifecycleNode):
         cv2.putText(frame, title, (tx, 64), font_d, 1.55,
                     ACCENT, 3, cv2.LINE_AA)
 
-        # ── Línea divisora bajo el título ──────────────────────────────────
         cv2.line(frame, (px1 + 40, 84), (px2 - 40, 84), DIVIDER, 1)
 
-        # ── Bolitas de colores ─────────────────────────────────────────────
         _draw_color_dots_row(frame, W // 2, 118, radius=11, spacing=36)
 
-        # ── Reglas ─────────────────────────────────────────────────────────
         if self.is_english:
             lines = [
                 ("Memorize the sequence of colored balls", False),
@@ -706,7 +681,6 @@ class MemoriaNode(LifecycleNode):
                         col, thick, cv2.LINE_AA)
             y_text += lh + 16
 
-        # ── Etiquetas de dificultad de ronda ───────────────────────────────
         diff_y = 278
         cv2.line(frame, (px1 + 40, diff_y - 14), (px2 - 40, diff_y - 14), DIVIDER, 1)
 
@@ -728,7 +702,6 @@ class MemoriaNode(LifecycleNode):
                 cv2.line(frame, (px1 + 30 + col_w * (i + 1), diff_y - 6),
                          (px1 + 30 + col_w * (i + 1), diff_y + 40), DIVIDER, 1)
 
-        # ── Botones ────────────────────────────────────────────────────────
         btn_y1 = H - 90
         btn_y2 = H - 32
         btn_w  = 200
@@ -753,7 +726,9 @@ class MemoriaNode(LifecycleNode):
 
         return frame
 
-    # ── Helpers de juego ──────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    #  HELPERS DE JUEGO
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _reset_game(self):
         self._sequence               = []
@@ -766,7 +741,7 @@ class MemoriaNode(LifecycleNode):
         self._flash_color            = None
         self._flash_until            = 0.0
         self._game_over_sound_played = False
-        self._winner = False
+        self._winner                 = False
         self._choice_event.clear()
 
     def _set_state(self, s):
@@ -775,7 +750,10 @@ class MemoriaNode(LifecycleNode):
 
     def _publish_idle(self):
         if self._mode_pub:
-            self._mode_pub.publish(String(data='idle'))
+            try:
+                self._mode_pub.publish(String(data='idle'))
+            except Exception:
+                pass
 
     def _show_countdown(self):
         for n in ["3", "2", "1", "GO!" if self.is_english else "YA!"]:
@@ -802,7 +780,6 @@ class MemoriaNode(LifecycleNode):
         for color in self._sequence:
             if not self._active or self._state == State.GAME_OVER:
                 return
-            self._sound.play(f"seq_{color}")
             self._push(self._make_ball_frame(lit=color))
             time.sleep(on_time)
             self._push(self._make_ball_frame(lit=None))
@@ -854,7 +831,7 @@ class MemoriaNode(LifecycleNode):
     def _show_game_over(self):
         while self._active and self._state == State.GAME_OVER and rclpy.ok():
             if not self._game_over_sound_played:
-                self._sound.play("game_over")
+                self._sound.play("gameover")
                 self._game_over_sound_played = True
 
             frame = self._dark_bg()
@@ -888,7 +865,6 @@ class MemoriaNode(LifecycleNode):
             self._draw_centered(frame, miss_txt, scale=0.95, thickness=2,
                                 color=TEXT_DIM, y_offset=52)
 
-            # Botón VOLVER limpio
             v_txt = "BACK" if self.is_english else "VOLVER"
             (bx1, by1), (bx2, by2) = _GO_BTN
             _draw_button(frame, (bx1, by1), (bx2, by2), v_txt,
@@ -899,7 +875,9 @@ class MemoriaNode(LifecycleNode):
             self._push(frame)
             time.sleep(0.05)
 
-    # ── Fábricas de frame ─────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    #  RENDER HELPERS
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _dark_bg(self) -> np.ndarray:
         return _gradient_bg(H, W, BG_DARK, (28, 18, 45))
@@ -1027,8 +1005,6 @@ class MemoriaNode(LifecycleNode):
         self._draw_hud(frame)
         return frame
 
-    # ── HUD ───────────────────────────────────────────────────────────────────
-
     def _draw_hud(self, frame: np.ndarray):
         if self._state in (State.GAME_OVER, State.INTRO):
             return
@@ -1062,8 +1038,6 @@ class MemoriaNode(LifecycleNode):
         cv2.putText(frame, r_txt, (W - rw - 13, 37),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.85, ACCENT, 2, cv2.LINE_AA)
 
-    # ── Utilidades ────────────────────────────────────────────────────────────
-
     def _draw_centered(self, frame, text, scale=2.0, thickness=3,
                        color=(255, 255, 255), shadow_color=(0, 0, 0),
                        y_offset=0):
@@ -1080,33 +1054,26 @@ class MemoriaNode(LifecycleNode):
             self._frame = frame
 
 
-# ─── Entry point ──────────────────────────────────────────────────────────────
-
+# =============================================================================
+#  MAIN
+# =============================================================================
 def main(args=None):
     rclpy.init(args=args)
     node = MemoriaNode()
-
-    # rclpy.spin en hilo secundario → el executor de ROS siempre libre
-    # para procesar transiciones de lifecycle (configure/activate/deactivate).
+    node.trigger_configure()
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
-
     try:
-        # El display loop OpenCV/Qt DEBE vivir en el main thread.
-        # Bloquea aquí hasta que la ventana se cierre.
         node.run_display_main_thread()
     except KeyboardInterrupt:
-        pass
+        print("Interrupción recibida, cerrando...")
     finally:
         node._active = False
-        node._choice_event.set()
-        node._intro_event.set()
+        node._sound.quit()
         cv2.destroyAllWindows()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
-        spin_thread.join(timeout=3.0)
-
-
-if __name__ == '__main__':
+        
+        print("MemoriaNode en estado INACTIVE, listo para reactivar")
+        
+        spin_thread.join(timeout=2.0)
+if __name__ == "__main__":
     main()
