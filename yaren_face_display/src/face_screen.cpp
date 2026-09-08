@@ -2577,8 +2577,7 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
-        const char* home = std::getenv("HOME");
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|mimic_gate_node|body_tracker_node|body_points_detector|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");        const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
             std::string ws      = std::string(home) + "/robotis_ws";
@@ -2852,8 +2851,7 @@ public:
         // FIX-F: verificar joinable antes de join en testThread
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-            std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
-        }
+            std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|mimic_gate_node|body_tracker_node|body_points_detector|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");        }
 
     void drawWindow() {
         // FIX-C: copiar frame con lock, luego mostrar fuera del lock
@@ -3032,7 +3030,7 @@ private:
             MI("cabeza_orig", isEnglish ? "HOME POS." : "POS. ORIGINAL", isEnglish ? "original position" : "posicion original", {140,60,80}, "timeout 5 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"", "", false, "", "yaren"),
         }};
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
-            MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
+            MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita", {0,229,255}, "ros2 launch yaren_arm_mimic yaren_mimic.launch.py &", "for pid in $(ps aux | grep -E 'yaren_mimic|body_tracker_node|body_points_detector|csi_cam_pub|mimic_gate_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "mimic"),
             MI("yaren_ai", "IA", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            
             MI("yaren_juegos", isEnglish ? "GAMES" : "JUEGOS", isEnglish ? "Play with Yaren" : "Juega con Yaren", {255, 140, 50}, "", "", true, "sub_yaren_juegos", "dice"),
             MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),

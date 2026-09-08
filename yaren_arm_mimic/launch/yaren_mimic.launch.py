@@ -37,5 +37,11 @@ def generate_launch_description():
             executable='body_tracker_node',
             name='body_tracker_node',
             output='screen'
-        ),      
+        ),
+        Node(
+            package='yaren_arm_mimic',
+            executable='mimic_gate_node.py',
+            name='mimic_gate_node',
+            output='screen'
+        ),       
     ])

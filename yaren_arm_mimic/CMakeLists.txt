@@ -36,6 +36,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/csi_cam_pub.py
   scripts/body_points_detector.py
+  scripts/mimic_gate_node.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS body_tracker_node yaren_controller

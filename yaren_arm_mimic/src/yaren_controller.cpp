@@ -1,7 +1,6 @@
 #include "yaren_controller.hpp"
 #include <cmath>
 
-// ── Mapea un valor de [in_min, in_max] a [out_min, out_max] ──────────────────
 static float mapRange(float value, float in_min, float in_max,
                                    float out_min, float out_max) {
     float clamped = std::max(in_min, std::min(in_max, value));
@@ -9,7 +8,6 @@ static float mapRange(float value, float in_min, float in_max,
 }
 
 DualArmTrajectoryController::DualArmTrajectoryController() : Node("body_trajectory_controller") {
-    // ── Límites físicos del robot (rad) — TUS LÍMITES EXACTOS ──
     joint_limits_["joint_2"]  = std::make_pair(0.0, 0.5235f);
     joint_limits_["joint_5"]  = std::make_pair(0.0f, 3.0f);
     joint_limits_["joint_6"]  = std::make_pair(0.0f, 1.0472f);
@@ -40,6 +38,13 @@ DualArmTrajectoryController::DualArmTrajectoryController() : Node("body_trajecto
     subscription_ = this->create_subscription<yaren_interfaces::msg::BodyPosition>(
         "body_tracker", 10,
         std::bind(&DualArmTrajectoryController::armTrackerCallback, this, std::placeholders::_1));
+
+    mimic_enable_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+        "/mimic/enabled", 10,
+        [this](const std_msgs::msg::Bool::SharedPtr msg) {
+            mimic_enabled_ = msg->data;
+            RCLCPP_INFO(this->get_logger(), "Mimic %s", mimic_enabled_ ? "ACTIVADO" : "DESACTIVADO");
+        });
 
     timer_ = this->create_wall_timer(
         std::chrono::milliseconds(200),
@@ -76,62 +81,44 @@ float DualArmTrajectoryController::limitJointPosition(const std::string& joint, 
     return position;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  MAPEO CORREGIDO — Respeta TUS límites exactos
-// ─────────────────────────────────────────────────────────────────────────────
 std::map<std::string, float>
 DualArmTrajectoryController::processArmData(const std::array<float, 4>& angles,
                                              const std::vector<std::string>& arm_joints,
                                              const bool is_right) {
     std::map<std::string, float> positions;
 
-    // ── angles[0] = hombro ZY (elevación lateral) ──
-    // Humano: 0° (abajo) .. +160° (arriba)
     if (is_right) {
-        // joint_5: 0.0 a 3.0 rad (solo positivo)
         float j_shoulder_zy = mapRange(angles[0], 0.0f, 160.0f,
-                                       joint_limits_[arm_joints[0]].first,   // 0.0
-                                       joint_limits_[arm_joints[0]].second); // 3.0
+                                       joint_limits_[arm_joints[0]].first,
+                                       joint_limits_[arm_joints[0]].second);
         positions[arm_joints[0]] = limitJointPosition(arm_joints[0], j_shoulder_zy);
     } else {
-        // joint_9: -3.0 a 0.0 rad (solo negativo, invertido)
         float j_shoulder_zy = mapRange(angles[0], 0.0f, 160.0f,
-                                       joint_limits_[arm_joints[0]].second,   // -3.0
-                                       joint_limits_[arm_joints[0]].first); // 0.0
+                                       joint_limits_[arm_joints[0]].second,
+                                       joint_limits_[arm_joints[0]].first);
         positions[arm_joints[0]] = limitJointPosition(arm_joints[0], j_shoulder_zy);
     }
 
-    // ── angles[1] = hombro YX (flexión/extensión) ──
-    // Humano: 0° (neutro) .. +90° (adelante)
-    // Robot: 0.0 .. 1.0472 rad (solo positivo, usar valor absoluto)
     float j_shoulder_yx = mapRange(std::abs(angles[1]), 0.0f, 90.0f,
-                                   joint_limits_[arm_joints[1]].first,   // 0.0
-                                   joint_limits_[arm_joints[1]].second); // 1.0472
+                                   joint_limits_[arm_joints[1]].first,
+                                   joint_limits_[arm_joints[1]].second);
     positions[arm_joints[1]] = limitJointPosition(arm_joints[1], j_shoulder_yx);
 
-    // ── angles[2] = codo ZY (flexión codo) ──
-    // Humano: 0° (recto) .. +90° (doblado)
     if (is_right) {
-        // joint_7: -0.7853 a 0.0 rad (solo negativo, mapeo invertido)
-        // 0° humano → 0.0 rad, 90° humano → -0.7853 rad
         float j_elbow_zy = mapRange(angles[2], 0.0f, 90.0f,
-                                    joint_limits_[arm_joints[2]].second, // 0.0
-                                    joint_limits_[arm_joints[2]].first); // -0.7853
+                                    joint_limits_[arm_joints[2]].second,
+                                    joint_limits_[arm_joints[2]].first);
         positions[arm_joints[2]] = limitJointPosition(arm_joints[2], j_elbow_zy);
     } else {
-        // joint_11: 0.0 a 0.7853 rad (solo positivo)
         float j_elbow_zy = mapRange(angles[2], 0.0f, 90.0f,
-                                    joint_limits_[arm_joints[2]].first,   // 0.0
-                                    joint_limits_[arm_joints[2]].second); // 0.7853
+                                    joint_limits_[arm_joints[2]].first,
+                                    joint_limits_[arm_joints[2]].second);
         positions[arm_joints[2]] = limitJointPosition(arm_joints[2], j_elbow_zy);
     }
 
-    // ── angles[3] = codo YX (rotación muñeca) ──
-    // Humano: 0° .. +150°
-    // Robot: 0.1745 .. 1.5708 rad
     float j_elbow_yx = mapRange(std::abs(angles[3]), 0.0f, 150.0f,
-                                joint_limits_[arm_joints[3]].first,   // 0.1745
-                                joint_limits_[arm_joints[3]].second); // 1.5708
+                                joint_limits_[arm_joints[3]].first,
+                                joint_limits_[arm_joints[3]].second);
     positions[arm_joints[3]] = limitJointPosition(arm_joints[3], j_elbow_yx);
 
     return positions;
@@ -140,29 +127,23 @@ DualArmTrajectoryController::processArmData(const std::array<float, 4>& angles,
 void DualArmTrajectoryController::armTrackerCallback(
     const yaren_interfaces::msg::BodyPosition::SharedPtr msg)
 {
-    if (!msg->is_valid) return;
+    if (!msg->is_valid || !mimic_enabled_) return;
 
     torso_tilt_ = 0.0f;
 
-    // ── Brazo derecho ──
-    // joint_5: 0 a 3.0 rad (positivo)
-    // joint_7: -0.7853 a 0.0 rad (negativo)
     std::array<float, 4> right_angles = {
-        msg->right_shoulder_elbow_zy,    // ZY: positivo para elevación
-        msg->right_shoulder_elbow_yx,    // YX: positivo para adelante
-        msg->right_elbow_wrist_zy,       // ZY: positivo para doblar
-        msg->right_elbow_wrist_yx        // YX: positivo para rotar
+        msg->right_shoulder_elbow_zy,
+        msg->right_shoulder_elbow_yx,
+        msg->right_elbow_wrist_zy,
+        msg->right_elbow_wrist_yx
     };
     last_right_pos_ = processArmData(right_angles, right_joints_, true);
 
-    // ── Brazo izquierdo ──
-    // joint_9: -3.0 a 0.0 rad (negativo)
-    // joint_11: 0.0 a 0.7853 rad (positivo)
     std::array<float, 4> left_angles = {
-        msg->left_shoulder_elbow_zy,     // ZY: positivo para elevación
-        msg->left_shoulder_elbow_yx,     // YX: positivo para adelante
-        msg->left_elbow_wrist_zy,        // ZY: positivo para doblar
-        msg->left_elbow_wrist_yx         // YX: positivo para rotar
+        msg->left_shoulder_elbow_zy,
+        msg->left_shoulder_elbow_yx,
+        msg->left_elbow_wrist_zy,
+        msg->left_elbow_wrist_yx
     };
     last_left_pos_ = processArmData(left_angles, left_joints_, false);
 
@@ -216,7 +197,6 @@ void DualArmTrajectoryController::sendTrajectoryGoal() {
         float j11 = current_left_pos_["joint_11"]  + (last_left_pos_["joint_11"]  - current_left_pos_["joint_11"])  * ease_t;
         float j12 = current_left_pos_["joint_12"]  + (last_left_pos_["joint_12"]  - current_left_pos_["joint_12"])  * ease_t;
 
-        // ✅ SIN INVERSIÓN - Usar valores directamente (processArmData ya maneja la dirección)
         point.positions = {0.0f, torso_tilt_, 0.0f, 0.0f,
                            j5, j6, j7, j8, j9, j10, j11, j12};
         point.velocities.resize(point.positions.size(), 0.0);
