@@ -14,18 +14,19 @@ find_package(yaren_interfaces   REQUIRED)
 find_package(sensor_msgs        REQUIRED)
 find_package(std_msgs           REQUIRED)
 find_package(control_msgs       REQUIRED)
-find_package(trajectory_msgs    REQUIRED)   # ← faltaba
+find_package(trajectory_msgs    REQUIRED)  
+find_package(rclcpp_lifecycle REQUIRED) 
 
 add_executable(body_tracker_node src/body_tracker_node.cpp)
 ament_target_dependencies(body_tracker_node
-  rclcpp sensor_msgs yaren_interfaces std_msgs)
+  rclcpp rclcpp_lifecycle sensor_msgs yaren_interfaces std_msgs)
 target_include_directories(body_tracker_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 
 add_executable(yaren_controller src/yaren_controller.cpp)
 ament_target_dependencies(yaren_controller
-  rclcpp rclcpp_action control_msgs trajectory_msgs
+  rclcpp rclcpp_lifecycle rclcpp_action control_msgs trajectory_msgs
   sensor_msgs yaren_interfaces std_msgs)
 target_include_directories(yaren_controller PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

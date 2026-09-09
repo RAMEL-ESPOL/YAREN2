@@ -2,7 +2,8 @@
 
 import sys
 import rclpy
-from rclpy.node import Node
+from std_msgs.msg import Bool, String
+from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn, State
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
@@ -35,14 +36,14 @@ def rrect(img, x, y, w, h, r, color, fill=True, t=1):
         for cx, cy in [(x+r, y+r), (x+w-r, y+r), (x+r, y+h-r), (x+w-r, y+h-r)]:
             cv2.circle(img, (cx, cy), r, color, -1)
     else:
-        cv2.line(img, (x+r, y), (x+w-r, y), color, t)
+        cv2.line(img, (x+r, y),   (x+w-r, y),   color, t)
         cv2.line(img, (x+r, y+h), (x+w-r, y+h), color, t)
-        cv2.line(img, (x, y+r), (x, y+h-r), color, t)
-        cv2.line(img, (x+w, y+r), (x+w, y+h-r), color, t)
-        cv2.ellipse(img, (x+r, y+r), (r, r), 0, 180, 270, color, t)
-        cv2.ellipse(img, (x+w-r, y+r), (r, r), 0, 270, 360, color, t)
-        cv2.ellipse(img, (x+w-r, y+h-r), (r, r), 0, 0, 90, color, t)
-        cv2.ellipse(img, (x+r, y+h-r), (r, r), 0, 90, 180, color, t)
+        cv2.line(img, (x,   y+r), (x,     y+h-r), color, t)
+        cv2.line(img, (x+w, y+r), (x+w,   y+h-r), color, t)
+        cv2.ellipse(img, (x+r,   y+r),   (r, r), 0, 180, 270, color, t)
+        cv2.ellipse(img, (x+w-r, y+r),   (r, r), 0, 270, 360, color, t)
+        cv2.ellipse(img, (x+w-r, y+h-r), (r, r), 0,   0,  90, color, t)
+        cv2.ellipse(img, (x+r,   y+h-r), (r, r), 0,  90, 180, color, t)
 
 
 def bar(img, x, y, val, lo, hi, label, color, bw=130, bh=9):
@@ -52,10 +53,8 @@ def bar(img, x, y, val, lo, hi, label, color, bw=130, bh=9):
     if fill > 6:
         rrect(img, x, y, fill, bh, 3, color)
     rrect(img, x, y, bw, bh, 3, (45, 65, 95), fill=False)
-
     cv2.putText(img, label, (x - 20, y + bh - 1),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.32, color, 1, cv2.LINE_AA)
-
     val_str = f"{val:+.1f}"
     val_x   = x + bw + 4
     val_y   = y + bh - 1
@@ -67,8 +66,8 @@ def bar(img, x, y, val, lo, hi, label, color, bw=130, bh=9):
 def corners(img, x, y, w, h, color, size=14, thick=2):
     for px, py, dx, dy in [(x, y, 1, 1), (x+w, y, -1, 1),
                             (x, y+h, 1, -1), (x+w, y+h, -1, -1)]:
-        cv2.line(img, (px, py), (px + dx*size, py),          color, thick, cv2.LINE_AA)
-        cv2.line(img, (px, py), (px,           py + dy*size), color, thick, cv2.LINE_AA)
+        cv2.line(img, (px, py), (px + dx*size, py),           color, thick, cv2.LINE_AA)
+        cv2.line(img, (px, py), (px,           py + dy*size),  color, thick, cv2.LINE_AA)
 
 
 def skeleton(cam, lm, w, h, enabled):
@@ -86,56 +85,97 @@ def skeleton(cam, lm, w, h, enabled):
     r2 = C_CYAN   if enabled else (55, 65, 85)
     l1 = C_ORANGE if enabled else (70, 75, 95)
     l2 = C_YELLOW if enabled else (55, 65, 85)
-    for a, b, col in [(rs,re,r1),(re,rw,r2),(ls,le,l1),(le,lw,l2)]:
-        cv2.line(cam, a, b, (0,0,0), 5)
+    for a, b, col in [(rs, re, r1), (re, rw, r2), (ls, le, l1), (le, lw, l2)]:
+        cv2.line(cam, a, b, (0, 0, 0), 5)
         cv2.line(cam, a, b, col, 3, cv2.LINE_AA)
-    for pt, col, r in [(rs,r1,7),(re,r2,6),(rw,C_WHITE,5),
-                       (ls,l1,7),(le,l2,6),(lw,C_WHITE,5)]:
-        cv2.circle(cam, pt, r+2, (0,0,0), -1)
-        cv2.circle(cam, pt, r,   col,      -1, cv2.LINE_AA)
-        cv2.circle(cam, pt, r,   C_WHITE,   1, cv2.LINE_AA)
+    for pt, col, r in [(rs, r1, 7), (re, r2, 6), (rw, C_WHITE, 5),
+                       (ls, l1, 7), (le, l2, 6), (lw, C_WHITE, 5)]:
+        cv2.circle(cam, pt, r+2, (0, 0, 0), -1)
+        cv2.circle(cam, pt, r,   col,        -1, cv2.LINE_AA)
+        cv2.circle(cam, pt, r,   C_WHITE,     1, cv2.LINE_AA)
 
 
-class BodyPointsDetectorNode(Node):
+class BodyPointsDetectorNode(LifecycleNode):
+
     def __init__(self):
-        super().__init__('body_points_detector_node')
+        super().__init__('body_points_mimic_detector_node')
         self.bridge        = CvBridge()
-        self.pose          = mp_pose.Pose(
+        self.pose          = None
+        self.latest_pos    = None
+        self.mimic_enabled = False
+        self._t0           = time.time()
+        self.should_exit   = False
+        self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H = 630, 395, 150, 45
+        self.pub_pts  = None
+        self.pub_dbg  = None
+        self.sub_img  = None
+        self.sub_pos  = None
+        self.sub_gate = None
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.pose = mp_pose.Pose(
             min_detection_confidence=0.2,
             min_tracking_confidence=0.2,
             model_complexity=1,
             smooth_landmarks=True)
-        self.latest_pos    = None
-        self.mimic_enabled = False
-        self._t0           = time.time()
-        self.should_exit   = False  # Bandera para cerrar la app
+        self.pub_pts = self.create_lifecycle_publisher(BodyPoints, 'body_points',     10)
+        self.pub_dbg = self.create_lifecycle_publisher(Image,      'arm_debug/image', 10)
+        self.get_logger().info("body_points_detector configurado.")
+        return TransitionCallbackReturn.SUCCESS
 
-        # Coordenadas del botón Volver
-        self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H = 680, 455, 110, 20
-
-        self.sub_img  = self.create_subscription(
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        super().on_activate(state)
+        self.sub_img = self.create_subscription(
             Image, '/csi_camera/image_raw', self.image_callback, 10)
-        self.sub_pos  = self.create_subscription(
+        self.sub_pos = self.create_subscription(
             BodyPosition, 'body_tracker', self.pos_callback, 10)
         from std_msgs.msg import Bool
         self.sub_gate = self.create_subscription(
             Bool, '/mimic/enabled', self._cb_gate, 10)
-
-        self.pub_pts = self.create_publisher(BodyPoints, 'body_points',     10)
-        self.pub_dbg = self.create_publisher(Image,      'arm_debug/image', 10)
-
         cv2.namedWindow("YAREN Mimic", cv2.WINDOW_NORMAL)
         cv2.setWindowProperty("YAREN Mimic", cv2.WND_PROP_FULLSCREEN,
                               cv2.WINDOW_FULLSCREEN)
-        
-        # Asignar callback del ratón a la ventana
         cv2.setMouseCallback("YAREN Mimic", self.mouse_callback)
-        self.get_logger().info("BodyPointsDetectorNode iniciado")
+        self._t0 = time.time()
+        self.should_exit = False
+        self.get_logger().info("body_points_detector activo.")
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        super().on_deactivate(state)
+        self.sub_img  = None
+        self.sub_pos  = None
+        self.sub_gate = None
+        self.mimic_enabled = False
+        self.latest_pos    = None
+        cv2.destroyAllWindows()
+        self.get_logger().info("body_points_detector desactivado.")
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        if self.pose:
+            self.pose.close()
+            self.pose = None
+        self.pub_pts = None
+        self.pub_dbg = None
+        self.get_logger().info("body_points_detector limpiado.")
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        cv2.destroyAllWindows()
+        if self.pose:
+            self.pose.close()
+            self.pose = None
+        return TransitionCallbackReturn.SUCCESS
+
+    # ── Callbacks ─────────────────────────────────────────────────────────────
 
     def mouse_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            # Comprobar si el clic está dentro del área del botón
-            if self.BTN_X <= x <= self.BTN_X + self.BTN_W and self.BTN_Y <= y <= self.BTN_Y + self.BTN_H:
+            if (self.BTN_X <= x <= self.BTN_X + self.BTN_W and
+                    self.BTN_Y <= y <= self.BTN_Y + self.BTN_H):
                 self.get_logger().info("Botón Volver presionado.")
                 self.should_exit = True
 
@@ -179,28 +219,40 @@ class BodyPointsDetectorNode(Node):
             debug = self._build(frame, w, h, lm_img, pts.is_detected)
             self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(debug, encoding='bgr8'))
             cv2.imshow("YAREN Mimic", debug)
-            
-            # Detectar la tecla ESC (27) o la bandera del botón
+
             key = cv2.waitKey(1) & 0xFF
             if key == 27 or self.should_exit:
-                self.get_logger().info("Saliendo de YAREN Mimic...")
-                sys.exit(0) # Termina el nodo y devuelve al proceso padre
+                self.get_logger().info("Cerrando ventana de YAREN Mimic...")
+                cv2.destroyAllWindows()
+                self.should_exit = False  # Reseteamos para la próxima vez
                 
+                # Publicar "idle" al topic /yaren_mode para que el C++ en C++
+                # detecte que saliste, apague los nodos y regrese al menú principal.
+                pub = self.create_publisher(String, '/yaren_mode', 10)
+                # Damos un pequeño respiro para que el publisher cree la conexión
+                time.sleep(0.1)
+                msg = String()
+                msg.data = "idle"
+                pub.publish(msg)
+                
+                # Forzamos la salida limpia de este nodo actual
+                raise SystemExit
+
         except Exception as e:
             self.get_logger().error(f"Error: {e}")
+
+    # ── Render ────────────────────────────────────────────────────────────────
 
     def _build(self, frame, fw, fh, lm_img, detected):
         W, H = 800, 480
         t    = time.time() - self._t0
         c    = np.full((H, W, 3), C_BG, dtype=np.uint8)
 
-        # Grid
         for gx in range(0, W, 40):
             cv2.line(c, (gx, 0), (gx, H), C_GRID, 1)
         for gy in range(0, H, 40):
             cv2.line(c, (0, gy), (W, gy), C_GRID, 1)
 
-        # ── CAMARA (mitad derecha) ────────────────────────────────────────
         CAM_X, CAM_Y, CAM_W, CAM_H = 210, 20, 582, 422
         cam = cv2.resize(frame, (CAM_W, CAM_H))
         if lm_img is not None:
@@ -211,19 +263,16 @@ class BodyPointsDetectorNode(Node):
         cv2.rectangle(c, (CAM_X, CAM_Y), (CAM_X+CAM_W, CAM_Y+CAM_H), brd, 2)
         corners(c, CAM_X, CAM_Y, CAM_W, CAM_H, C_ACCENT)
 
-        # ── PANEL IZQUIERDO ───────────────────────────────────────────────
         PW = 202
         rrect(c, 4, 4, PW, H - 12, 8, C_PANEL)
         rrect(c, 4, 4, PW, H - 12, 8, (28, 45, 75), fill=False)
 
-        # Titulo
         cv2.putText(c, "YAREN", (16, 30),
                     cv2.FONT_HERSHEY_DUPLEX, 0.80, C_ACCENT, 2, cv2.LINE_AA)
         cv2.putText(c, "MIMIC", (16, 50),
                     cv2.FONT_HERSHEY_DUPLEX, 0.55, C_PURPLE, 1, cv2.LINE_AA)
         cv2.line(c, (12, 58), (PW - 6, 58), (30, 48, 78), 1)
 
-        # Estado gate
         if self.mimic_enabled:
             pulse    = int(160 + 80 * abs(np.sin(t * 3.0)))
             gate_col = (0, pulse, min(255, pulse + 40))
@@ -239,7 +288,6 @@ class BodyPointsDetectorNode(Node):
         cv2.putText(c, gate_txt, (20, 81),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.44, gate_col, 1, cv2.LINE_AA)
 
-        # Deteccion
         det_col = C_GREEN if detected else C_RED
         det_bg  = (10, 32, 10) if detected else (32, 10, 10)
         det_txt = "DETECCION OK" if detected else "SIN DETECCION"
@@ -250,7 +298,6 @@ class BodyPointsDetectorNode(Node):
 
         cv2.line(c, (12, 124), (PW - 6, 124), (28, 42, 68), 1)
 
-        # Comando voz
         cv2.putText(c, "COMANDO DE VOZ:", (14, 140),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.34, (80, 100, 130), 1, cv2.LINE_AA)
         cmd_txt = "activar modo" if not self.mimic_enabled else "apagar modo"
@@ -262,23 +309,28 @@ class BodyPointsDetectorNode(Node):
 
         cv2.line(c, (12, 172), (PW - 6, 172), (28, 42, 68), 1)
 
-        # Brazos
         self._side_panel(c, self.latest_pos, is_right=True,  x0=14, y0=178, pw=PW - 18)
         cv2.line(c, (12, 328), (PW - 6, 328), (28, 42, 68), 1)
         self._side_panel(c, self.latest_pos, is_right=False, x0=14, y0=334, pw=PW - 18)
 
-        # Barra inferior
         cv2.rectangle(c, (0, H - 28), (W, H), (10, 16, 28), -1)
         cv2.line(c, (0, H - 28), (W, H - 28), (28, 44, 72), 1)
         cv2.putText(c, "RAMEL - ESPOL  |  yaren_arm_mimic",
                     (12, H - 8), cv2.FONT_HERSHEY_SIMPLEX,
                     0.34, (45, 65, 95), 1, cv2.LINE_AA)
 
-        # Botón Volver
         rrect(c, self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H, 4, (30, 40, 60))
         rrect(c, self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H, 4, C_RED, fill=False)
-        cv2.putText(c, "VOLVER (ESC)", (self.BTN_X + 12, self.BTN_Y + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, C_WHITE, 1, cv2.LINE_AA)
+        
+        # Centrar el texto "VOLVER" automáticamente
+        texto = "VOLVER"
+        escala = 0.55
+        (tw, th), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_DUPLEX, escala, 1)
+        tx = self.BTN_X + (self.BTN_W - tw) // 2
+        ty = self.BTN_Y + (self.BTN_H + th) // 2 - 2
+        
+        cv2.putText(c, texto, (tx, ty),
+                    cv2.FONT_HERSHEY_DUPLEX, escala, C_WHITE, 1, cv2.LINE_AA)
 
         return c
 
@@ -328,7 +380,6 @@ def main(args=None):
         cv2.destroyAllWindows()
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

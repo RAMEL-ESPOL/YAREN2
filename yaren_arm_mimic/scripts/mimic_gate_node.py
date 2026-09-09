@@ -2,30 +2,16 @@
 """
 mimic_gate_node.py
 ==================
-Escucha comandos de voz para activar/desactivar la réplica de brazos.
-
-Flujo:
-  1. /yaren_mode recibe "yaren_mimic"  → pide mic, espera "activar modo"
-  2. "activar modo"  → /mimic/enabled = True
-  3. "apagar modo"   → /mimic/enabled = False
-  4. /yaren_mode recibe otro modo      → libera mic, para el gate
-
-Topics:
-  SUB  /yaren_mode        (std_msgs/String)  - modo activo global
-  SUB  /yaren/mic_owner   (std_msgs/String)  - mutex de micrófono
-  PUB  /yaren/mic_owner   (std_msgs/String)
-  PUB  /mimic/enabled     (std_msgs/Bool)
+Convertido a LifecycleNode para ahorrar recursos.
+Se activa/desactiva directamente desde el C++ Orchestrator.
 """
-
 import os
 import json
-import queue
-import threading
 import pyaudio
 from vosk import Model, KaldiRecognizer
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn, State
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_msgs.msg import Bool, String
 
@@ -36,18 +22,24 @@ def _matches(text: str, phrases: list) -> bool:
     t = text.lower().strip()
     return any(p in t for p in phrases)
 
-
-class MimicGateNode(Node):
-
+class MimicGateNode(LifecycleNode):
     def __init__(self):
         super().__init__("mimic_gate_node")
+        self.mimic_enabled = False
+        self.mic_owner = "none"
+        self._is_active = False
+        
+        self.vosk_model = None
+        self.recognizer = None
+        self.mic = None
+        self.stream = None
+        
+        self.get_logger().info("mimic_gate_node creado (Unconfigured).")
 
-        # ── Estado ────────────────────────────────────────────────────────────
-        self.mimic_active  = False   # el modo mimic está corriendo
-        self.mimic_enabled = False   # el gate está abierto (robot imita)
-        self.mic_owner     = "none"
-
-        # ── Vosk ──────────────────────────────────────────────────────────────
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Configurando mimic_gate_node...")
+        
+        # Cargar modelo Vosk
         workspace_dir = os.getcwd()
         model_path = os.path.join(
             workspace_dir, "src", "YAREN2", "yaren_chat", "models", "STT",
@@ -55,46 +47,71 @@ class MimicGateNode(Node):
         )
         if not os.path.exists(model_path):
             self.get_logger().error(f"Modelo Vosk no encontrado: {model_path}")
-            return
+            return TransitionCallbackReturn.FAILURE
 
         self.vosk_model = Model(model_path)
-        self.recognizer = KaldiRecognizer(self.vosk_model, 16000)
+        
+        # Iniciar PyAudio
+        self.mic = pyaudio.PyAudio()
 
-        # ── Micrófono ─────────────────────────────────────────────────────────
-        self.mic    = pyaudio.PyAudio()
-        self.stream = None   # se abre solo cuando mimic está activo y es dueño del mic
-
-        # ── ROS2 ──────────────────────────────────────────────────────────────
+        # Configurar Publishers y Subscribers (Lifecycle)
         qos_tl = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.mimic_pub = self.create_lifecycle_publisher(Bool, "/mimic/enabled", 10)
+        self.mic_owner_pub = self.create_lifecycle_publisher(String, "/yaren/mic_owner", qos_tl)
 
-        self.mimic_pub    = self.create_publisher(Bool,   "/mimic/enabled",   10)
-        self.mic_owner_pub = self.create_publisher(String, "/yaren/mic_owner", qos_tl)
+        self.sub_mic_owner = self.create_subscription(String, "/yaren/mic_owner", self._cb_mic_owner, qos_tl)
 
-        self.create_subscription(String, "/yaren_mode",       self._cb_mode,      10)
-        self.create_subscription(String, "/yaren/mic_owner",  self._cb_mic_owner, qos_tl)
+        # Timer para el loop de audio
+        self.audio_timer = self.create_timer(0.1, self._audio_loop)
+        
+        return TransitionCallbackReturn.SUCCESS
 
-        self.create_timer(0.1, self._audio_loop)
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Activando mimic_gate_node...")
+        super().on_activate(state)
+        
+        self._is_active = True
+        self._set_enabled(False) # Comienza desactivado (esperando la voz "activar modo")
+        self._claim_mic()        # Pedir el micrófono
+        
+        self.get_logger().info("Modo mimic ACTIVO. Di 'activar modo'.")
+        return TransitionCallbackReturn.SUCCESS
 
-        self.get_logger().info("mimic_gate_node listo.")
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Desactivando mimic_gate_node...")
+        self._is_active = False
+        
+        self._set_enabled(False)
+        self._release_mic()      # Devolver el micrófono
+        
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Limpiando mimic_gate_node...")
+        self._close_stream()
+        
+        if self.mic:
+            self.mic.terminate()
+            self.mic = None
+        
+        if self.audio_timer:
+            self.destroy_timer(self.audio_timer)
+            self.audio_timer = None
+            
+        self.vosk_model = None
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self._close_stream()
+        if self.mic:
+            self.mic.terminate()
+        return TransitionCallbackReturn.SUCCESS
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
-    def _cb_mode(self, msg: String):
-        if msg.data == "yaren_mimic":
-            if not self.mimic_active:
-                self.mimic_active = True
-                self._set_enabled(False)          # empieza desactivado
-                self._claim_mic()
-                self.get_logger().info("Modo mimic detectado. Di 'activar modo'.")
-        else:
-            if self.mimic_active:
-                self.mimic_active = False
-                self._set_enabled(False)
-                self._release_mic()
-
     def _cb_mic_owner(self, msg: String):
         self.mic_owner = msg.data
-        if self.mic_owner == "mimic_gate":
+        if self.mic_owner == "mimic_gate" and self._is_active:
             self._open_stream()
         elif self.mic_owner != "mimic_gate":
             self._close_stream()
@@ -102,7 +119,7 @@ class MimicGateNode(Node):
     # ── Audio loop ────────────────────────────────────────────────────────────
 
     def _audio_loop(self):
-        if not self.mimic_active or self.mic_owner != "mimic_gate":
+        if not self._is_active or self.mic_owner != "mimic_gate":
             return
         if self.stream is None:
             return
@@ -118,7 +135,7 @@ class MimicGateNode(Node):
                 if not text:
                     return
 
-                self.get_logger().info(f"STT: '{text}'")
+                self.get_logger().info(f"STT Mimic: '{text}'")
 
                 if _matches(text, ENABLE_PHRASES):
                     self._set_enabled(True)
@@ -135,7 +152,7 @@ class MimicGateNode(Node):
         msg = Bool()
         msg.data = enabled
         self.mimic_pub.publish(msg)
-        self.get_logger().info(f"/mimic/enabled → {enabled}")
+        self.get_logger().info(f"/mimic/enabled -> {enabled}")
 
     def _claim_mic(self):
         msg = String()
@@ -158,7 +175,7 @@ class MimicGateNode(Node):
             )
             self.stream.start_stream()
             self.recognizer = KaldiRecognizer(self.vosk_model, 16000)
-            self.get_logger().info("Stream abierto.")
+            self.get_logger().info("Microfono abierto para Mimic Gate.")
         except Exception as e:
             self.get_logger().error(f"Error abriendo stream: {e}")
             self.stream = None
@@ -172,16 +189,7 @@ class MimicGateNode(Node):
         except Exception:
             pass
         self.stream = None
-        self.get_logger().info("Stream cerrado.")
-
-    def destroy_node(self):
-        self._close_stream()
-        try:
-            self.mic.terminate()
-        except Exception:
-            pass
-        super().destroy_node()
-
+        self.get_logger().info("Microfono cerrado para Mimic Gate.")
 
 def main(args=None):
     rclpy.init(args=args)
@@ -193,7 +201,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == "__main__":
     main()

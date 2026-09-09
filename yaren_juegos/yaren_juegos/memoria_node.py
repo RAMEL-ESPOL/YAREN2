@@ -1060,7 +1060,6 @@ class MemoriaNode(LifecycleNode):
 def main(args=None):
     rclpy.init(args=args)
     node = MemoriaNode()
-    node.trigger_configure()
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
     try:

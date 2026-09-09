@@ -1529,7 +1529,6 @@ def main(args=None):
     rclpy.init(args=args)
     node = DanceGameNode()
 
-    node.trigger_configure()
 
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()

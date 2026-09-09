@@ -820,7 +820,6 @@ class AhorcadoNode(LifecycleNode):
 def main(args=None):
     rclpy.init(args=args)
     node = AhorcadoNode()
-    node.trigger_configure()
     spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
     try:

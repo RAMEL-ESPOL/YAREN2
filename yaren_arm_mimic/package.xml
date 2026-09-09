@@ -19,6 +19,7 @@
   <depend>trajectory_msgs</depend>
   <depend>yaren_interfaces</depend>
   <depend>rclpy</depend>
+  <depend>rclcpp_lifecycle</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
