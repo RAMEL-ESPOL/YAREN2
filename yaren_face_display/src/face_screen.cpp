@@ -3156,85 +3156,12 @@ private:
         subMenuMap["sub_yaren_juegos"].key = "sub_yaren_juegos";
         subMenuMap["sub_yaren_radio"] = { "YAREN RADIO", {255,80,160}, {
             MI("radio_musica", isEnglish ? "MUSIC" : "MUSICA", isEnglish ? "play music" : "reproducir musica", {255,120,200}, "INTERNAL_RADIO", "", false, "", "musica"),
-            MI("radio_videos", "VIDEOS", isEnglish ? "play videos" : "reproducir videos", {200,60,140}, "", "", true, "sub_yaren_videos", "video"),
-        }};
-        subMenuMap["sub_yaren_radio"].key = "sub_yaren_radio";
-        // Menú principal de Videos
-        // Menú principal de Videos
-        subMenuMap["sub_yaren_videos"] = { "VIDEOS", {200,60,140}, {
-            MI("vid_cat_canciones", isEnglish ? "KIDS SONGS" : "CANCIONES INFANTILES", isEnglish ? "Nursery Rhymes & Farm Songs" : "Rondas y Canciones de la Granja", {0, 200, 255}, "", "", true, "sub_videos_canciones", "video"),
-            MI("vid_cat_animados", isEnglish ? "ANIMATED VIDEOS" : "VIDEOS ANIMADOS", isEnglish ? "Cartoons & Epic Scenes" : "Caricaturas y Escenas Animadas", {255, 140, 0}, "", "", true, "sub_videos_animados", "video"),
-        }};
-
-        // Submenú 1: Canciones Infantiles
-        subMenuMap["sub_videos_canciones"] = { isEnglish ? "KIDS SONGS" : "CANCIONES INFANTILES", {0, 200, 255}, {
-            MI("vid_pollito", "POLLITO PIO", "Canciones de la Granja", {0, 200, 255}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/pollito_pio.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "piopio"),
-               
-            MI("vid_gallina", "GALLINA TURULECA", "Canciones de Yaren", {255, 150, 50}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/gallina_turuleca.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "gallinaturuleca"),
-               
-            MI("vid_vaca", "LA VACA LOLA", "Canciones Infantiles", {100, 255, 100}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/vaca_lola.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "vacalola"),
-
-            MI("vid_susanita", "SUSANITA", "La Granja de Zenon", {255, 100, 200}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/susanita.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "susanita"),
-        }};
-
-        // Submenú 2: Videos Animados (Selección de categoría)
-        subMenuMap["sub_videos_animados"] = { isEnglish ? "ANIMATED VIDEOS" : "VIDEOS ANIMADOS", {255, 140, 0}, {
-            MI("vid_sub_series", isEnglish ? "ANIMATED SERIES" : "SERIES ANIMADAS", isEnglish ? "TV Shows & Series" : "Series de TV", {64, 171, 255}, "", "", true, "sub_animados_series", "video"),
-            MI("vid_sub_peliculas", isEnglish ? "ANIMATED MOVIES" : "PELICULAS ANIMADAS", isEnglish ? "Movies & Special Scenes" : "Peliculas y Escenas", {255, 120, 0}, "", "", true, "sub_animados_peliculas", "video"),
-        }};
-
-        // Submenú 3: Series Animadas
-        subMenuMap["sub_animados_series"] = { isEnglish ? "ANIMATED SERIES" : "SERIES ANIMADAS", {64, 171, 255}, {
-            MI("vid_jovenes_titanes", "JOVENES TITANES", "Serie Animada", {255, 100, 100}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/jovenes_titanes.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_spiderman", "SPIDER-MAN", "Serie Clasica", {220, 20, 60}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/spiderman_gran_poder.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_goku_daima", "GOKU DAIMA", "Dragon Ball Daima", {255, 140, 0}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/goku_transformaciones.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_ekko_jinx", "EKKO VS JINX", "Arcane", {138, 43, 226}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/ekko_vs_jinx.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_goku_ultra", "ULTRA INSTINTO", "Dragon Ball Super", {0, 191, 255}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/goku_ultra_instinto.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-        }};
-
-        // Submenú 4: Películas Animadas
-        subMenuMap["sub_animados_peliculas"] = { isEnglish ? "ANIMATED MOVIES" : "PELICULAS ANIMADAS", {255, 120, 0}, {
-            MI("vid_ben10", "BEN 10", "Pelea Clasica", {50, 205, 50}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/ben10.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_gato_botas", "GATO CON BOTAS", "La Muerte", {218, 165, 32}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/gato_con_botas.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_superman_padre", "SUPERMAN Y PADRE", "Man of Steel", {0, 0, 205}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/superman_padre.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_shifu", "SHIFU VS TAI LUNG", "Kung Fu Panda", {205, 133, 63}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/shifu_vs_tai_lung.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
-
-            MI("vid_superman_zod", "SUPERMAN VS ZOD", "Man of Steel", {178, 34, 34}, 
-               ("nohup python3 " + rdDir + "reproducir_video.py \"" + absCwd + "/src/YAREN2/yaren_radio/videos/superman_vs_zod.mp4\" >/dev/null 2>&1 &").c_str(), 
-               "for pid in $(ps aux | grep -E 'reproducir_video.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "video"),
+            
+            // Lanza tu nueva App PyQt5
+            MI("radio_videos", "YAREN TV", isEnglish ? "watch videos" : "ver videos", {200,60,140}, 
+               ("nohup python3 " + rdDir + "tvplayer.py >/dev/null 2>&1 &").c_str(), 
+               "for pid in $(ps aux | grep -E 'tvplayer.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", 
+               false, "", "video"),
         }};
     }
     bool checkChatAvailable() {

@@ -244,3 +244,4 @@ ollama pull phi3:mini
 ollama run phi3:mini "hola" --verbose
 # Debe mostrar líneas de "GPU layers"
 sudo apt-get install mpg123
+sudo apt install python3-pyqt5.qtmultimedia
