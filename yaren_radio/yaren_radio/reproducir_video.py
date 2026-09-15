@@ -2,7 +2,7 @@
 import os
 import sys
 import time
-import signal  # <-- NUEVO: Para interceptar el "kill" del menú C++
+import signal  
 vlc = None
 try:
     import vlc

@@ -819,7 +819,7 @@ public:
             { "balada",        "BALADA",                  "Desconocido",         "Balada.mp3",                              {100, 150, 255}, 2.0 },
             { "rosapastel",    "ROSA PASTEL",             "Belanova",            "Belanova - Rosa Pastel.mp3",              {255, 182, 193}, 2.5 },
             { "bringmetolife", "BRING ME TO LIFE",        "Evanescence",         "bringmetolife.mp3",                       {105, 105, 105}, 3.0 },
-            { "waka",          "WAKA WAKA",               "Shakira",             "cancionmundial2010.mp3",                  {255, 215,   0}, 2.8 },
+            { "Wavin' Flag",          "WAVIN' FLAG",      "K'NAAN",             "cancionmundial2010.mp3",                  {255, 215,   0}, 2.8 },
             { "cantstop",      "CANT STOP THE FEELING",   "Justin Timberlake",   "CantStopTheFeeling.mp3",                  {255, 140,   0}, 2.7 },
             { "getlucky",      "GET LUCKY",               "Daft Punk",           "GetLucky.mp3",                            { 50, 205,  50}, 2.4 },
             { "ghost",         "GHOST",                   "Justin Bieber",       "Ghost.mp3",                               {200, 200, 200}, 2.2 },
@@ -2608,7 +2608,8 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|mimic_gate_node|body_tracker_node|body_points_detector|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");        const char* home = std::getenv("HOME");
+        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
+        const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
             std::string ws      = std::string(home) + "/robotis_ws";
@@ -2677,26 +2678,33 @@ public:
 
                         std::thread([this, setup]() {
                 // ── a) Pausa inicial para que se vea la animación ──
-                RCLCPP_INFO(this->get_logger(), "[ BOOT ] Esperando 3s antes de verificar red...");
+                RCLCPP_INFO(this->get_logger(),
+                    "[ BOOT ] Esperando 3s antes de verificar red...");
                 std::this_thread::sleep_for(std::chrono::seconds(3));
-
-                // ── b) Verificar internet con timeout ──
-                RCLCPP_INFO(this->get_logger(), "[ BOOT ] Verificando conexion a internet...");
+ 
+                // ── b) Verificar internet con timeout de 10s ──
+                RCLCPP_INFO(this->get_logger(),
+                    "[ BOOT ] Verificando conexion a internet...");
                 chatAvailable_ = checkChatAvailable();
-
+ 
                 // ── c) Sin internet → mostrar pantalla WiFi ──
                 if (!chatAvailable_) {
-                    RCLCPP_WARN(this->get_logger(), "[ BOOT ] Sin internet. Mostrando configuracion WiFi...");
+                    RCLCPP_WARN(this->get_logger(),
+                        "[ BOOT ] Sin internet. Mostrando configuracion WiFi...");
+ 
                     {
                         std::lock_guard<std::mutex> lk(configStatusMutex);
-                        configStatus = isEnglish ? "No internet — configure WiFi..." : "Sin internet — configura el WiFi...";
+                        configStatus = isEnglish
+                            ? "No internet — configure WiFi..."
+                            : "Sin internet — configura el WiFi...";
                     }
+ 
                     wifiSetup_.refresh();
                     {
                         std::lock_guard<std::mutex> lk(modeFlagMutex);
                         showWifiSetup_ = true;
                     }
-
+ 
                     // Esperar hasta que el usuario conecte u omita
                     while (true) {
                         bool still;
@@ -2707,71 +2715,85 @@ public:
                         if (!still) break;
                         std::this_thread::sleep_for(std::chrono::milliseconds(200));
                     }
+ 
+                    // Re-verificar tras el intento de conexión
                     chatAvailable_ = checkChatAvailable();
-                    RCLCPP_INFO(this->get_logger(), "[ BOOT ] Tras WiFi setup — internet: %s", chatAvailable_ ? "SI" : "NO");
+                    RCLCPP_INFO(this->get_logger(),
+                        "[ BOOT ] Tras WiFi setup — internet: %s",
+                        chatAvailable_ ? "SI" : "NO");
                 } else {
-                    RCLCPP_INFO(this->get_logger(), "[ BOOT ] Internet OK. Continuando arranque...");
+                    RCLCPP_INFO(this->get_logger(),
+                        "[ BOOT ] Internet OK. Continuando arranque...");
                 }
-
-                // ── d) Función configuradora adaptada para Segundo Plano ──
-                auto configure_node = [&](const std::string& name, const std::string& display, bool update_ui) {
-                    if (update_ui) {
+ 
+                // ── d) Configurar lifecycle nodes ──
+                auto configure_node = [&](const std::string& name,
+                                          const std::string& display) {
+                    {
                         std::lock_guard<std::mutex> lk(configStatusMutex);
                         configStatus = "Cargando " + display + "...";
                     }
-
-                    // 1. Ver estado actual
-                    uint8_t currentState = get_lifecycle_state(name);
-                    if (currentState > 1) { // Ya está configurado (2) o activo (3)
-                        RCLCPP_INFO(this->get_logger(), "[ NODE ] %s ya está listo (estado: %d). Omitiendo.", name.c_str(), currentState);
-                        if (update_ui) configProgress++;
-                        return;
-                    }
-
-                    RCLCPP_INFO(this->get_logger(), "[ NODE ] Configurando: %s", name.c_str());
-
+                    RCLCPP_INFO(this->get_logger(),
+                        "[ NODE ] Configurando: %s", name.c_str());
+ 
                     bool ok = false;
-                    for (int intento = 0; intento < 2 && !ok; intento++) {
-                        // Añadimos captura de errores para que no crashee el proceso si el nodo no responde de inmediato
-                        int ret = std::system(("bash -c 'source " + setup + " && timeout 20 ros2 lifecycle set /" + name + " configure' > /dev/null 2>&1").c_str());
+                    for (int intento = 0; intento < 3 && !ok; intento++) {
+                        if (intento > 0) {
+                            RCLCPP_WARN(this->get_logger(),
+                                "[ NODE ] Reintentando %s (%d/3)...",
+                                name.c_str(), intento + 1);
+                            std::this_thread::sleep_for(std::chrono::seconds(3));
+                        }
+                        int ret = std::system(
+                            ("bash -c 'source " + setup +
+                             " && ros2 lifecycle set /" + name +
+                             " configure' > /dev/null 2>&1").c_str());
                         ok = (ret == 0);
-                        if (!ok) std::this_thread::sleep_for(std::chrono::milliseconds(500));
                     }
-
-                    if (ok) {
-                        RCLCPP_INFO(this->get_logger(), "[ NODE ] ✓ %s configurado.", name.c_str());
-                    } else {
-                        // Si falla en segundo plano, NO es crítico. El sistema lo configurará al abrir el menú.
-                        RCLCPP_WARN(this->get_logger(), "[ NODE ] ⚠ Carga diferida pospuesta para: %s (se configurará bajo demanda).", name.c_str());
-                    }
-
-                    if (update_ui) {
-                        configProgress++;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                    }
+ 
+                    if (ok)
+                        RCLCPP_INFO(this->get_logger(),
+                            "[ NODE ] ✓ %s configurado.", name.c_str());
+                    else
+                        RCLCPP_ERROR(this->get_logger(),
+                            "[ NODE ] ✗ No se pudo configurar: %s", name.c_str());
+ 
+                    configProgress++;
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
                 };
                 
-                // ==========================================================
-                // FASE 1: NODOS CRÍTICOS (Bloquean la pantalla de carga)
-                // ==========================================================
-                configure_node("csi_cam_node",       "Camara Principal", true);
-                configure_node("yaren_speaker_node", "Altavoz", true);
-                configure_node("stt_lifecycle_node", "Reconocimiento de Voz", true);
-                configure_node("llm_lifecycle_node", "Cerebro Artificial", true);
-                configure_node("tts_lifecycle_node", "Sintesis de Voz", true);
-
+                configure_node("llm_lifecycle_node",        "Inteligencia Artificial (Cloud)");
+                configure_node("llm_local_lifecycle_node",  "Inteligencia Artificial (Local)");               
+                configure_node("stt_lifecycle_node",        "Reconocimiento de Voz (Cloud)");
+                configure_node("tts_lifecycle_node",        "Sintesis de Voz (Cloud)");
+                configure_node("stt_local_lifecycle_node",        "Reconocimiento de Voz (Local)");
+                configure_node("tts_local_lifecycle_node",        "Sintesis de Voz (Local)");
+                configure_node("detector",                  "Deteccion de Emociones");
+                configure_node("face_filter_node",          "Filtros de Cara");
+                configure_node("body_points_detector_node", "Deteccion Corporal");
+                configure_node("body_points_detector_node_visual", "Deteccion Corporal con Ayuda");
+                configure_node("yaren_speaker_node",        "Altavoz");
+                configure_node("virtual_background_node",   "Fondo Virtual");
+                configure_node("filtro_animales",           "Filtro de Animales");
+                configure_node("face_landmark_publisher",   "Landmarks Faciales");
+                configure_node("csi_cam_node",              "Camara Principal");
+                configure_node("chistes_node", "Modulo de Chistes");
+                configure_node("memoria_node",  "Juego de Memoria");
+                configure_node("dance_game_node", "Juego de Baile");
+                configure_node("ahorcado_node", "Juego del Ahorcado");
+ 
                 // ── e) Finalizar pantalla de carga ──
                 {
                     std::lock_guard<std::mutex> lk(configStatusMutex);
                     configStatus   = isEnglish ? "Yaren is ready!" : "Yaren listo!";
                     configProgress = configTotal;
                 }
-                RCLCPP_INFO(this->get_logger(), "[ BOOT ] Sistema base listo. Iniciando modo interactivo.");
-
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                RCLCPP_INFO(this->get_logger(),
+                    "[ BOOT ] Sistema listo. Iniciando modo interactivo.");
+ 
+                std::this_thread::sleep_for(std::chrono::seconds(2));
                 resetIdleTimer();
-
-                // Detener música de arranque
+ 
                 {
                     std::lock_guard<std::mutex> lk(audioMutex_);
                     if (bootMusic) {
@@ -2780,36 +2802,9 @@ public:
                         bootMusic = nullptr;
                     }
                 }
-
-                // ==========================================================
-                // >>> ¡YAREN DESPIERTA AQUÍ! LA PANTALLA YA SE PUEDE USAR <<<
-                // ==========================================================
-                configuring = false; 
-
-                // ==========================================================
-                // FASE 2: NODOS SECUNDARIOS (Se cargan en el fondo, sin afectar la UI)
-                // ==========================================================
-                configure_node("stt_local_lifecycle_node", "Local STT", false);
-                configure_node("llm_local_lifecycle_node", "Local LLM", false);
-                configure_node("tts_local_lifecycle_node", "Local TTS", false);
-                configure_node("face_landmark_publisher", "Landmarks Faciales", false);
-                configure_node("detector", "Deteccion Emociones", false);
-                configure_node("face_filter_node", "Filtros", false);
-                configure_node("filtro_animales", "Animales", false);
-                configure_node("virtual_background_node", "Fondo Virtual", false);
-                configure_node("body_points_detector_node", "Deteccion Corporal", false);
-                configure_node("body_points_detector_node_visual", "Corporal Ayuda", false);
-                configure_node("body_points_mimic_detector_node", "Corporal Mimic", false);
-                configure_node("body_tracker_node", "Body Tracker", false);
-                configure_node("body_trajectory_controller","Controlador Brazos", false);
-                configure_node("mimic_gate_node", "Mimic Gate", false);
-                configure_node("chistes_node", "Chistes", false);
-                configure_node("memoria_node", "Memoria", false);
-                configure_node("dance_game_node", "Juego Baile", false);
-                configure_node("ahorcado_node", "Ahorcado", false);
-
-                RCLCPP_INFO(this->get_logger(), "[ BOOT ] Toda la carga en segundo plano ha finalizado.");
-
+ 
+                configuring = false;
+ 
             }).detach();
         }
     }
@@ -2896,7 +2891,8 @@ public:
         // FIX-F: verificar joinable antes de join en testThread
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-            std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|mimic_gate_node|body_tracker_node|body_points_detector|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");        }
+            std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
+        }
 
     void drawWindow() {
         // FIX-C: copiar frame con lock, luego mostrar fuera del lock
@@ -3238,13 +3234,6 @@ private:
     }
 
     void showErrorOverlay(const std::string& msg, double secs = 3.0) {
-        // Si el mensaje o el contexto viene de un fallo de video, lo ignoramos por completo
-        if (msg.find("reproducir_video") != std::string::npos || 
-            msg.find("Command could not be executed") != std::string::npos) {
-            return; // No muestra nada en pantalla para los videos
-        }
-        
-        // Para cualquier otra función o modo del robot, el error se muestra con normalidad
         showCustomOverlay(FaceOverlay::ERROR_MSG, msg, secs);
     }
 
@@ -3592,230 +3581,88 @@ private:
     }
 
     void executeMode(MenuItem item, bool publish_mode = true) {
-        // ── Casos especiales internos ────────────────────────────────────────────
         if (item.id == "test_mic") { executeMicTest(); return; }
-
         if (item.cmd == "INTERNAL_RADIO") {
-            {
-                std::lock_guard<std::mutex> lk(modeFlagMutex);
-                showRadio_ = true;
-            }
+            { std::lock_guard<std::mutex> lk(modeFlagMutex); showRadio_ = true; }
             radioApp.reset();
             hoveredItem = -1;
             return;
         }
-
         if (item.cmd == "INTERNAL_ROUTINES") {
-            {
-                std::lock_guard<std::mutex> lk(modeFlagMutex);
-                showRoutines_ = true;
-            }
+            { std::lock_guard<std::mutex> lk(modeFlagMutex); showRoutines_ = true; }
             routinesApp.refresh();
             hoveredItem = -1;
             stopMenuMusic();
             return;
         }
 
-        // ── Limpiar navegación ───────────────────────────────────────────────────
+        // Cierra el menú en la UI instantáneamente para que responda rápido
         navStack.clear();
         stopMenuMusic();
         hoveredItem = -1;
         hoveredBack = hoveredStop = hoveredExit = false;
 
-        // ── Detener modo anterior si existía ────────────────────────────────────
-        if (!activeMode.empty() && (!activeStopCmd.empty() || !active_lifecycle_nodes.empty())) {
-            for (const auto& node : active_lifecycle_nodes)
-                change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
-            active_lifecycle_nodes.clear();
-
-            std::string prevStop = activeStopCmd;
-            if (!prevStop.empty())
-                std::thread([prevStop]() { std::system(prevStop.c_str()); }).detach();
-
-            activeMode = "";
-            activeStopCmd = "";
-
-            if (publish_mode) {
-                auto msg = std_msgs::msg::String();
-                msg.data = "idle";
-                modePublisher->publish(msg);
-            }
-        }
-
-        // ── Guardar nuevo modo ───────────────────────────────────────────────────
-        activeMode             = item.id;
-        activeStopCmd          = item.stopCmd;
-        active_lifecycle_nodes = item.lifecycle_nodes;
-
-        // ── Limpiar comando ──────────────────────────────────────────────────────
         std::string cleanCmd = item.cmd;
         size_t pos = cleanCmd.find_last_not_of(" \t&");
         if (pos != std::string::npos) cleanCmd = cleanCmd.substr(0, pos + 1);
 
-        // ── CASO SIN NODOS LIFECYCLE: ejecutar directamente ──────────────────────
-        if (item.lifecycle_nodes.empty()) {
-            if (publish_mode) {
-                auto msg = std_msgs::msg::String();
-                msg.data = activeMode;
-                modePublisher->publish(msg);
-            }
-            if (!cleanCmd.empty()) {
-                std::thread([this, cleanCmd]() {
-                    auto start = std::chrono::steady_clock::now();
-                    int ret = std::system(cleanCmd.c_str());
-                    double elapsed = std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - start).count();
-                    
-                    if (ret != 0 && elapsed < 1.5) {
-                        RCLCPP_ERROR(get_logger(),
-                            "[CMD] Fallo inmediato (Exit %d): %s", ret, cleanCmd.c_str());
-                            
-                        // ✅ SOLUCIÓN: Verificamos el comando. Si es de video, OMITIMOS el error en pantalla
-                        if (cleanCmd.find("reproducir_video") == std::string::npos) {
-                            showErrorOverlay(isEnglish
-                                ? "Command could not be executed."
-                                : "No se ha podido realizar\nel comando.", 3.0);
-                        }
-                    }
-                }).detach();
-            }
-            return;
-        }
-
-        // ── CASO CON NODOS LIFECYCLE ─────────────────────────────────────────────
-        // Todo en un hilo para no bloquear la UI nunca.
+        // === OPCIÓN C: EJECUCIÓN EN SEGUNDO PLANO ===
+        // Creamos un hilo independiente para que la cara de Yaren no se congele
         std::thread([this, item, cleanCmd, publish_mode]() {
-
-            // 1. Mostrar overlay "Iniciando..." mientras se activan los nodos
-            {
-                std::lock_guard<std::mutex> lk(overlayMutex);
-                faceOverlay    = FaceOverlay::MIC_PLAYING;
-                overlayMessage = isEnglish
-                    ? "Starting " + item.label + "..."
-                    : "Iniciando " + item.label + "...";
+            
+            // 1. Mostrar cartel de "Iniciando..." (solo si el modo usa nodos)
+            if (!item.lifecycle_nodes.empty()) {
+                std::lock_guard<std::mutex> lock(overlayMutex);
+                faceOverlay = FaceOverlay::MIC_PLAYING; // Animación de ondas como indicador de carga
+                overlayMessage = isEnglish ? "Starting " + item.label + "..." : "Iniciando " + item.label + "...";
             }
 
-            // 2. Activar cada nodo con timeout y verificación real
-            bool all_ok = true;
-            std::string failed_node;
-
-            for (const auto& node : item.lifecycle_nodes) {
-                if (!ensure_lifecycle_active(node)) {
-                    all_ok = false;
-                    failed_node = node;
-                    RCLCPP_ERROR(get_logger(),
-                        "[ MODE ] Nodo crítico no disponible: %s", node.c_str());
-                    break;
+            // 2. Apagar el modo anterior si existe
+            if (!activeMode.empty()) {
+                for (const auto& node : active_lifecycle_nodes) {
+                    change_lifecycle_state(node, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
+                }
+                active_lifecycle_nodes.clear();
+                
+                std::string prevStop = activeStopCmd;
+                if (!prevStop.empty()) {
+                    std::system(prevStop.c_str());
                 }
             }
 
-            // 3. Limpiar overlay
-            {
-                std::lock_guard<std::mutex> lk(overlayMutex);
-                faceOverlay    = FaceOverlay::NONE;
+            // 3. Guardar el nuevo modo
+            activeMode = item.id;
+            activeStopCmd = item.stopCmd;
+            active_lifecycle_nodes = item.lifecycle_nodes;
+
+            // 4. Configurar y activar los nuevos nodos
+            // AQUÍ ocurren los 3 segundos de espera, pero como estamos en un hilo,
+            // la cara de Yaren sigue moviéndose y parpadeando libremente.
+            for (const auto& node : active_lifecycle_nodes) {
+                ensure_lifecycle_active(node);
+            }
+
+            // 5. Quitar el cartel de "Iniciando..."
+            if (!item.lifecycle_nodes.empty()) {
+                std::lock_guard<std::mutex> lock(overlayMutex);
+                faceOverlay = FaceOverlay::NONE;
                 overlayMessage = "";
             }
 
-            // 4. Si algún nodo falló → mostrar error y volver al menú
-            if (!all_ok) {
-                std::string errMsg = isEnglish
-                    ? "Could not start mode.\nCheck node: " + failed_node
-                    : "No se pudo iniciar el modo.\nNodo fallido: " + failed_node;
-
-                showErrorOverlay(errMsg, 4.0);
-
-                // Limpiar estado del modo
-                {
-                    std::lock_guard<std::mutex> lock(navMutex);
-                    activeMode = "";
-                    activeStopCmd = "";
-                    active_lifecycle_nodes.clear();
-
-                    // Volver al menú principal
-                    NavLevel root;
-                    root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
-                    root.accentColor = {0, 200, 200};
-                    root.items       = rootMenuItems;
-                    navStack.clear();
-                    navStack.push_back(root);
-                    hoveredItem = -1;
-                    hoveredBack = false;
-                    hoveredStop = false;
-                    hoveredExit = false;
-                }
-
-                if (publish_mode) {
-                    auto msg = std_msgs::msg::String();
-                    msg.data = "idle";
-                    modePublisher->publish(msg);
-                }
-
-                startMenuMusic();
-                return;
-            }
-
-            // 5. Todos los nodos OK → publicar modo y ejecutar comando
+            // 6. Avisarle al resto de ROS 2 que ya cambiamos de modo
             if (publish_mode) {
                 auto msg = std_msgs::msg::String();
                 msg.data = activeMode;
                 modePublisher->publish(msg);
             }
 
+            // 7. Ejecutar el script/comando del modo si lo hay
             if (!cleanCmd.empty()) {
-                auto start = std::chrono::steady_clock::now();
-                int ret = std::system(cleanCmd.c_str());
-                double elapsedSecs = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - start).count();
-
-                if (ret != 0 && elapsedSecs < 1.5) {
-                    RCLCPP_ERROR(get_logger(),
-                        "[CMD] Fallo inmediato (Exit %d): %s", ret, cleanCmd.c_str());
-                        
-                    // ✅ SOLUCIÓN: Verificamos el comando. Si es de video, OMITIMOS el error en pantalla
-                    if (cleanCmd.find("reproducir_video") == std::string::npos) {
-                        showErrorOverlay(isEnglish
-                            ? "Command failed immediately."
-                            : "No se ha podido realizar\nel comando.", 4.0);
-                    }
-                }
-
-                // Si era un video, volver al menú de videos al terminar
-                if (item.id.rfind("vid_", 0) == 0 && activeMode == item.id) {
-                    std::lock_guard<std::mutex> lock(navMutex);
-                    activeMode    = "";
-                    activeStopCmd = "";
-
-                    auto msg = std_msgs::msg::String();
-                    msg.data = "idle";
-                    modePublisher->publish(msg);
-
-                    navStack.clear();
-                    NavLevel root;
-                    root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
-                    root.accentColor = {0, 200, 200};
-                    root.items       = rootMenuItems;
-                    navStack.push_back(root);
-
-                    for (const std::string& key : {"sub_yaren_p2", "sub_yaren_radio", "sub_yaren_videos"}) {
-                        auto it = subMenuMap.find(key);
-                        if (it != subMenuMap.end()) {
-                            NavLevel lvl = it->second;
-                            lvl.key = key;
-                            navStack.push_back(lvl);
-                        }
-                    }
-
-                    hoveredItem = -1;
-                    hoveredBack = false;
-                    hoveredStop = false;
-                    hoveredExit = false;
-                    startMenuMusic();
-                }
+                std::system(cleanCmd.c_str());
             }
 
-        }).detach();
+        }).detach(); // <- Esto "libera" el hilo para que corra por su cuenta sin trabar la pantalla
     }
-
     void renderSettingsButton(cv::Mat& frame) {
         int W = frame.cols, btnSz = 38, margin = 10;
         settingsButtonRect = {W - btnSz - margin, margin, btnSz, btnSz};
@@ -3923,18 +3770,10 @@ private:
             drawCard(frame, level.items[i], hoveredItem == i, level.items[i].hasSubMenu);
         }
         const int btnH = 40, btnY = SY+TH+40, gap = 16, stopW = 300, navW = 150;
-        bool hasStop = !activeMode.empty() && (!activeStopCmd.empty() || !active_lifecycle_nodes.empty()) &&
-                       activeMode != "yaren_emotions" &&
-                       activeMode != "yaren_ahorcado" &&
-                       activeMode != "yaren_animales" &&
-                       activeMode != "yaren_accesorios" &&
-                       activeMode != "yaren_fondo" &&
-                       activeMode != "yaren_radio" &&
-                       activeMode != "radio_musica" &&
-                       activeMode != "yaren_rutina1" &&         
-                       activeMode != "yaren_rutina2" &&         
-                       activeMode != "yaren_dice_con_ayuda" &&  
-                       activeMode.rfind("vid_", 0) != 0;
+        bool hasStop = (activeMode == "yaren_chat" || 
+                        activeMode == "yaren_chat_local" || 
+                        activeMode == "yaren_chistes" || 
+                        activeMode == "yaren_dice_sin_ayuda");
         bool hasBack = (navStack.size() > 1);
         int totalW = navW;
         if (hasBack) totalW += navW + gap;
@@ -4481,7 +4320,7 @@ private:
     void renderLoop() {
         rclcpp::Rate rate(30);
         while (running && rclcpp::ok()) {
-    
+            
             // 1. Obtener banderas de menús activos
             bool sSettings, sRadio, sRoutines, sWifi;
             {
@@ -4704,7 +4543,7 @@ private:
     std::atomic<bool> configuring{true};
     // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
     std::atomic<int>  configProgress{0};
-    static constexpr int configTotal{5};
+    static constexpr int configTotal{20};
     std::string       configStatus{"Iniciando sistema..."};
     std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };
@@ -4731,60 +4570,15 @@ private:
     if (future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready)
         return future.get()->current_state.id;
     return 0;
-    }
+}
 
-    bool ensure_lifecycle_active(const std::string& node_name) {
-        const char* home = std::getenv("HOME");
-        if (!home) return false;
-        std::string setup = std::string(home) + "/robotis_ws/install/setup.bash";
-
+    void ensure_lifecycle_active(const std::string& node_name) {
         uint8_t state = get_lifecycle_state(node_name);
-        RCLCPP_INFO(get_logger(), "[ LC ] %s estado: %d", node_name.c_str(), state);
-
-        // Ya activo
-        if (state == 3) return true;
-
-        // Unconfigured → configurar primero
         if (state == 1 || state == 0) {
-            RCLCPP_INFO(get_logger(), "[ LC ] Configurando %s...", node_name.c_str());
-            std::string cmd = "bash -c 'source " + setup +
-                            " && timeout 20 ros2 lifecycle set /" + node_name +
-                            " configure > /dev/null 2>&1'";
-            bool ok = false;
-            for (int i = 0; i < 2 && !ok; i++) {
-                ok = (std::system(cmd.c_str()) == 0);
-                if (!ok) std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            if (!ok) {
-                RCLCPP_ERROR(get_logger(), "[ LC ] ✗ No se pudo configurar: %s", node_name.c_str());
-                return false;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            state = get_lifecycle_state(node_name);
-            if (state < 2) return false;
+            change_lifecycle_state(node_name, lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
+            std::this_thread::sleep_for(std::chrono::seconds(3)); // No congelará la cara porque estará en un hilo
         }
-
-        // Configured → activar
-        if (state == 2) {
-            RCLCPP_INFO(get_logger(), "[ LC ] Activando %s...", node_name.c_str());
-            std::string cmd = "bash -c 'source " + setup +
-                            " && timeout 10 ros2 lifecycle set /" + node_name +
-                            " activate > /dev/null 2>&1'";
-            bool ok = false;
-            for (int i = 0; i < 2 && !ok; i++) {
-                ok = (std::system(cmd.c_str()) == 0);
-                if (!ok) std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            if (!ok) {
-                RCLCPP_ERROR(get_logger(), "[ LC ] ✗ No se pudo activar: %s", node_name.c_str());
-                return false;
-            }
-            state = get_lifecycle_state(node_name);
-            if (state != 3) return false;
-        }
-
-        RCLCPP_INFO(get_logger(), "[ LC ] ✓ %s activo.", node_name.c_str());
-        return true;
+        change_lifecycle_state(node_name, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
     }
 
     void change_lifecycle_state(const std::string& node_name, uint8_t transition_id) {
@@ -4793,20 +4587,13 @@ private:
             lifecycle_clients_[node_name] = this->create_client<lifecycle_msgs::srv::ChangeState>(service);
         }
         auto& client = lifecycle_clients_[node_name];
-        
-        // Verificamos sin bloquear demasiado tiempo (ej. 200ms)
-        if (!client->wait_for_service(std::chrono::milliseconds(200))) {
-            RCLCPP_WARN(this->get_logger(), "Servicio Lifecycle no disponible (omitido): %s", node_name.c_str());
+        if (!client->wait_for_service(std::chrono::milliseconds(1000))) {
+            RCLCPP_WARN(this->get_logger(), "Servicio Lifecycle no disponible para: %s", node_name.c_str());
             return;
         }
-        
         auto request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
         request->transition.id = transition_id;
-        
-        // Lanzamos la petición de forma completamente asíncrona para que NUNCA congele el hilo
-        client->async_send_request(request, [](rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedFuture) {
-            // Callback vacío: no bloqueamos nada esperando la respuesta
-        });
+        client->async_send_request(request);
     }
 
     cv::Rect stopButtonRect {0,0,0,0};

@@ -4,6 +4,7 @@ from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import time
+import random  # Importamos random para la elección inicial
 
 class YarenDanceRadio(Node):
     def __init__(self):
@@ -33,89 +34,91 @@ class YarenDanceRadio(Node):
         self.publisher.publish(msg)
 
     def run_dance(self):
-        # Rutina extraída directamente de la terminal (ya en radianes)
-        rutina = [
-            # 1. Posición Inicial (todo a 0) - (2 segundos)
+        # Rutina 1: La coreografía larga original
+        rutina_1 = [
             ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], 2.0),
-
-            # 2. Brazos extendidos hacia adelante asimétricos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, -3.0, 0.0, -1.5, 0.0, 3.0, 0.0], 2.0),
-
-            # 3. Brazo derecho arriba (3.0), izquierdo extendido (-3.0) - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.5], 2.0),
-
-            # 4. Brazo derecho abajo (0.0), izquierdo extendido (-3.0) - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, -1.5, 0.0, 3.0, 0.0], 2.0),
-
-            # 7. Regreso a Posición Inicial - (2 segundos)
             ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], 2.0),
-
-            # 8. Movimiento simétrico, ambos brazos arriba - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, -3.0, 0.0, 3.0, 0.0], 2.0),
-
-            # 9. Manos levantadas con codos flexionados - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 1.0, -3.0, 0.0, -3.0, 1.0, 3.0, 0.0], 2.0),
-
-            # 10. Mismo movimiento (mantener) - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, -3.0, 0.0, 3.0, 0.0], 2.0),
-
-            # 11. Flexión de codos de nuevo - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 1.0, -3.0, 0.0, -3.0, 1.0, 3.0, 0.0], 2.0),
-
-            # 12. Estirar codos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, -3.0, 0.0, 3.0, 0.0], 2.0),
-
-            # 13. Brazo derecho medio arriba, izquierdo abajo - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.5], 2.0),
-
-
-            # 15. Regreso a Posición Inicial con leve ajuste en codos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], 2.0),
-
-            # 16. Ambos brazos hacia adelante - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, -1.5, 0.0, 0.0, 0.0], 2.0),
-
-            # 17. Brazos hacia adelante con flexión leve de codos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 1.0, -1.5, 0.0, 0.0, 0.0], 2.0),
-
-            # 18. Flexión asimétrica de codos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 1.0, -1.5, 0.0, 0.0, 1.0], 2.0),
-
-            # 19. Desflexión asimétrica - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, -1.5, 0.0, 0.0, 1.0], 2.0),
-
-            # 20. Regresar flexión - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, -1.5, 0.0, 0.0, 0.0], 2.0),
-
-            # 21. Flexión asimétrica (repetida) - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 1.0, -1.5, 0.0, 0.0, 0.0], 2.0),
-
-            # 22. Codos flexionados simultáneos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 1.0, -1.5, 0.0, 1.5, 1.0], 2.0),
-
-            # 23. Cambio de ángulo de brazo derecho - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, -1.5, 1.0, -1.5, 0.0, 0.0, 1.0], 2.0),
-
-            # 24. Brazos cruzados arriba - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, -1.0, 1.0, -3.0, 0.5, 3.0, 0.0], 2.0),
-
-            # 25. Brazos cruzados opuestos - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.5, -3.0, 0.0, -1.5, 0.0, 1.0, 1.0], 2.0),
-            
-            # 26. Alternancia rápida - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, -1.0, 1.0, -3.0, 0.5, 3.0, 0.0], 2.0),
-            
-            # 27. Alternancia final - (1 segundo)
             ([0.0, 0.0, 0.0, 0.0, 3.0, 0.5, -3.0, 0.0, -1.5, 0.0, 1.0, 1.0], 2.0)
         ]
 
-        # Bucle infinito: mientras el nodo siga vivo (la música siga sonando), repetirá el baile
+        # Rutina 2: Los nuevos movimientos que probaste en la terminal
+        rutina_2 = [
+            ([0.0, 0.0, 0.0, 0.0, 1.5, 1.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -1.5, 0.0, -3.0, 0.0, 1.5, 0.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.5, 1.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -1.5, 0.0, -3.0, 0.0, 1.5, 0.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.5, 1.0, 0.0, 0.0, -1.5, 1.0, 0.0, 0.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 3.0, 0.0, -1.5, 0.0, -3.0, 0.0, 1.5, 0.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.5, 0.0, -1.5, 1.0, -1.5, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 2.0, 0.0, -1.5, 1.0, -2.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.5, 1.0, -1.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 2.0, 0.0, -1.5, 1.0, -2.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.5, 1.0, -1.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 2.0, 0.0, -1.5, 1.0, -2.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.5, 1.0, -1.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 2.0, 0.0, -1.5, 1.0, -2.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.5, 1.0, -1.0, 0.0, 1.5, 1.0], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, -0.2, 0.0, 0.0, 1.3], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 1.3, -0.5, 0.0, 0.0, 0.5], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, -0.2, 0.0, 0.0, 1.3], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 1.3, -0.5, 0.0, 0.0, 0.5], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, -0.2, 0.0, 0.0, 1.3], 2.0),
+            ([0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 1.3, -0.5, 0.0, 0.0, 0.5], 2.0)
+        ]
+
+        ultima_rutina_ejecutada = None
+
+        # Bucle infinito
         while rclpy.ok():
-            for pos, t in rutina:
+            # Selección de rutina
+            if ultima_rutina_ejecutada is None:
+                # Si es la primera vez, elige al azar (1 o 2)
+                rutina_elegida = random.choice([1, 2])
+            elif ultima_rutina_ejecutada == 1:
+                # Si la última fue la 1, ahora toca la 2
+                rutina_elegida = 2
+            else:
+                # Si la última fue la 2, ahora toca la 1
+                rutina_elegida = 1
+
+            # Asignamos la lista correspondiente y mostramos en pantalla qué va a hacer
+            if rutina_elegida == 1:
+                self.get_logger().info("💃 Iniciando Rutina 1")
+                rutina_actual = rutina_1
+            else:
+                self.get_logger().info("🕺 Iniciando Rutina 2")
+                rutina_actual = rutina_2
+
+            # Ejecutamos los movimientos de la rutina seleccionada
+            for pos, t in rutina_actual:
                 if not rclpy.ok():
                     break
                 self.send_movement(pos, t)
                 time.sleep(t)
+            
+            # Guardamos cuál fue la rutina que acaba de terminar
+            ultima_rutina_ejecutada = rutina_elegida
 
 def main(args=None):
     rclpy.init(args=args)
