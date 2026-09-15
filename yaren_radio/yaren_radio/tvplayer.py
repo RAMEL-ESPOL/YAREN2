@@ -14,7 +14,7 @@ from PyQt5.QtMultimediaWidgets import QVideoWidget
 ICONS = os.path.expanduser('~/robotis_ws/src/YAREN2/yaren_radio/iconos')
 
 # =============================================================================
-#  CATÁLOGO DE VIDEOS (Actualizado con imágenes)
+#  CATÁLOGO DE VIDEOS
 # =============================================================================
 VIDEOS = [
     {'id':'vid_pollito',        'title':'Pollito Pío',           'source':'Canciones de la Granja', 'genre':'infantil', 'image':f'{ICONS}/pollitopio.png', 'color':'#FFB347', 'file':'pollito_pio.mp4'},
@@ -63,27 +63,37 @@ STYLESHEET = """
     QPushButton#CloseBtn { background-color: transparent; color: #5A6080; font-size: 22px; font-weight: bold; border-radius: 18px; }
     QPushButton#CloseBtn:hover { color: #FF4757; background-color: rgba(255,71,87,0.1); }
 
-    /* OVERLAY ESTILO NETFLIX */
+    /* OVERLAY INFERIOR ESTILO NETFLIX */
     QFrame#OverlayBar {
         background-color: #0A0C16;
         border-top: 1px solid #1E2240;
     }
-    QPushButton.OvBtn { background-color: transparent; border: none; color: #FFFFFF; font-size: 24px; font-weight: bold; }
+    /* OVERLAY SUPERIOR PARA EL TÍTULO */
+    QFrame#TopOverlayBar {
+        background-color: #0A0C16;
+        border-bottom: 1px solid #1E2240;
+    }
+    
+    QPushButton.OvBtn { background-color: transparent; border: none; color: #FFFFFF; font-size: 38px; font-weight: bold; }
     QPushButton.OvBtn:hover { color: #00E5FF; }
-    QPushButton.OvBtnPrimary { background-color: transparent; border: none; color: #FFFFFF; font-size: 32px; font-weight: bold; }
+    
+    /* ESTILOS DINÁMICOS PARA EL BOTÓN CENTRAL */
+    QPushButton.OvBtnPrimary { background-color: transparent; border: none; color: #FFFFFF; font-weight: bold; }
     QPushButton.OvBtnPrimary:hover { color: #6C5CE7; }
+    QPushButton.OvBtnPrimary[state="play"] { font-size: 45px; }
+    QPushButton.OvBtnPrimary[state="pause"] { font-size: 32px; }
     
     QPushButton.OvCatalogBtn {
-        background-color: #1a1e36; border: 1px solid #1E2240; border-radius: 15px;
-        color: #FFFFFF; font-size: 14px; font-weight: bold; padding: 5px 15px;
+        background-color: #1a1e36; border: 1px solid #1E2240; border-radius: 20px;
+        color: #FFFFFF; font-size: 18px; font-weight: bold; padding: 12px 25px;
     }
     QPushButton.OvCatalogBtn:hover { background-color: #6C5CE7; border-color: #00E5FF; }
 
-    /* SLIDERS */
-    QSlider::groove:horizontal { border-radius: 2px; height: 4px; background: rgba(255,255,255,0.3); }
-    QSlider::sub-page:horizontal { background: #E50914; border-radius: 2px; }
-    QSlider::handle:horizontal { background: #FFFFFF; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
-    QSlider::handle:horizontal:hover { transform: scale(1.2); background: #E50914; }
+    /* SLIDERS - Hechos más gruesos para Touch */
+    QSlider::groove:horizontal { border-radius: 4px; height: 8px; background: rgba(255,255,255,0.3); }
+    QSlider::sub-page:horizontal { background: #E50914; border-radius: 4px; }
+    QSlider::handle:horizontal { background: #FFFFFF; width: 34px; height: 34px; margin: -13px 0; border-radius: 17px; }
+    QSlider::handle:horizontal:hover { transform: scale(1.1); background: #E50914; }
 """
 
 def format_time(ms):
@@ -122,7 +132,6 @@ class VideoCard(QFrame):
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setFixedSize(210, 150)
         
-        # Color dinámico para la tarjeta
         card_color = vd.get('color', '#00E5FF')
         self.setStyleSheet(f"""
             QFrame.VideoCard {{
@@ -148,7 +157,6 @@ class VideoCard(QFrame):
         pixmap = QPixmap(image_path)
         
         if not pixmap.isNull():
-            # CAMBIO AQUÍ: Usar Qt.KeepAspectRatio para que la imagen no se recorte
             pixmap = pixmap.scaled(210, 85, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.thumb.setPixmap(pixmap)
         else:
@@ -166,12 +174,56 @@ class VideoCard(QFrame):
 
     def mousePressEvent(self, e): 
         self.clicked.emit(self.video_data)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NUEVA CLASE PARA EL TÍTULO EN LA PARTE SUPERIOR
+class TopOverlayBar(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TopOverlayBar")
+        self.setFixedHeight(70)
+
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity)
+        self._anim = QPropertyAnimation(self._opacity, b"opacity")
+        self._anim.setDuration(250)
+        self._anim.finished.connect(self._on_anim_finished)
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.fade_out)
+
+        lay = QVBoxLayout(self)
+        self.lbl_title = QLabel("")
+        self.lbl_title.setStyleSheet("color: white; font-size: 24px; font-weight: bold; background: transparent;")
+        self.lbl_title.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.lbl_title)
+
+    def _on_anim_finished(self):
+        if self._anim.endValue() == 0.0:
+            self.hide() 
+
+    def fade_in(self):
+        if not self.isVisible():
+            self.show()
+        self._anim.stop(); self._anim.setEndValue(1.0); self._anim.start()
+
+    def fade_out(self):
+        self._anim.stop(); self._anim.setEndValue(0.0); self._anim.start()
+
+    def show_temporarily(self, ms=3500):
+        self.fade_in(); self._hide_timer.start(ms)
+
+    def keep_visible(self):
+        self.fade_in(); self._hide_timer.stop()
+
 # ─────────────────────────────────────────────────────────────────────────────
 class OverlayBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("OverlayBar")
-        self.setFixedHeight(110)
+        self.setFixedHeight(150)  
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(1.0)
@@ -187,40 +239,62 @@ class OverlayBar(QFrame):
 
     def _build_ui(self):
         main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(20, 20, 20, 15)
+        main_lay.setContentsMargins(30, 15, 30, 20)
         
+        # 1. Slider de tiempo
         time_lay = QHBoxLayout()
         self.timeline_slider = JumpSlider(Qt.Horizontal)
         self.timeline_slider.setCursor(QCursor(Qt.PointingHandCursor))
         self.lbl_time = QLabel("00:00 / 00:00")
-        self.lbl_time.setStyleSheet("color: white; font-size: 12px; font-weight: bold; background: transparent;")
-        time_lay.addWidget(self.timeline_slider); time_lay.addSpacing(10); time_lay.addWidget(self.lbl_time)
+        self.lbl_time.setStyleSheet("color: white; font-size: 16px; font-weight: bold; background: transparent;") 
+        time_lay.addWidget(self.timeline_slider); time_lay.addSpacing(15); time_lay.addWidget(self.lbl_time)
         
+        # 2. Controles divididos en 3 secciones para que el Play/Pause quede perfecto al centro
         ctrl_lay = QHBoxLayout()
-        self.btn_prev = QPushButton("⏮"); self.btn_play = QPushButton("⏸"); self.btn_next = QPushButton("⏭")
-        for btn in (self.btn_prev, self.btn_next):
-            btn.setProperty("class", "OvBtn"); btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_play.setProperty("class", "OvBtnPrimary"); self.btn_play.setCursor(QCursor(Qt.PointingHandCursor))
 
+        # Izquierda (Volumen)
+        left_lay = QHBoxLayout()
         self.lbl_vol_icon = QLabel("🔊")
-        self.lbl_vol_icon.setStyleSheet("color: white; font-size: 18px; background: transparent;")
+        self.lbl_vol_icon.setStyleSheet("color: white; font-size: 24px; background: transparent;")
         self.vol_slider = JumpSlider(Qt.Horizontal)
         self.vol_slider.setRange(0, 100); self.vol_slider.setValue(80)
-        self.vol_slider.setFixedWidth(100); self.vol_slider.setCursor(QCursor(Qt.PointingHandCursor))
+        self.vol_slider.setFixedWidth(160); self.vol_slider.setCursor(QCursor(Qt.PointingHandCursor))
+        left_lay.addWidget(self.lbl_vol_icon)
+        left_lay.addWidget(self.vol_slider)
+        left_lay.addStretch()
 
-        self.lbl_title = QLabel("")
-        self.lbl_title.setStyleSheet("color: white; font-size: 16px; font-weight: bold; background: transparent;")
-        self.lbl_title.setAlignment(Qt.AlignCenter)
+        # Centro (Reproducción)
+        center_lay = QHBoxLayout()
+        self.btn_prev = QPushButton("◄◄"); self.btn_play = QPushButton("►"); self.btn_next = QPushButton("►►")
+        self.btn_prev.setProperty("class", "OvBtn"); self.btn_prev.setCursor(QCursor(Qt.PointingHandCursor))
+        self.btn_next.setProperty("class", "OvBtn"); self.btn_next.setCursor(QCursor(Qt.PointingHandCursor))
+        
+        self.btn_play.setProperty("class", "OvBtnPrimary")
+        self.btn_play.setProperty("state", "play") # ESTADO INICIAL PARA CSS
+        self.btn_play.setCursor(QCursor(Qt.PointingHandCursor))
+        
+        # ASIGNAMOS TAMAÑO FIJO para que no salten al cambiar el ícono
+        self.btn_prev.setFixedSize(70, 70)
+        self.btn_play.setFixedSize(80, 80)
+        self.btn_next.setFixedSize(70, 70)
 
-        self.btn_catalog = QPushButton("⊞ Catálogo")
+        center_lay.addWidget(self.btn_prev)
+        center_lay.addWidget(self.btn_play)
+        center_lay.addWidget(self.btn_next)
+
+        # Derecha (Catálogo Home)
+        right_lay = QHBoxLayout()
+        self.btn_catalog = QPushButton("🏠 Home") # EMOTICON DE CASITA
         self.btn_catalog.setProperty("class", "OvCatalogBtn"); self.btn_catalog.setCursor(QCursor(Qt.PointingHandCursor))
+        right_lay.addStretch()
+        right_lay.addWidget(self.btn_catalog)
 
-        ctrl_lay.addWidget(self.btn_prev); ctrl_lay.addWidget(self.btn_play); ctrl_lay.addWidget(self.btn_next)
-        ctrl_lay.addSpacing(20); ctrl_lay.addWidget(self.lbl_vol_icon); ctrl_lay.addWidget(self.vol_slider)
-        ctrl_lay.addSpacing(10); ctrl_lay.addWidget(self.lbl_title, stretch=1); ctrl_lay.addSpacing(10)
-        ctrl_lay.addWidget(self.btn_catalog)
+        # Añadimos las 3 áreas
+        ctrl_lay.addLayout(left_lay, 1)
+        ctrl_lay.addLayout(center_lay, 1)
+        ctrl_lay.addLayout(right_lay, 1)
 
-        main_lay.addLayout(time_lay); main_lay.addLayout(ctrl_lay)
+        main_lay.addLayout(time_lay); main_lay.addSpacing(10); main_lay.addLayout(ctrl_lay)
 
     def _on_anim_finished(self):
         if self._anim.endValue() == 0.0:
@@ -266,7 +340,10 @@ class PlayerView(QWidget):
         self.media_player.durationChanged.connect(self._on_duration_changed)
         self.media_player.mediaStatusChanged.connect(self._on_status_changed)
 
+        # BARRA SUPERIOR E INFERIOR
+        self.top_overlay = TopOverlayBar(self)
         self.overlay = OverlayBar(self)
+        
         self.overlay.btn_play.clicked.connect(self.toggle_play)
         self.overlay.btn_prev.clicked.connect(self.play_prev)
         self.overlay.btn_next.clicked.connect(self.play_next)
@@ -280,7 +357,6 @@ class PlayerView(QWidget):
             QLabel {
                 background-color: rgba(0, 0, 0, 150);
                 color: white; 
-                font-size: 50px; 
                 border-radius: 40px;
             }
         """)
@@ -299,7 +375,10 @@ class PlayerView(QWidget):
 
     def resizeEvent(self, e):
         self.video_widget.setGeometry(0, 0, self.width(), self.height())
-        bar_h = 110 
+        # Ubicación de la barra de arriba
+        self.top_overlay.setGeometry(0, 0, self.width(), 70) 
+        # Ubicación de la barra de abajo
+        bar_h = 150  
         self.overlay.setGeometry(0, self.height() - bar_h, self.width(), bar_h)
         self.center_osd.setGeometry((self.width() - 80) // 2, (self.height() - 80) // 2, 80, 80)
         super().resizeEvent(e)
@@ -308,9 +387,11 @@ class PlayerView(QWidget):
         self.setCursor(QCursor(Qt.ArrowCursor))
         if self.media_player.state() != QMediaPlayer.PausedState:
             self.overlay.show_temporarily(3500)
+            self.top_overlay.show_temporarily(3500) 
             self._cursor_timer.start(3500)
         else:
             self.overlay.keep_visible()
+            self.top_overlay.keep_visible() 
             self._cursor_timer.stop()
 
     def eventFilter(self, source, event):
@@ -343,7 +424,8 @@ class PlayerView(QWidget):
         self.media_player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
         self.media_player.play()
         
-        self.overlay.lbl_title.setText(f"{vd['title']} • {vd['source']}")
+        # Colocamos el título en la NUEVA BARRA SUPERIOR
+        self.top_overlay.lbl_title.setText(f"{vd['title']} • {vd['source']}")
         self._wake_ui()
         self.setFocus() 
 
@@ -359,9 +441,12 @@ class PlayerView(QWidget):
 
     def toggle_play(self):
         if self.media_player.state() == QMediaPlayer.PlayingState:
-            self.media_player.pause(); self._show_osd("⏸")
+            self.media_player.pause()
+            # Ajuste de tamaño específico para el ícono gigante del centro
+            self._show_osd("<span style='font-size:38px;'>❚❚</span>")
         else:
-            self.media_player.play(); self._show_osd("▶")
+            self.media_player.play()
+            self._show_osd("<span style='font-size:50px;'>►</span>")
 
     def _show_osd(self, text):
         self.center_osd.setText(text)
@@ -381,9 +466,21 @@ class PlayerView(QWidget):
     def set_position(self, position): self.media_player.setPosition(position)
 
     def _on_state_changed(self, state):
-        self.overlay.btn_play.setText("⏸" if state == QMediaPlayer.PlayingState else "▶")
+        # Lógica para cambiar el símbolo y el estado (para el CSS dinámico)
+        if state == QMediaPlayer.PlayingState:
+            self.overlay.btn_play.setText("❚❚")
+            self.overlay.btn_play.setProperty("state", "pause")
+        else:
+            self.overlay.btn_play.setText("►")
+            self.overlay.btn_play.setProperty("state", "play")
+            
+        # Forzar recarga del CSS en el botón
+        self.overlay.btn_play.style().unpolish(self.overlay.btn_play)
+        self.overlay.btn_play.style().polish(self.overlay.btn_play)
+
         self._wake_ui()
         self.overlay.repaint()
+        self.top_overlay.repaint()
 
     def _on_position_changed(self, position):
         is_dragging = QApplication.mouseButtons() & Qt.LeftButton and self.overlay.timeline_slider.underMouse()

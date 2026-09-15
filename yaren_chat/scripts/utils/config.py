@@ -2,7 +2,7 @@ CONFIGURATIONS = {
     'temperature': 0.5,
     'max_completion_tokens': 300,
     'top_p': 0.9,
-    'model': 'llama-3.1-8b-instant'
+    'model': 'llama3-8b-8192'
 }
 
 SYSTEM_PROMPT_BASE_es = (
