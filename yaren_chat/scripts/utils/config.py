@@ -2,7 +2,7 @@ CONFIGURATIONS = {
     'temperature': 0.5,
     'max_completion_tokens': 300,
     'top_p': 0.9,
-    'model': 'llama3-8b-8192'
+    'model': 'groq/compound-mini'
 }
 
 SYSTEM_PROMPT_BASE_es = (
