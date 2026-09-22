@@ -434,11 +434,156 @@ public:
     }
 
 private:
+    // ── Intro screen ──────────────────────────────────────────────────────────────
+    static bool show_intro_screen(bool is_english)
+    {
+        const int W = 800, H = 480;
+        const char* WIN = "Face Filter Intro";
+        bool clicked = false, closed = false;
+
+        struct State { bool* clicked; cv::Rect btn; };
+        cv::Rect btn_rect(300, 370, 200, 52);
+        State st{ &clicked, btn_rect };
+
+        cv::namedWindow(WIN, cv::WINDOW_NORMAL);
+        cv::setWindowProperty(WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+        cv::setWindowProperty(WIN, cv::WND_PROP_TOPMOST, 1);
+        cv::setMouseCallback(WIN, [](int event, int x, int y, int, void* ud) {
+            auto* s = reinterpret_cast<State*>(ud);
+            if (event == cv::EVENT_LBUTTONDOWN && s->btn.contains({x, y}))
+                *s->clicked = true;
+        }, &st);
+
+        std::string title   = is_english ? "Face Accessories" : "Accesorios Faciales";
+        std::string desc    = is_english
+            ? "Combine hats, glasses, noses, mouths and masks on your face in real time. You can enable several at once."
+            : "Combina sombreros, gafas, narices, bocas y mascaras sobre tu rostro en tiempo real. Puedes activar varios a la vez.";
+        std::string btn_lbl = is_english ? "Start" : "Comenzar";
+        std::vector<std::string> tags = is_english
+            ? std::vector<std::string>{"Hats", "Glasses", "Noses", "Mouths", "Masks"}
+            : std::vector<std::string>{"Sombreros", "Gafas", "Narices", "Bocas", "Mascaras"};
+
+        cv::Scalar ACCENT(160, 40, 140);
+        cv::Scalar BG(18, 10, 18), PANEL(40, 20, 40);
+
+        while (!clicked && !closed) {
+            cv::Mat frame(H, W, CV_8UC3, BG);
+            cv::rectangle(frame, {100, 50}, {700, 440}, PANEL, -1);
+            cv::rectangle(frame, {100, 50}, {700, 440}, ACCENT, 1);
+
+            int base = 0;
+            // icono
+            int cx = W / 2, cy = 118;
+
+            // Cabeza
+            cv::circle(frame, {cx, cy}, 38, ACCENT, 2);
+
+            // Ojos (asomando sobre la máscara)
+            cv::circle(frame, {cx - 12, cy - 10}, 4, ACCENT, -1);  // ojo izquierdo
+            cv::circle(frame, {cx + 12, cy - 10}, 4, ACCENT, -1);  // ojo derecho
+
+            // Brillo en los ojos
+            cv::circle(frame, {cx - 10, cy - 12}, 2, cv::Scalar(240, 235, 255), -1);
+            cv::circle(frame, {cx + 14, cy - 12}, 2, cv::Scalar(240, 235, 255), -1);
+
+            // Máscara (rectángulo redondeado que cubre boca y nariz)
+            cv::Scalar MASK_COLOR(120, 20, 160);
+            cv::rectangle(frame, {cx - 22, cy + 2}, {cx + 22, cy + 28}, MASK_COLOR, -1);
+            cv::rectangle(frame, {cx - 22, cy + 2}, {cx + 22, cy + 28}, ACCENT, 2);
+
+            // Línea decorativa en la máscara
+            cv::line(frame, {cx - 20, cy + 15}, {cx + 20, cy + 15}, ACCENT, 1, cv::LINE_AA);
+
+            // Tirantes de la máscara
+            cv::line(frame, {cx - 22, cy + 8},  {cx - 38, cy + 5},  ACCENT, 2, cv::LINE_AA);
+            cv::line(frame, {cx + 22, cy + 8},  {cx + 38, cy + 5},  ACCENT, 2, cv::LINE_AA);
+            cv::line(frame, {cx - 22, cy + 20}, {cx - 38, cy + 22}, ACCENT, 2, cv::LINE_AA);
+            cv::line(frame, {cx + 22, cy + 20}, {cx + 38, cy + 22}, ACCENT, 2, cv::LINE_AA);
+
+            // título
+            cv::Size ts = cv::getTextSize(title, cv::FONT_HERSHEY_DUPLEX, 1.2, 2, &base);
+            cv::putText(frame, title, {(W - ts.width)/2, 205},
+                        cv::FONT_HERSHEY_DUPLEX, 1.2, cv::Scalar(240, 235, 255), 2, cv::LINE_AA);
+
+            // descripción
+            std::istringstream iss(desc);
+            std::string word, line;
+            std::vector<std::string> lines;
+            while (iss >> word) {
+                std::string test = line.empty() ? word : line + " " + word;
+                cv::Size sz = cv::getTextSize(test, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
+                if (sz.width > 500 && !line.empty()) { lines.push_back(line); line = word; }
+                else line = test;
+            }
+
+            // tags
+                        if (!line.empty()) lines.push_back(line);
+            int y_d = 245;
+            for (auto& ln : lines) {
+                cv::Size lsz = cv::getTextSize(ln, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
+                cv::putText(frame, ln, {(W - lsz.width)/2, y_d},
+                            cv::FONT_HERSHEY_SIMPLEX, 0.56, cv::Scalar(190, 150, 190), 1, cv::LINE_AA);
+                y_d += 24;
+            }
+
+            // tags — centrados   <-- AQUÍ VA EL NUEVO CÓDIGO
+            int total_tags_w = 0;
+            int pad = 10;
+            std::vector<int> tag_widths;
+            for (auto& tag : tags) {
+                cv::Size tgsz = cv::getTextSize(tag, cv::FONT_HERSHEY_SIMPLEX, 0.46, 1, &base);
+                tag_widths.push_back(tgsz.width);
+                total_tags_w += tgsz.width + pad * 2;
+            }
+            int gap = 10;
+            total_tags_w += gap * ((int)tags.size() - 1);
+            int tx = (W - total_tags_w) / 2;
+            for (int i = 0; i < (int)tags.size(); i++) {
+                int tw = tag_widths[i];
+                cv::rectangle(frame, {tx - pad, 318}, {tx + tw + pad, 340},
+                            cv::Scalar(40, 15, 40), -1);
+                cv::rectangle(frame, {tx - pad, 318}, {tx + tw + pad, 340},
+                            cv::Scalar(90, 40, 90), 1);
+                cv::putText(frame, tags[i], {tx, 334},
+                            cv::FONT_HERSHEY_SIMPLEX, 0.46, cv::Scalar(190, 150, 190), 1, cv::LINE_AA);
+                tx += tw + pad * 2 + gap;
+            }
+
+            // botón
+            cv::rectangle(frame, btn_rect, cv::Scalar(100, 20, 120), -1);
+            cv::rectangle(frame, btn_rect, ACCENT, 2);
+            cv::Size bsz = cv::getTextSize(btn_lbl, cv::FONT_HERSHEY_DUPLEX, 0.9, 2, &base);
+            cv::putText(frame, btn_lbl,
+                        {btn_rect.x + (btn_rect.width - bsz.width)/2, btn_rect.y + 34},
+                        cv::FONT_HERSHEY_DUPLEX, 0.9, cv::Scalar(255, 240, 255), 2, cv::LINE_AA);
+
+            cv::imshow(WIN, frame);
+            int key = cv::waitKey(16);
+            if (key == 27) closed = true;
+            try {
+                if (cv::getWindowProperty(WIN, cv::WND_PROP_AUTOSIZE) == -1) closed = true;
+            } catch (...) { closed = true; }
+        }
+        cv::destroyWindow(WIN);
+        return clicked && !closed;
+    }
     void run_ui() {
+        // ── INTRO (Solo aparece una vez al iniciar el nodo) ──────────────────
+        if (!show_intro_screen(is_english_.load())) {
+            if (rclcpp::ok() && ui_running_.load() && mode_pub_) {
+                auto msg = std_msgs::msg::String();
+                msg.data = "idle";
+                mode_pub_->publish(msg);
+            }
+            return;
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        // Bucle principal: al salir de la cámara regresa directamente al menú de accesorios
         while (rclcpp::ok() && ui_running_) {
             bool applied = show_menu_local();
             if (!applied || !ui_running_) break;
-
+            
             apply_states();
             cam_clicked_ = false;
 
@@ -457,13 +602,13 @@ private:
             }
             cv::destroyWindow(CAM_WIN);
         }
+
         if (rclcpp::ok() && ui_running_.load() && mode_pub_) {
             auto msg = std_msgs::msg::String();
             msg.data = "idle";
             mode_pub_->publish(msg);
         }
     }
-
     bool show_menu_local() {
         cv::namedWindow(MENU_WIN, cv::WINDOW_NORMAL);
         cv::setWindowProperty(MENU_WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);

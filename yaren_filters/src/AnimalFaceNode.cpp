@@ -499,9 +499,141 @@ void AnimalFaceNode::play_sound(bool turn_on)
         _exit(1);  // Solo llega aquí si execl falla
     }
 }
+// ── Intro screen (nueva función) ─────────────────────────────────────────────
+static bool show_intro_screen(bool is_english)
+{
+    const int W = 800, H = 480;
+    const char* WIN = "Animal Filter Intro";
+    bool clicked = false, closed = false;
 
+    struct State { bool* clicked; cv::Rect btn; };
+    cv::Rect btn_rect(300, 370, 200, 52);
+    State st{ &clicked, btn_rect };
+
+    cv::namedWindow(WIN, cv::WINDOW_NORMAL);
+    cv::setWindowProperty(WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+    cv::setWindowProperty(WIN, cv::WND_PROP_TOPMOST, 1);
+    cv::setMouseCallback(WIN, [](int event, int x, int y, int, void* ud) {
+        auto* s = reinterpret_cast<State*>(ud);
+        if (event == cv::EVENT_LBUTTONDOWN && s->btn.contains({x, y}))
+            *s->clicked = true;
+    }, &st);
+
+    std::string title  = is_english ? "Animal Filters"
+                                    : "Filtros de Animales";
+    std::string desc   = is_english
+        ? "Choose an animal and overlay its mask on your face. Open your mouth to activate the virtual background and animal sound."
+        : "Elige un animal y superpon su mascara sobre tu rostro. Abre la boca para activar el fondo virtual y el sonido del animal.";
+    std::string btn_lbl = is_english ? "Start" : "Comenzar";
+    std::vector<std::string> tags = is_english
+        ? std::vector<std::string>{"Bear / Cat / Monkey", "Virtual background", "Sound on open mouth"}
+        : std::vector<std::string>{"Oso / Gato / Mono",  "Fondo virtual",      "Sonido al abrir boca"};
+
+    cv::Scalar ACCENT(60, 180, 40);
+    cv::Scalar BG(13, 26, 13), PANEL(22, 46, 30);
+
+    while (!clicked && !closed) {
+        cv::Mat frame(H, W, CV_8UC3, BG);
+        cv::rectangle(frame, {100, 50}, {700, 440}, PANEL, -1);
+        cv::rectangle(frame, {100, 50}, {700, 440}, ACCENT, 1);
+
+        // Carita de oso
+        int cx = W / 2, cy = 130;
+
+        // Cabeza principal
+        cv::circle(frame, {cx, cy}, 38, ACCENT, 2);
+
+        // Orejas
+        cv::circle(frame, {cx - 30, cy - 32}, 12, ACCENT, 2);   // oreja izquierda
+        cv::circle(frame, {cx + 30, cy - 32}, 12, ACCENT, 2);   // oreja derecha
+
+        // Relleno orejas interior
+        cv::circle(frame, {cx - 30, cy - 32}, 6, ACCENT, -1);
+        cv::circle(frame, {cx + 30, cy - 32}, 6, ACCENT, -1);
+
+        // Ojos
+        cv::circle(frame, {cx - 12, cy - 8}, 4, ACCENT, -1);
+        cv::circle(frame, {cx + 12, cy - 8}, 4, ACCENT, -1);
+
+        // Hocico
+        cv::ellipse(frame, {cx, cy + 10}, {12, 8}, 0, 0, 360, ACCENT, 2);
+
+        // Nariz
+        cv::circle(frame, {cx, cy + 6}, 3, ACCENT, -1);
+
+        // Sonrisa
+        cv::ellipse(frame, {cx, cy + 14}, {7, 5}, 0, 10, 170, ACCENT, 2);
+        // título
+        int base = 0;
+        cv::Size ts = cv::getTextSize(title, cv::FONT_HERSHEY_DUPLEX, 1.2, 2, &base);
+        cv::putText(frame, title, {(W - ts.width)/2, 205},
+                    cv::FONT_HERSHEY_DUPLEX, 1.2, cv::Scalar(240, 235, 255), 2, cv::LINE_AA);
+
+        // descripción (word-wrap simple)
+        std::istringstream iss(desc);
+        std::string word, line;
+        std::vector<std::string> lines;
+        while (iss >> word) {
+            std::string test = line.empty() ? word : line + " " + word;
+            cv::Size sz = cv::getTextSize(test, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
+            if (sz.width > 500 && !line.empty()) { lines.push_back(line); line = word; }
+            else line = test;
+        }
+        if (!line.empty()) lines.push_back(line);
+        int y_d = 245;
+        for (auto& ln : lines) {
+            cv::Size lsz = cv::getTextSize(ln, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
+            cv::putText(frame, ln, {(W - lsz.width)/2, y_d},
+                        cv::FONT_HERSHEY_SIMPLEX, 0.56, cv::Scalar(160, 190, 150), 1, cv::LINE_AA);
+            y_d += 24;
+        }
+
+        // tags
+        int tx = 130;
+        for (auto& tag : tags) {
+            cv::Size tgsz = cv::getTextSize(tag, cv::FONT_HERSHEY_SIMPLEX, 0.48, 1, &base);
+            int pad = 12;
+            cv::rectangle(frame, {tx - pad, 318}, {tx + tgsz.width + pad, 342},
+                          cv::Scalar(20, 50, 20), -1);
+            cv::rectangle(frame, {tx - pad, 318}, {tx + tgsz.width + pad, 342},
+                          cv::Scalar(40, 100, 40), 1);
+            cv::putText(frame, tag, {tx, 335},
+                        cv::FONT_HERSHEY_SIMPLEX, 0.48, cv::Scalar(150, 190, 140), 1, cv::LINE_AA);
+            tx += tgsz.width + pad * 2 + 14;
+        }
+
+        // botón
+        cv::rectangle(frame, btn_rect, cv::Scalar(20, 100, 40), -1);
+        cv::rectangle(frame, btn_rect, ACCENT, 2);
+        cv::Size bsz = cv::getTextSize(btn_lbl, cv::FONT_HERSHEY_DUPLEX, 0.9, 2, &base);
+        cv::putText(frame, btn_lbl,
+                    {btn_rect.x + (btn_rect.width - bsz.width)/2, btn_rect.y + 34},
+                    cv::FONT_HERSHEY_DUPLEX, 0.9, cv::Scalar(240, 255, 240), 2, cv::LINE_AA);
+
+        cv::imshow(WIN, frame);
+        int key = cv::waitKey(16);
+        if (key == 27) closed = true;
+        try {
+            if (cv::getWindowProperty(WIN, cv::WND_PROP_AUTOSIZE) == -1) closed = true;
+        } catch (...) { closed = true; }
+    }
+    cv::destroyWindow(WIN);
+    return clicked && !closed;
+}
 void AnimalFaceNode::run_ui()
 {
+    // ── INTRO (Solo aparece una vez al iniciar el nodo) ──────────────────
+    if (!show_intro_screen(is_english_.load())) {
+        if (rclcpp::ok() && ui_running_.load() && mode_pub_) {
+            auto msg = std_msgs::msg::String();
+            msg.data = "idle";
+            mode_pub_->publish(msg);
+        }
+        return;
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Bucle principal: al salir de la cámara regresa directamente al menú
     while (rclcpp::ok() && ui_running_) {
         Texts txt = make_texts(is_english_.load());
         std::string chosen = show_menu(previews_, txt);
@@ -535,7 +667,7 @@ void AnimalFaceNode::run_ui()
         cv::destroyWindow(CAM_WIN);
     }
 
-    // Al salir del loop, parar audio
+    // Al salir del loop por completo, parar audio
     stop_sound();
 
     if (rclcpp::ok() && ui_running_.load() && mode_pub_) {

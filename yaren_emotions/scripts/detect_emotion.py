@@ -56,20 +56,111 @@ MUSIC_DIR = os.path.join(HOME_DIR, "robotis_ws", "src", "YAREN2",
                          "yaren_radio", "audios")
 
 PLAYLIST_EN = [
-    "CantStopTheFeeling.mp3",
-    "JustTheWayYouAre.mp3",
-    "GetLucky.mp3",
-    "YourLove.mp3",
-    "SunFlower.mp3",
+    "CantStopTheFeeling.mp3", "JustTheWayYouAre.mp3", "GetLucky.mp3",
+    "YourLove.mp3", "SunFlower.mp3",
+]
+PLAYLIST_ES = [
+    "Picky.mp3", "TuCarcel.mp3", "LaBicicleta.mp3",
+    "LaGozadera.mp3", "MiGente.mp3",
 ]
 
-PLAYLIST_ES = [
-    "Picky.mp3",
-    "TuCarcel.mp3",
-    "LaBicicleta.mp3",
-    "LaGozadera.mp3",
-    "MiGente.mp3",
-]
+# =============================================================================
+#  INTRO SCREEN
+# =============================================================================
+def show_intro_screen(win_name: str, is_english: bool) -> bool:
+    W, H = 800, 480
+    clicked = [False]
+    closed  = [False]
+    BTN = (300, 370, 200, 52)
+
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            bx, by, bw, bh = BTN
+            if bx <= x <= bx + bw and by <= y <= by + bh:
+                clicked[0] = True
+
+    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+    cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
+    cv2.setMouseCallback(win_name, on_mouse)
+
+    ACCENT = (180, 80, 220)
+    font_d = cv2.FONT_HERSHEY_DUPLEX
+    font_s = cv2.FONT_HERSHEY_SIMPLEX
+
+    title = "Emotion Detector" if is_english else "Detector de Emociones"
+    desc  = ("Analyzes your facial expression in real time and shows the detected emotion with visual effects and background music."
+             if is_english else
+             "Analiza tu expresion facial en tiempo real y muestra la emocion detectada con efectos visuales y musica de fondo.")
+    tags  = (["Real-time AI", "Auto music", "Emoji rain"]
+             if is_english else
+             ["IA en tiempo real", "Musica automatica", "Lluvia de emojis"])
+    btn_lbl = "Start" if is_english else "Comenzar"
+
+    while not clicked[0] and not closed[0]:
+        frame = np.zeros((H, W, 3), dtype=np.uint8)
+        frame[:] = (18, 12, 28)
+        cv2.rectangle(frame, (100, 50), (700, 440), (30, 22, 46), -1)
+        cv2.rectangle(frame, (100, 50), (700, 440), ACCENT, 1)
+
+        cx, cy = W // 2, 130
+
+        # Círculo exterior
+        cv2.circle(frame, (cx, cy), 38, ACCENT, 2)
+
+        # Ojos
+        cv2.circle(frame, (cx - 11, cy - 10), 3, ACCENT, -1)
+        cv2.circle(frame, (cx + 11, cy - 10), 3, ACCENT, -1)
+
+        # Sonrisa más grande
+        cv2.ellipse(frame, (cx, cy + 4), (18, 13), 0, 10, 170, ACCENT, 2)
+
+        (tw, _), _ = cv2.getTextSize(title, font_d, 1.2, 2)
+        cv2.putText(frame, title, ((W - tw) // 2, 210), font_d, 1.2, (240, 235, 255), 2, cv2.LINE_AA)
+
+        words = desc.split()
+        line, lines = "", []
+        for w in words:
+            test = (line + " " + w).strip()
+            (tw2, _), _ = cv2.getTextSize(test, font_s, 0.58, 1)
+            if tw2 > 500:
+                lines.append(line); line = w
+            else:
+                line = test
+        if line: lines.append(line)
+        y_d = 248
+        for ln in lines:
+            (lw, _), _ = cv2.getTextSize(ln, font_s, 0.58, 1)
+            cv2.putText(frame, ln, ((W - lw) // 2, y_d), font_s, 0.58, (160, 150, 190), 1, cv2.LINE_AA)
+            y_d += 24
+
+        tx = W // 2 - sum(cv2.getTextSize(t, font_s, 0.5, 1)[0][0] + 30 for t in tags) // 2
+        for tag in tags:
+            (tgw, _), _ = cv2.getTextSize(tag, font_s, 0.5, 1)
+            pad = 14
+            cv2.rectangle(frame, (tx - pad, 318), (tx + tgw + pad, 342), (40, 30, 60), -1)
+            cv2.rectangle(frame, (tx - pad, 318), (tx + tgw + pad, 342), (80, 60, 100), 1)
+            cv2.putText(frame, tag, (tx, 335), font_s, 0.5, (160, 150, 190), 1, cv2.LINE_AA)
+            tx += tgw + pad * 2 + 12
+
+        bx, by, bw, bh = BTN
+        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (100, 40, 160), -1)
+        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), ACCENT, 2)
+        (blw, _), _ = cv2.getTextSize(btn_lbl, font_d, 0.9, 2)
+        cv2.putText(frame, btn_lbl, (bx + (bw - blw) // 2, by + 34),
+                    font_d, 0.9, (240, 235, 255), 2, cv2.LINE_AA)
+
+        cv2.imshow(win_name, frame)
+        key = cv2.waitKey(16) & 0xFF
+        if key == 27:
+            closed[0] = True
+        try:
+            if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
+                closed[0] = True
+        except Exception:
+            closed[0] = True
+
+    return clicked[0] and not closed[0]
 
 
 # =============================================================================
@@ -82,8 +173,6 @@ class MusicManager:
         self._running      = False
         self._check_thread = None
         self._pygame       = None
-
-        # Colas shuffled independientes para EN y ES
         self._queue_en = list(PLAYLIST_EN)
         self._queue_es = list(PLAYLIST_ES)
         random.shuffle(self._queue_en)
@@ -91,7 +180,6 @@ class MusicManager:
         self._idx_en  = 0
         self._idx_es  = 0
         self._turn_en = True
-
         try:
             import pygame
             self._pygame = pygame
@@ -104,32 +192,26 @@ class MusicManager:
             self._log(f"pygame no disponible: {e}")
 
     def _log(self, msg):
-        if self._logger:
-            self._logger.info(f"[Music] {msg}")
-        else:
-            print(f"[Music] {msg}")
+        if self._logger: self._logger.info(f"[Music] {msg}")
+        else: print(f"[Music] {msg}")
 
     def _get_next_path(self):
         if self._turn_en:
             idx = self._idx_en % len(self._queue_en)
-            if idx == 0 and self._idx_en > 0:
-                random.shuffle(self._queue_en)
+            if idx == 0 and self._idx_en > 0: random.shuffle(self._queue_en)
             path = os.path.join(MUSIC_DIR, self._queue_en[idx])
             self._idx_en += 1
         else:
             idx = self._idx_es % len(self._queue_es)
-            if idx == 0 and self._idx_es > 0:
-                random.shuffle(self._queue_es)
+            if idx == 0 and self._idx_es > 0: random.shuffle(self._queue_es)
             path = os.path.join(MUSIC_DIR, self._queue_es[idx])
             self._idx_es += 1
-
         self._turn_en = not self._turn_en
         return path
 
     def _play_path(self, path):
         if not os.path.isfile(path):
-            self._log(f"Archivo no encontrado: {path}")
-            return False
+            self._log(f"Archivo no encontrado: {path}"); return False
         try:
             self._pygame.mixer.music.load(path)
             self._pygame.mixer.music.set_volume(0.45)
@@ -137,8 +219,7 @@ class MusicManager:
             self._log(f"Reproduciendo: {os.path.basename(path)}")
             return True
         except Exception as e:
-            self._log(f"Error reproduciendo {path}: {e}")
-            return False
+            self._log(f"Error reproduciendo {path}: {e}"); return False
 
     def _monitor_loop(self):
         time.sleep(1.0)
@@ -152,13 +233,11 @@ class MusicManager:
             time.sleep(0.5)
 
     def start(self):
-        if not self._available:
-            return
+        if not self._available: return
         self._running = True
         path = self._get_next_path()
         self._play_path(path)
-        self._check_thread = threading.Thread(
-            target=self._monitor_loop, daemon=True)
+        self._check_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._check_thread.start()
 
     def stop(self):
@@ -166,64 +245,53 @@ class MusicManager:
         if self._check_thread:
             self._check_thread.join(timeout=2.0)
             self._check_thread = None
-        if not self._available:
-            return
+        if not self._available: return
         try:
             if self._pygame.mixer.get_init():
                 self._pygame.mixer.music.stop()
-        except Exception:
-            pass
+        except Exception: pass
 
     def quit(self):
         self.stop()
-        if not self._available:
-            return
-        try:
-            self._pygame.mixer.quit()
-        except Exception:
-            pass
+        if not self._available: return
+        try: self._pygame.mixer.quit()
+        except Exception: pass
 
 
 # =============================================================================
-#  Partícula de Imagen PNG
+#  ImageParticle
 # =============================================================================
 class ImageParticle:
     def __init__(self, W: int, H: int, img_array: np.ndarray):
-        self.W = W
-        self.H = H
-        self.base_img = img_array
+        self.W = W; self.H = H; self.base_img = img_array
         self.reset_random()
 
     def reset_random(self):
-        self.x       = random.randint(20, self.W - 40)
-        self.y       = random.randint(-150, -30)
-        self.vy      = random.uniform(2.5, 6.0)
-        self.vx_amp  = random.uniform(0.3, 1.2)
-        self.phase   = random.uniform(0, 2 * math.pi)
-        self.freq    = random.uniform(0.04, 0.10)
-        target_size  = random.randint(35, 45)
-        self.img     = cv2.resize(self.base_img, (target_size, target_size),
-                                  interpolation=cv2.INTER_AREA)
+        self.x      = random.randint(20, self.W - 40)
+        self.y      = random.randint(-150, -30)
+        self.vy     = random.uniform(2.5, 6.0)
+        self.vx_amp = random.uniform(0.3, 1.2)
+        self.phase  = random.uniform(0, 2 * math.pi)
+        self.freq   = random.uniform(0.04, 0.10)
+        target_size = random.randint(35, 45)
+        self.img    = cv2.resize(self.base_img, (target_size, target_size),
+                                 interpolation=cv2.INTER_AREA)
         self.t = 0.0
 
     def update(self):
         self.y += self.vy
         self.x += self.vx_amp * math.sin(self.phase + self.t * self.freq * 60)
         self.t += 1
-        if self.y > self.H + 20:
-            self.reset_random()
+        if self.y > self.H + 20: self.reset_random()
 
     def draw(self, frame: np.ndarray):
         x, y = int(self.x), int(self.y)
         h, w = self.img.shape[:2]
         y1, y2 = max(0, y),   min(self.H, y + h)
         x1, x2 = max(0, x),   min(self.W, x + w)
-        img_y1  = max(0, -y)
-        img_y2  = h - max(0, (y + h) - self.H)
-        img_x1  = max(0, -x)
-        img_x2  = w - max(0, (x + w) - self.W)
-        if y1 >= y2 or x1 >= x2:
-            return
+        img_y1  = max(0, -y);  img_y2 = h - max(0, (y + h) - self.H)
+        img_x1  = max(0, -x);  img_x2 = w - max(0, (x + w) - self.W)
+        if y1 >= y2 or x1 >= x2: return
         emoji_crop = self.img[img_y1:img_y2, img_x1:img_x2]
         frame_crop = frame[y1:y2, x1:x2]
         if emoji_crop.shape[2] == 4:
@@ -236,7 +304,7 @@ class ImageParticle:
 
 
 # =============================================================================
-#  Nodo principal
+#  NODO PRINCIPAL
 # =============================================================================
 class EmotionDetectionNode(LifecycleNode):
 
@@ -266,8 +334,6 @@ class EmotionDetectionNode(LifecycleNode):
         self.loaded_emojis     = {}
         self._music            = None
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
-
     def on_configure(self, state):
         self.get_logger().info('Cargando modelo TF, MediaPipe y emojis PNG...')
         try:
@@ -287,11 +353,9 @@ class EmotionDetectionNode(LifecycleNode):
                         if img.shape[2] == 4:
                             self.loaded_emojis[emotion].append(img)
                         else:
-                            self.get_logger().warning(
-                                f"La imagen {file} no tiene Alpha.")
+                            self.get_logger().warning(f"La imagen {file} no tiene Alpha.")
                     else:
-                        self.get_logger().warning(
-                            f"No se encontró el emoji: {img_path}")
+                        self.get_logger().warning(f"No se encontró el emoji: {img_path}")
 
             mp_face_mesh   = mp.solutions.face_mesh
             self.face_mesh = mp_face_mesh.FaceMesh(
@@ -306,7 +370,6 @@ class EmotionDetectionNode(LifecycleNode):
                 Bool, '/yaren/is_english', self.language_callback, qos)
 
             self._music = MusicManager(logger=self.get_logger())
-
             self.get_logger().info('Modelo TF + MediaPipe + Emojis + Música listos ✓')
             return TransitionCallbackReturn.SUCCESS
         except Exception as e:
@@ -314,31 +377,35 @@ class EmotionDetectionNode(LifecycleNode):
             return TransitionCallbackReturn.FAILURE
 
     def on_activate(self, state):
-        self.get_logger().info('EmotionDetector ACTIVO')
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(self.window_name,
-                              cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        self.get_logger().info('EmotionDetector: mostrando intro...')
+
+        if not show_intro_screen(self.window_name, self.is_english):
+            self.get_logger().info('Intro cancelada.')
+            idle_pub = self.create_publisher(String, '/yaren_mode', 1)
+            idle_pub.publish(String(data='idle'))
+            self.destroy_publisher(idle_pub)
+            return TransitionCallbackReturn.SUCCESS
+
+        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
         cv2.setMouseCallback(self.window_name, self.on_mouse_click)
 
         def force_focus():
             time.sleep(0.3)
-            cmd = (f"xdotool search --sync --name '{self.window_name}' "
-                   "windowactivate --sync windowraise 2>/dev/null")
-            os.system(cmd)
+            os.system(f"xdotool search --sync --name '{self.window_name}' "
+                      "windowactivate --sync windowraise 2>/dev/null")
         threading.Thread(target=force_focus, daemon=True).start()
 
-        self._active       = True
-        self._frame_count  = 0
-        self._latest_frame = None
-        self._particles    = []
-        self._current_emotion = ""
+        self._active           = True
+        self._frame_count      = 0
+        self._latest_frame     = None
+        self._particles        = []
+        self._current_emotion  = ""
 
         self.subscription = self.create_subscription(
             Image, '/csi_camera/image_raw', self.image_callback, 10)
 
-        self._infer_thread = threading.Thread(
-            target=self._infer_loop, daemon=True)
+        self._infer_thread = threading.Thread(target=self._infer_loop, daemon=True)
         self._infer_thread.start()
 
         if self._music:
@@ -349,17 +416,14 @@ class EmotionDetectionNode(LifecycleNode):
     def on_deactivate(self, state):
         self.get_logger().info('EmotionDetector en PAUSA')
         self._active = False
-
         if self._infer_thread is not None:
             self._infer_thread.join(timeout=2.0)
             self._infer_thread = None
         if self.subscription is not None:
             self.destroy_subscription(self.subscription)
             self.subscription = None
-
         if self._music:
             self._music.stop()
-
         cv2.destroyAllWindows()
         return super().on_deactivate(state)
 
@@ -387,12 +451,9 @@ class EmotionDetectionNode(LifecycleNode):
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
 
-    # ── Callbacks ─────────────────────────────────────────────────────────────
-
     def language_callback(self, msg):
         self.is_english = msg.data
-        self.get_logger().info(
-            f"Idioma: {'English' if self.is_english else 'Español'}")
+        self.get_logger().info(f"Idioma: {'English' if self.is_english else 'Español'}")
 
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -401,10 +462,8 @@ class EmotionDetectionNode(LifecycleNode):
             idle_pub.publish(String(data='idle'))
             self.destroy_publisher(idle_pub)
 
-    # ── Lluvia de emojis ──────────────────────────────────────────────────────
-
     def _rebuild_particles(self, emotion: str, W: int, H: int):
-        images_list  = self.loaded_emojis.get(emotion, [])
+        images_list   = self.loaded_emojis.get(emotion, [])
         new_particles = []
         if images_list:
             for _ in range(self.PARTICLE_COUNT):
@@ -423,27 +482,20 @@ class EmotionDetectionNode(LifecycleNode):
             p.update()
             p.draw(frame)
 
-    # ── Procesamiento de imagen ───────────────────────────────────────────────
-
     def image_callback(self, msg):
-        if not self._active or not rclpy.ok():
-            return
-
+        if not self._active or not rclpy.ok(): return
         self._frame_count += 1
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         except Exception as e:
-            self.get_logger().error(f'Error cv_bridge: {e}')
-            return
+            self.get_logger().error(f'Error cv_bridge: {e}'); return
 
         frame = cv2.flip(frame, 0)
-
         if self._frame_count % self._INFER_EVERY == 0:
             with self._lock:
                 self._latest_frame = frame.copy()
 
         vis = frame.copy()
-
         with self._lock:
             label = self._result_label
             box   = self._result_box
@@ -459,56 +511,44 @@ class EmotionDetectionNode(LifecycleNode):
                 dy = corner_len if py == y_min else -corner_len
                 cv2.line(vis, (px, py), (px + dx, py), accent, 4)
                 cv2.line(vis, (px, py), (px, py + dy), accent, 4)
-
-            (tw, th), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_DUPLEX, 1.1, 2)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 1.1, 2)
             lx, ly = x_min, max(y_min - 12, 30)
             ov = vis.copy()
-            cv2.rectangle(ov, (lx - 4, ly - th - 8),
-                          (lx + tw + 8, ly + 6), accent, cv2.FILLED)
+            cv2.rectangle(ov, (lx - 4, ly - th - 8), (lx + tw + 8, ly + 6), accent, cv2.FILLED)
             cv2.addWeighted(ov, 0.55, vis, 0.45, 0, vis)
-            cv2.putText(vis, label, (lx, ly),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.1,
+            cv2.putText(vis, label, (lx, ly), cv2.FONT_HERSHEY_DUPLEX, 1.1,
                         (255, 255, 255), 2, cv2.LINE_AA)
 
         if label != "..." and label != self._current_emotion:
             self._rebuild_particles(label, vis.shape[1], vis.shape[0])
-
         if self._current_emotion:
             self._draw_emoji_rain(vis)
 
         if label and label != "...":
             accent   = EMOTION_COLORS.get(label, (150, 150, 150))
             big_text = label.upper()
-            (bw, bh), _ = cv2.getTextSize(
-                big_text, cv2.FONT_HERSHEY_DUPLEX, 1.6, 3)
+            (bw, bh), _ = cv2.getTextSize(big_text, cv2.FONT_HERSHEY_DUPLEX, 1.6, 3)
             bx = (vis.shape[1] - bw) // 2
             by = vis.shape[0] - 18
             cv2.putText(vis, big_text, (bx + 2, by + 2),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.6,
-                        (0, 0, 0), 4, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_DUPLEX, 1.6, (0, 0, 0), 4, cv2.LINE_AA)
             cv2.putText(vis, big_text, (bx, by),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.6,
-                        accent, 3, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_DUPLEX, 1.6, accent, 3, cv2.LINE_AA)
 
         vis = cv2.resize(vis, (800, 480))
-
         if self._active and rclpy.ok():
             cv2.imshow(self.window_name, vis)
             cv2.waitKey(1)
-
-    # ── Hilo de inferencia ────────────────────────────────────────────────────
 
     def _infer_loop(self):
         while self._active and rclpy.ok():
             frame = None
             with self._lock:
                 if self._latest_frame is not None:
-                    frame          = self._latest_frame
+                    frame = self._latest_frame
                     self._latest_frame = None
             if frame is None:
-                time.sleep(0.01)
-                continue
+                time.sleep(0.01); continue
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results   = self.face_mesh.process(rgb_frame)
@@ -524,23 +564,18 @@ class EmotionDetectionNode(LifecycleNode):
                     x_max  = min(w, int(max(x_coords)) + expand)
                     y_max  = min(h, int(max(y_coords)) + expand)
                     fc = rgb_frame[y_min:y_max, x_min:x_max]
-                    if fc.size == 0:
-                        continue
+                    if fc.size == 0: continue
                     roi = cv2.resize(fc, (48, 48)).astype(np.float32) / 255.0
                     roi = np.expand_dims(roi, axis=0)
-                    if not self._active:
-                        break
-
+                    if not self._active: break
                     preds       = self.model(roi, training=False)
                     preds_array = np.array(preds[0])
                     preds_array[4] *= 4.0
-
                     emotion_list = EMOTIONS_EN if self.is_english else EMOTIONS_ES
                     probs_str = " | ".join(
                         f"{emotion_list[i]}:{preds_array[i]:.2f}"
                         for i in range(len(emotion_list)))
                     self.get_logger().info(f'Probs: {probs_str}')
-
                     idx = int(np.argmax(preds_array))
                     with self._lock:
                         self._result_label = emotion_list[idx]
@@ -551,9 +586,6 @@ class EmotionDetectionNode(LifecycleNode):
                     self._result_box = None
 
 
-# =============================================================================
-#  MAIN
-# =============================================================================
 def main(args=None):
     rclpy.init(args=args)
     node = EmotionDetectionNode()
