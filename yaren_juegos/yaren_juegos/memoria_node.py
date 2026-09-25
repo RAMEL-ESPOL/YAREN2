@@ -464,6 +464,9 @@ class MemoriaNode(LifecycleNode):
     def run_display_main_thread(self):
         win_name = 'YAREN2 - Juego de Memoria'
         
+        # Importamos subprocess aquí (o puedes ponerlo al inicio del archivo con los demás imports)
+        import subprocess 
+        
         while rclpy.ok():
             # Esperar activación
             while not self._active and rclpy.ok():
@@ -478,6 +481,19 @@ class MemoriaNode(LifecycleNode):
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_click)
+            
+            # Forzar foco con xdotool después de un pequeño delay para que la ventana exista
+            def _force_focus():
+                time.sleep(0.5)  # esperar que OpenCV registre la ventana en X11
+                try:
+                    subprocess.run(
+                        ["xdotool", "search", "--name", win_name, "windowactivate", "--sync", "windowfocus"],
+                        check=False, capture_output=True
+                    )
+                except FileNotFoundError:
+                    pass  # xdotool no instalado, no crítico
+                    
+            threading.Thread(target=_force_focus, daemon=True).start()
             
             # Resetear estado del juego
             self._reset_game()

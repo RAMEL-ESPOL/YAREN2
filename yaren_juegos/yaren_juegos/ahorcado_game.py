@@ -759,7 +759,19 @@ class AhorcadoNode(LifecycleNode):
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_mouse)
-
+            # Forzar foco
+import subprocess
+def _force_focus():
+    time.sleep(0.5)
+    try:
+        subprocess.run(
+            ["xdotool", "search", "--name", win_name,
+             "windowactivate", "--sync", "windowfocus"],
+            check=False, capture_output=True
+        )
+    except FileNotFoundError:
+        pass
+threading.Thread(target=_force_focus, daemon=True).start()
             self._reset_game_state()
             self.screen = 'intro'
             self._build_intro_buttons()

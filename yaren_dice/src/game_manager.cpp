@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cmath>
+#include <algorithm>
 
 using namespace std::chrono_literals;
 
@@ -49,6 +50,12 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
     expected_sequence_length_ = 1;
     is_english_ = false;
     game_initialized_ = false;  
+
+    // NUEVAS VARIABLES
+    pending_detection_start_time_ = 0.0;
+    has_pending_robot_pose_ = false;
+    robot_moving_ = false;
+    robot_move_end_time_ = 0.0;
 
     // Lógica condicional de carga y vidas
     if (use_help_) {
@@ -109,7 +116,7 @@ void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedP
         game_initialized_ = true;
         game_start_time_  = std::chrono::steady_clock::now();
         select_challenge();
-        start_detection();
+        // No llamamos a start_detection aquí, se activará cuando el audio termine
     }
     else
     {
@@ -124,8 +131,9 @@ void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedP
         {
             waiting_for_pose_  = false;
             detection_ongoing_ = false;
+            robot_moving_ = false;
+            robot_move_end_time_ = 0.0;
             select_challenge();
-            start_detection();
         }
     }
 }
@@ -207,6 +215,12 @@ void YarenGameManager::move_robot(const std::vector<double>& raw_pose)
 
     msg.points.push_back(point);
     trajectory_publisher_->publish(msg);
+    
+    // NUEVO: marcar que el robot está en movimiento
+    robot_moving_ = true;
+    robot_move_end_time_ = get_current_time() + robot_move_duration_;
+    
+    RCLCPP_INFO(this->get_logger(), "🤖 Robot moving to pose. Will finish at %.2f", robot_move_end_time_);
 }
 
 void YarenGameManager::announce_level_up(GameLevel new_level)
@@ -228,6 +242,12 @@ void YarenGameManager::announce_level_up(GameLevel new_level)
 
 void YarenGameManager::select_challenge()
 {
+    // NUEVO: limpiar pose pendiente y resetear estado del robot al inicio de cada desafío
+    has_pending_robot_pose_ = false;
+    pending_robot_pose_.clear();
+    robot_moving_ = false;
+    robot_move_end_time_ = 0.0;
+
     std::vector<YAML::Node>* current_challenges = nullptr;
     
     if (use_help_) 
@@ -255,10 +275,12 @@ void YarenGameManager::select_challenge()
     int random_index = rand() % current_challenges->size();
     YAML::Node selected_challenge = (*current_challenges)[random_index];
     
-    // Mover al robot si estamos en el modo 'con ayuda'
+    // NUEVO: en lugar de mover el robot aquí, guardamos la pose pendiente.
+    // El robot se moverá cuando termine el audio (en handle_audio_status).
     if (use_help_ && selected_challenge["robot_pose"]) {
-        std::vector<double> raw_pose = selected_challenge["robot_pose"].as<std::vector<double>>();
-        move_robot(raw_pose);
+        pending_robot_pose_ = selected_challenge["robot_pose"].as<std::vector<double>>();
+        has_pending_robot_pose_ = true;
+        RCLCPP_INFO(this->get_logger(), "📋 Pending robot pose saved. Will move after audio finishes.");
     }
 
     std::string challenge_text;
@@ -293,27 +315,82 @@ void YarenGameManager::select_challenge()
         challenge_text = selected_challenge[text_key].as<std::string>();
     }
 
+    // Publicar el texto de la orden (esto activará el TTS)
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
     feedback_msg->data = challenge_text;
     feedback_publisher_->publish(std::move(feedback_msg));
+    
+    RCLCPP_INFO(this->get_logger(), "🗣️ Challenge text sent. Waiting for audio to finish...");
 }
 
 void YarenGameManager::handle_audio_status(const std_msgs::msg::Bool::SharedPtr msg)
 {
     audio_playing_ = msg->data;
-    if (!audio_playing_ && !detection_ongoing_) start_detection();
+    
+    if (!audio_playing_ && !detection_ongoing_ && !robot_moving_)
+    {
+        // Audio terminó → mover el robot AHORA (con un pequeño delay para asegurar)
+        if (use_help_ && has_pending_robot_pose_)
+        {
+            RCLCPP_INFO(this->get_logger(), "🔊 Audio finished. Waiting %.1fs before moving robot...", audio_end_delay_);
+            
+            // Esperar para asegurar que el audio terminó completamente
+            std::this_thread::sleep_for(std::chrono::milliseconds(
+                static_cast<int>(audio_end_delay_ * 1000)));
+            
+            RCLCPP_INFO(this->get_logger(), "🤖 Moving robot now...");
+            
+            // Mover el robot - esto activa robot_moving_ = true
+            move_robot(pending_robot_pose_);
+            has_pending_robot_pose_ = false;
+            pending_robot_pose_.clear();
+            
+            // NO activar detección aquí - se activará cuando el robot termine
+        }
+        else if (!use_help_)
+        {
+            // Modo sin ayuda: no hay robot que mover, activar detección inmediatamente
+            RCLCPP_INFO(this->get_logger(), "🔊 Audio finished. Starting detection now...");
+            start_detection();
+        }
+    }
+    else if (audio_playing_)
+    {
+        // Si vuelve a empezar el audio, cancelar cualquier detección pendiente
+        pending_detection_start_time_ = 0.0;
+    }
 }
 
 void YarenGameManager::start_detection()
 {
     detection_ongoing_ = true;
     waiting_for_pose_ = true;
-    challenge_timeout_ = get_current_time() + 20.0;
+    challenge_timeout_ = get_current_time() + challenge_timeout_seconds_;
+    
+    RCLCPP_INFO(this->get_logger(), "👁️ Detection STARTED. Waiting for user pose...");
 }
 
 void YarenGameManager::check_challenge_timeout()
 {
     std::lock_guard<std::mutex> lock(language_mutex_);
+    
+    // NUEVO: Verificar si el robot terminó de moverse
+    if (robot_moving_ && get_current_time() >= robot_move_end_time_)
+    {
+        robot_moving_ = false;
+        
+        RCLCPP_INFO(this->get_logger(), "✅ Robot finished moving. Waiting %.1fs for stabilization...", 
+                    detection_delay_after_move_);
+        
+        // Esperar un poco más para que el robot se estabilice
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            static_cast<int>(detection_delay_after_move_ * 1000)));
+        
+        RCLCPP_INFO(this->get_logger(), "👁️ Starting detection after robot movement...");
+        start_detection();
+    }
+    
+    // Verificar timeout del desafío (solo si la detección ya está activa)
     if (!waiting_for_pose_ || challenge_timeout_ == 0.0) return;
     
     if (get_current_time() > challenge_timeout_)
@@ -359,7 +436,7 @@ void YarenGameManager::handle_pose_result(const yaren_interfaces::msg::PoseResul
                 feedback_msg->data = is_english_ ? "Good! Now the next pose in the sequence." : "¡Bien! Ahora la siguiente pose de la secuencia.";
                 feedback_publisher_->publish(std::move(feedback_msg));
                 
-                challenge_timeout_ = get_current_time() + 20.0;
+                challenge_timeout_ = get_current_time() + challenge_timeout_seconds_;
             }
         }
     }
@@ -393,6 +470,9 @@ void YarenGameManager::handle_successful_challenge()
     detection_ongoing_ = false;
     correct_pose_start_time_ = 0.0;
     current_sequence_step_ = 0;
+    pending_detection_start_time_ = 0.0;
+    robot_moving_ = false;
+    robot_move_end_time_ = 0.0;
     score_++;
     
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
@@ -446,6 +526,9 @@ void YarenGameManager::handle_failed_challenge(const std::string& feedback_text)
     detection_ongoing_ = false;
     correct_pose_start_time_ = 0.0;
     current_sequence_step_ = 0;
+    pending_detection_start_time_ = 0.0;
+    robot_moving_ = false;
+    robot_move_end_time_ = 0.0;
     lives_--;
 
     if (lives_ <= 0)
