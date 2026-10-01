@@ -6,8 +6,11 @@ find_package(rclcpp REQUIRED)
 find_package(yaren_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(trajectory_msgs REQUIRED)   # <-- AGREGAR
+find_package(trajectory_msgs REQUIRED)
 find_package(YAML-CPP REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(rclpy REQUIRED)
+find_package(control_msgs REQUIRED)
 
 install(PROGRAMS
   scripts/body_landmarks_visual.py
@@ -17,25 +20,42 @@ install(PROGRAMS
 DESTINATION lib/${PROJECT_NAME}
 )
 
+include_directories(
+  include
+  ${rclcpp_INCLUDE_DIRS}
+)
+
+# ---------------------------------------------------
+# GAME MANAGER
+# ---------------------------------------------------
 add_executable(game_manager src/game_manager.cpp)
+
+target_include_directories(game_manager PUBLIC 
+  ${OpenCV_INCLUDE_DIRS}
+  ${YAML_CPP_INCLUDE_DIRS}
+)
+
 ament_target_dependencies(game_manager 
   rclcpp 
   yaren_interfaces 
   std_msgs
-  trajectory_msgs    # <-- AGREGAR
+  trajectory_msgs
 )
-target_link_libraries(game_manager ${YAML_CPP_LIBRARIES})
-target_include_directories(game_manager PRIVATE ${YAML_CPP_INCLUDE_DIRS})
 
+target_link_libraries(game_manager 
+  ${YAML_CPP_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+# ---------------------------------------------------
+# POSE DETECTOR
+# ---------------------------------------------------
 add_executable(pose_detector src/pose_detector.cpp)
 ament_target_dependencies(pose_detector 
   rclcpp 
   yaren_interfaces 
   std_msgs
 )
-
-find_package(rclpy REQUIRED)
-find_package(control_msgs REQUIRED)
 
 install(DIRECTORY
   config
@@ -53,11 +73,6 @@ install(TARGETS
 DESTINATION lib/${PROJECT_NAME}
 )
 
-include_directories(
-  include
-  ${rclcpp_INCLUDE_DIRS}
-)
-
 ament_export_dependencies(
   rclpy
   rclcpp_action
@@ -65,8 +80,9 @@ ament_export_dependencies(
   sensor_msgs
   yaren_interfaces
   std_msgs
-  trajectory_msgs    # <-- AGREGAR
+  trajectory_msgs
   YAML-CPP
+  OpenCV
 )
 
 ament_export_include_directories(include)

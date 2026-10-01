@@ -4,31 +4,36 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cmath>
 #include <algorithm>
+#include <sstream>
 
 using namespace std::chrono_literals;
 
 YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
 {
-    // Declarar y leer el parámetro del modo de juego
     this->declare_parameter("use_help", false);
     use_help_ = this->get_parameter("use_help").as_bool();
 
+    this->declare_parameter("is_session", false);
+    is_session_ = this->get_parameter("is_session").as_bool();
+
     RCLCPP_INFO(this->get_logger(), "Waiting 2 seconds for other nodes to initialize...");
     std::this_thread::sleep_for(std::chrono::seconds(2));
-    RCLCPP_INFO(this->get_logger(), "Starting game manager... Modo Ayuda: %s", use_help_ ? "ACTIVADO" : "DESACTIVADO");
+    RCLCPP_INFO(this->get_logger(), "Starting game manager... Modo Ayuda: %s | Modo Sesión: %s", 
+                use_help_ ? "ACTIVADO" : "DESACTIVADO", is_session_ ? "ACTIVADO" : "DESACTIVADO");
     
     feedback_publisher_ = this->create_publisher<std_msgs::msg::String>("/game_feedback", 10);
     current_challenge_publisher_ = this->create_publisher<std_msgs::msg::Int16>("/current_challenge", 10);
-    
-    // Publisher para mover el robot
-    trajectory_publisher_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
-        "/joint_trajectory_controller/joint_trajectory", 10);
+    trajectory_publisher_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>("/joint_trajectory_controller/joint_trajectory", 10);
+    ui_state_publisher_ = this->create_publisher<std_msgs::msg::String>("/yaren/ui_state", 10);
     
     pose_result_subscription_ = this->create_subscription<yaren_interfaces::msg::PoseResult>(
         "/pose_result", 10, std::bind(&YarenGameManager::handle_pose_result, this, std::placeholders::_1));
     
     audio_status_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
         "/audio_playing", 10, std::bind(&YarenGameManager::handle_audio_status, this, std::placeholders::_1));
+
+    emotion_subscription_ = this->create_subscription<std_msgs::msg::Int16>(
+        "/emotion", 10, std::bind(&YarenGameManager::handle_emotion, this, std::placeholders::_1));
 
     rclcpp::QoS qos_profile(1);
     qos_profile.transient_local();
@@ -50,16 +55,23 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
     expected_sequence_length_ = 1;
     is_english_ = false;
     game_initialized_ = false;  
+    session_aborted_ = false;
 
-    // NUEVAS VARIABLES
     pending_detection_start_time_ = 0.0;
     has_pending_robot_pose_ = false;
     robot_moving_ = false;
     robot_move_end_time_ = 0.0;
 
-    // Lógica condicional de carga y vidas
-    if (use_help_) {
-        lives_ = 5;
+    total_attempts_ = 0;
+    successful_attempts_ = 0;
+    total_emotion_readings_ = 0;
+    emotion_counts_[3] = 0;
+    emotion_counts_[4] = 0;
+    emotion_counts_[5] = 0;
+    emotion_counts_[6] = 0;
+
+    if (use_help_ || is_session_) {
+        lives_ = 5; 
         load_challenges_robot_from_yaml();
     } else {
         lives_ = 3;
@@ -68,37 +80,25 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
         load_advanced_challenges_from_yaml();
     }
     
-    victory_texts_es_ = {
-        " ¡Muy bien! Has completado el desafío. Tu puntuación es ",
-        " Increíble, has superado el desafío. Tu puntaje actual es ",
-        " ¡Fantástico! Has logrado el desafío. Tu puntuación es "
-    };
-
-    victory_texts_en_ = {
-        " Very good! You completed the challenge. Your score is ",
-        " Incredible, you passed the challenge. Your current score is ",
-        " Fantastic! You achieved the challenge. Your score is "
-    };
-
-    defeat_texts_es_ = {
-        " ¡Oh no! Has fallado el desafío, no te preocupes, puedes intentarlo de nuevo. Tienes ",
-        " Desafortunadamente, no has logrado el desafío, se que a la próxima lo harás mejor. Actualmente te quedan ",
-        " No te preocupes puedes intentarlo de nuevo. Te quedan "
-    };
-
-    defeat_texts_en_ = {
-        " Oh no! You failed the challenge, don't worry, you can try again. You have ",
-        " Unfortunately, you didn't achieve the challenge, I know you'll do better next time. Currently you have ",
-        " Don't worry, you can try again. You have "
-    };
+    victory_texts_es_ = {" ¡Muy bien! Has completado el desafío. Tu puntuación es ", " Increíble, has superado el desafío. Tu puntaje actual es ", " ¡Fantástico! Has logrado el desafío. Tu puntuación es "};
+    victory_texts_en_ = {" Very good! You completed the challenge. Your score is ", " Incredible, you passed the challenge. Your current score is ", " Fantastic! You achieved the challenge. Your score is "};
+    defeat_texts_es_ = {" ¡Oh no! Has fallado el desafío, no te preocupes, puedes intentarlo de nuevo. Tienes ", " Desafortunadamente, no has logrado el desafío, se que a la próxima lo harás mejor. Actualmente te quedan ", " No te preocupes puedes intentarlo de nuevo. Te quedan "};
+    defeat_texts_en_ = {" Oh no! You failed the challenge, don't worry, you can try again. You have ", " Unfortunately, you didn't achieve the challenge, I know you'll do better next time. Currently you have ", " Don't worry, you can try again. You have "};
     
     challenge_timer_ = this->create_wall_timer(
         500ms, std::bind(&YarenGameManager::check_challenge_timeout, this));
 
-    // Despierta el detector de posturas en Python
     std::thread([]() {
         std::system("ros2 run yaren_dice pose_detector &");
     }).detach();
+}
+
+void YarenGameManager::handle_emotion(const std_msgs::msg::Int16::SharedPtr msg)
+{
+    if (game_initialized_) {
+        emotion_counts_[msg->data]++;
+        total_emotion_readings_++;
+    }
 }
 
 void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedPtr msg)
@@ -109,24 +109,25 @@ void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedP
     if (game_initialized_ && new_is_english == is_english_) return;
 
     is_english_ = new_is_english;
-    RCLCPP_INFO(this->get_logger(), "Game manager language updated to: %s", is_english_ ? "English" : "Español");
 
     if (!game_initialized_)
     {
         game_initialized_ = true;
+        show_intro_screen(); // Muestra introducción y bloquea hasta dar clic
+        
+        if (is_session_) {
+            show_control_panel(); // Lanza panel de interrupción para el especialista
+        }
+        
         game_start_time_  = std::chrono::steady_clock::now();
         select_challenge();
-        // No llamamos a start_detection aquí, se activará cuando el audio termine
     }
     else
     {
-        auto elapsed = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - game_start_time_).count();
-            
+        auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - game_start_time_).count();
         if (elapsed < 3.0) return;
 
-        // Reset solo si no ha avanzado nada
-        int start_lives = use_help_ ? 5 : 3;
+        int start_lives = (use_help_ || is_session_) ? 5 : 3;
         if (score_ == 0 && lives_ == start_lives)
         {
             waiting_for_pose_  = false;
@@ -138,61 +139,171 @@ void YarenGameManager::handle_language_change(const std_msgs::msg::Bool::SharedP
     }
 }
 
-// ---------------- CARGA DE YAMLS ----------------
-
-void YarenGameManager::load_challenges_robot_from_yaml()
+void YarenGameManager::show_intro_screen()
 {
+    std::string win_name = "Yaren Dice - Intro";
+    cv::namedWindow(win_name, cv::WINDOW_NORMAL);
+    cv::setWindowProperty(win_name, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+    cv::setWindowProperty(win_name, cv::WND_PROP_TOPMOST, 1);
+
+    IntroData idata {false, cv::Rect(300, 370, 200, 52)};
+
+    cv::setMouseCallback(win_name, [](int event, int x, int y, int, void* userdata) {
+        if (event == cv::EVENT_LBUTTONDOWN) {
+            IntroData* data = static_cast<IntroData*>(userdata);
+            if (data->btn.contains(cv::Point(x, y))) {
+                data->clicked = true;
+            }
+        }
+    }, &idata);
+
+    std::system("xdotool search --sync --name 'Yaren Dice - Intro' windowactivate --sync windowraise 2>/dev/null &");
+
+    cv::Mat frame(480, 800, CV_8UC3, cv::Scalar(28, 12, 18));
+    
+    std::string title;
+    std::vector<std::string> desc_lines;
+
+    if (is_session_) {
+        title = is_english_ ? "CLINICAL SESSION" : "SESION CLINICA";
+        desc_lines = is_english_ ? 
+            std::vector<std::string>{"Complete exactly 10 poses.", "Your facial expressions and concentration", "will be recorded for the clinical report."} :
+            std::vector<std::string>{"Completa exactamente 10 poses.", "Tus expresiones faciales y concentracion", "seran evaluadas para el reporte clinico."};
+    } else if (use_help_) {
+        title = is_english_ ? "YAREN SAYS - WITH HELP" : "YAREN DICE - CON AYUDA";
+        desc_lines = is_english_ ? 
+            std::vector<std::string>{"Yaren will tell you and SHOW you the pose.", "Copy the robot's movement.", "You have 5 lives. Good luck!"} :
+            std::vector<std::string>{"Yaren te dira y MOSTRARA la pose.", "Imita el movimiento del robot.", "Tienes 5 vidas. Buena suerte!"};
+    } else {
+        title = is_english_ ? "YAREN SAYS - NO HELP" : "YAREN DICE - SIN AYUDA";
+        desc_lines = is_english_ ? 
+            std::vector<std::string>{"Listen carefully to Yaren's instructions.", "The robot will NOT move.", "You have 3 lives and 3 difficulty levels."} :
+            std::vector<std::string>{"Escucha atentamente las instrucciones.", "El robot NO se movera.", "Tienes 3 vidas y 3 niveles de dificultad."};
+    }
+
+    while (rclcpp::ok() && !idata.clicked) {
+        frame.setTo(cv::Scalar(28, 12, 18));
+        
+        cv::rectangle(frame, cv::Rect(100, 50, 600, 390), cv::Scalar(46, 22, 30), cv::FILLED);
+        cv::rectangle(frame, cv::Rect(100, 50, 600, 390), cv::Scalar(220, 80, 180), 2);
+
+        int bl = 0;
+        cv::Size ts = cv::getTextSize(title, cv::FONT_HERSHEY_DUPLEX, 1.0, 2, &bl);
+        cv::putText(frame, title, cv::Point((800 - ts.width)/2, 120), cv::FONT_HERSHEY_DUPLEX, 1.0, cv::Scalar(255, 235, 240), 2, cv::LINE_AA);
+
+        int y_offset = 200;
+        for (const auto& line : desc_lines) {
+            cv::Size ls = cv::getTextSize(line, cv::FONT_HERSHEY_SIMPLEX, 0.7, 1, &bl);
+            cv::putText(frame, line, cv::Point((800 - ls.width)/2, y_offset), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(190, 150, 160), 1, cv::LINE_AA);
+            y_offset += 35;
+        }
+
+        cv::rectangle(frame, idata.btn, cv::Scalar(160, 40, 100), cv::FILLED);
+        cv::rectangle(frame, idata.btn, cv::Scalar(220, 80, 180), 2);
+        
+        std::string btn_lbl = is_english_ ? "START" : "COMENZAR";
+        cv::Size bs = cv::getTextSize(btn_lbl, cv::FONT_HERSHEY_DUPLEX, 0.8, 2, &bl);
+        cv::putText(frame, btn_lbl, cv::Point(idata.btn.x + (idata.btn.width - bs.width)/2, idata.btn.y + 34), cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
+
+        cv::imshow(win_name, frame);
+        int key = cv::waitKey(16) & 0xFF;
+        if (key == 27) { // ESC para salir si es necesario
+            auto msg = std::make_unique<std_msgs::msg::String>();
+            msg->data = "idle";
+            ui_state_publisher_->publish(std::move(msg));
+            rclcpp::shutdown();
+            break;
+        }
+    }
+    cv::destroyWindow(win_name);
+    cv::waitKey(1);
+}
+
+void YarenGameManager::show_control_panel()
+{
+    std::thread([this]() {
+        std::string win_name = "Control Panel";
+        cv::namedWindow(win_name, cv::WINDOW_NORMAL);
+        cv::resizeWindow(win_name, 320, 140);
+        cv::moveWindow(win_name, 0, 0); // Panel flotante en la esquina superior izquierda
+        cv::setWindowProperty(win_name, cv::WND_PROP_TOPMOST, 1);
+
+        IntroData idata {false, cv::Rect(40, 35, 240, 60)};
+
+        cv::setMouseCallback(win_name, [](int event, int x, int y, int, void* userdata) {
+            if (event == cv::EVENT_LBUTTONDOWN) {
+                IntroData* data = static_cast<IntroData*>(userdata);
+                if (data->btn.contains(cv::Point(x, y))) {
+                    data->clicked = true;
+                }
+            }
+        }, &idata);
+
+        cv::Mat frame(140, 320, CV_8UC3, cv::Scalar(35, 35, 45));
+        cv::rectangle(frame, idata.btn, cv::Scalar(60, 40, 220), cv::FILLED);
+        cv::rectangle(frame, idata.btn, cv::Scalar(100, 100, 255), 2, cv::LINE_AA);
+        
+        std::string txt = is_english_ ? "STOP SESSION NOW" : "DETENER SESION";
+        int bl;
+        cv::Size ts = cv::getTextSize(txt, cv::FONT_HERSHEY_DUPLEX, 0.65, 2, &bl);
+        cv::putText(frame, txt, cv::Point(idata.btn.x + (idata.btn.width - ts.width)/2, idata.btn.y + 38), cv::FONT_HERSHEY_DUPLEX, 0.65, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
+
+        while (rclcpp::ok() && !session_aborted_.load()) {
+            cv::imshow(win_name, frame);
+            int key = cv::waitKey(50) & 0xFF;
+            
+            // Si hacen clic en detener o presionan ESC en la ventanita
+            if (idata.clicked || key == 27) {
+                RCLCPP_INFO(this->get_logger(), "Sesión interrumpida manualmente por el especialista.");
+                session_aborted_ = true; 
+                break;
+            }
+        }
+        cv::destroyWindow(win_name);
+        cv::waitKey(1);
+    }).detach();
+}
+
+// ---------------- CARGA DE YAMLS ----------------
+void YarenGameManager::load_challenges_robot_from_yaml() {
     try {
         std::string yaml_path = ament_index_cpp::get_package_share_directory("yaren_dice") + "/config/challenges_robot.yaml";
         YAML::Node config = YAML::LoadFile(yaml_path);
         if (config["challenges"]) {
             for (const auto& challenge : config["challenges"]) robot_challenges_.push_back(challenge);
         }
-    } catch (const YAML::Exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what());
-    }
+    } catch (const YAML::Exception& e) { RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what()); }
 }
 
-void YarenGameManager::load_challenges_from_yaml()
-{
+void YarenGameManager::load_challenges_from_yaml() {
     try {
         std::string yaml_path = ament_index_cpp::get_package_share_directory("yaren_dice") + "/config/challenges.yaml";
         YAML::Node config = YAML::LoadFile(yaml_path);
         if (config["challenges"]) {
             for (const auto& challenge : config["challenges"]) challenges_.push_back(challenge);
         }
-    } catch (const YAML::Exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what());
-    }
+    } catch (const YAML::Exception& e) { RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what()); }
 }
 
-void YarenGameManager::load_intermediate_challenges_from_yaml()
-{
+void YarenGameManager::load_intermediate_challenges_from_yaml() {
     try {
         std::string yaml_path = ament_index_cpp::get_package_share_directory("yaren_dice") + "/config/intermediate_challenges.yaml";
         YAML::Node config = YAML::LoadFile(yaml_path);
         if (config["intermediate_challenges"]) {
             for (const auto& challenge : config["intermediate_challenges"]) intermediate_challenges_.push_back(challenge);
         }
-    } catch (const YAML::Exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what());
-    }
+    } catch (const YAML::Exception& e) { RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what()); }
 }
 
-void YarenGameManager::load_advanced_challenges_from_yaml()
-{
+void YarenGameManager::load_advanced_challenges_from_yaml() {
     try {
         std::string yaml_path = ament_index_cpp::get_package_share_directory("yaren_dice") + "/config/advanced_challenges.yaml";
         YAML::Node config = YAML::LoadFile(yaml_path);
         if (config["advanced_challenges"]) {
             for (const auto& challenge : config["advanced_challenges"]) advanced_challenges_.push_back(challenge);
         }
-    } catch (const YAML::Exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what());
-    }
+    } catch (const YAML::Exception& e) { RCLCPP_ERROR(this->get_logger(), "Error YAML: %s", e.what()); }
 }
-
-// ---------------- FIN CARGA DE YAMLS ----------------
 
 void YarenGameManager::move_robot(const std::vector<double>& raw_pose)
 {
@@ -206,9 +317,7 @@ void YarenGameManager::move_robot(const std::vector<double>& raw_pose)
     };
 
     trajectory_msgs::msg::JointTrajectoryPoint point;
-    for (size_t i = 0; i < 12; ++i) {
-        point.positions.push_back(raw_pose[i]);  // sin conversión
-    }
+    for (size_t i = 0; i < 12; ++i) point.positions.push_back(raw_pose[i]);
 
     point.time_from_start.sec = 2;
     point.time_from_start.nanosec = 0;
@@ -216,11 +325,8 @@ void YarenGameManager::move_robot(const std::vector<double>& raw_pose)
     msg.points.push_back(point);
     trajectory_publisher_->publish(msg);
     
-    // NUEVO: marcar que el robot está en movimiento
     robot_moving_ = true;
     robot_move_end_time_ = get_current_time() + robot_move_duration_;
-    
-    RCLCPP_INFO(this->get_logger(), "🤖 Robot moving to pose. Will finish at %.2f", robot_move_end_time_);
 }
 
 void YarenGameManager::announce_level_up(GameLevel new_level)
@@ -242,7 +348,6 @@ void YarenGameManager::announce_level_up(GameLevel new_level)
 
 void YarenGameManager::select_challenge()
 {
-    // NUEVO: limpiar pose pendiente y resetear estado del robot al inicio de cada desafío
     has_pending_robot_pose_ = false;
     pending_robot_pose_.clear();
     robot_moving_ = false;
@@ -250,7 +355,7 @@ void YarenGameManager::select_challenge()
 
     std::vector<YAML::Node>* current_challenges = nullptr;
     
-    if (use_help_) 
+    if (use_help_ || is_session_) 
     {
         current_challenges = &robot_challenges_;
         expected_sequence_length_ = 1;
@@ -275,18 +380,15 @@ void YarenGameManager::select_challenge()
     int random_index = rand() % current_challenges->size();
     YAML::Node selected_challenge = (*current_challenges)[random_index];
     
-    // NUEVO: en lugar de mover el robot aquí, guardamos la pose pendiente.
-    // El robot se moverá cuando termine el audio (en handle_audio_status).
-    if (use_help_ && selected_challenge["robot_pose"]) {
+    if ((use_help_ || is_session_) && selected_challenge["robot_pose"]) {
         pending_robot_pose_ = selected_challenge["robot_pose"].as<std::vector<double>>();
         has_pending_robot_pose_ = true;
-        RCLCPP_INFO(this->get_logger(), "📋 Pending robot pose saved. Will move after audio finishes.");
     }
 
     std::string challenge_text;
     std::string text_key = (is_english_ && selected_challenge["text_en"]) ? "text_en" : "text";
 
-    if (use_help_ || current_level_ == GameLevel::BASIC)
+    if (use_help_ || is_session_ || current_level_ == GameLevel::BASIC)
     {
         current_challenge_ = selected_challenge["id"].as<int16_t>();
         current_sequence_.clear();
@@ -315,12 +417,9 @@ void YarenGameManager::select_challenge()
         challenge_text = selected_challenge[text_key].as<std::string>();
     }
 
-    // Publicar el texto de la orden (esto activará el TTS)
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
     feedback_msg->data = challenge_text;
     feedback_publisher_->publish(std::move(feedback_msg));
-    
-    RCLCPP_INFO(this->get_logger(), "🗣️ Challenge text sent. Waiting for audio to finish...");
 }
 
 void YarenGameManager::handle_audio_status(const std_msgs::msg::Bool::SharedPtr msg)
@@ -329,34 +428,21 @@ void YarenGameManager::handle_audio_status(const std_msgs::msg::Bool::SharedPtr 
     
     if (!audio_playing_ && !detection_ongoing_ && !robot_moving_)
     {
-        // Audio terminó → mover el robot AHORA (con un pequeño delay para asegurar)
-        if (use_help_ && has_pending_robot_pose_)
+        if ((use_help_ || is_session_) && has_pending_robot_pose_)
         {
-            RCLCPP_INFO(this->get_logger(), "🔊 Audio finished. Waiting %.1fs before moving robot...", audio_end_delay_);
-            
-            // Esperar para asegurar que el audio terminó completamente
             std::this_thread::sleep_for(std::chrono::milliseconds(
                 static_cast<int>(audio_end_delay_ * 1000)));
-            
-            RCLCPP_INFO(this->get_logger(), "🤖 Moving robot now...");
-            
-            // Mover el robot - esto activa robot_moving_ = true
             move_robot(pending_robot_pose_);
             has_pending_robot_pose_ = false;
             pending_robot_pose_.clear();
-            
-            // NO activar detección aquí - se activará cuando el robot termine
         }
-        else if (!use_help_)
+        else if (!use_help_ && !is_session_)
         {
-            // Modo sin ayuda: no hay robot que mover, activar detección inmediatamente
-            RCLCPP_INFO(this->get_logger(), "🔊 Audio finished. Starting detection now...");
             start_detection();
         }
     }
     else if (audio_playing_)
     {
-        // Si vuelve a empezar el audio, cancelar cualquier detección pendiente
         pending_detection_start_time_ = 0.0;
     }
 }
@@ -366,31 +452,27 @@ void YarenGameManager::start_detection()
     detection_ongoing_ = true;
     waiting_for_pose_ = true;
     challenge_timeout_ = get_current_time() + challenge_timeout_seconds_;
-    
-    RCLCPP_INFO(this->get_logger(), "👁️ Detection STARTED. Waiting for user pose...");
 }
 
 void YarenGameManager::check_challenge_timeout()
 {
     std::lock_guard<std::mutex> lock(language_mutex_);
+
+    // Capturamos si el especialista abortó la sesión vía el panel de control
+    if (session_aborted_.load()) {
+        session_aborted_ = false; // Resetear bandera para no entrar en bucle
+        end_game();
+        return;
+    }
     
-    // NUEVO: Verificar si el robot terminó de moverse
     if (robot_moving_ && get_current_time() >= robot_move_end_time_)
     {
         robot_moving_ = false;
-        
-        RCLCPP_INFO(this->get_logger(), "✅ Robot finished moving. Waiting %.1fs for stabilization...", 
-                    detection_delay_after_move_);
-        
-        // Esperar un poco más para que el robot se estabilice
         std::this_thread::sleep_for(std::chrono::milliseconds(
             static_cast<int>(detection_delay_after_move_ * 1000)));
-        
-        RCLCPP_INFO(this->get_logger(), "👁️ Starting detection after robot movement...");
         start_detection();
     }
     
-    // Verificar timeout del desafío (solo si la detección ya está activa)
     if (!waiting_for_pose_ || challenge_timeout_ == 0.0) return;
     
     if (get_current_time() > challenge_timeout_)
@@ -448,17 +530,70 @@ void YarenGameManager::handle_pose_result(const yaren_interfaces::msg::PoseResul
 
 void YarenGameManager::end_game()
 {
-    RCLCPP_INFO(this->get_logger(), "Juego terminado.");
+    RCLCPP_INFO(this->get_logger(), "Juego terminado. Calculando métricas y emitiendo reporte UI...");
+
+    // Notificamos que la sesión cerró para que la ventana de control también se limpie
+    session_aborted_ = true; 
     
-    // Devolvemos el robot a la postura inicial si estábamos en modo ayuda
-    if (use_help_) {
+    double concentration_index = 0.0;
+    int success_rate = 0;
+    if (total_attempts_ > 0) {
+        concentration_index = (static_cast<double>(successful_attempts_) / total_attempts_) * 100.0;
+        success_rate = static_cast<int>(concentration_index); 
+    }
+
+    double perc_alegria = 0, perc_tristeza = 0, perc_sorpresa = 0, perc_neutral = 0;
+    int predominant_emotion_idx = 6; 
+    std::string predominant_emotion_name = "NEUTRAL";
+
+    if (total_emotion_readings_ > 0) {
+        perc_alegria  = (static_cast<double>(emotion_counts_[3]) / total_emotion_readings_) * 100.0;
+        perc_tristeza = (static_cast<double>(emotion_counts_[4]) / total_emotion_readings_) * 100.0;
+        perc_sorpresa = (static_cast<double>(emotion_counts_[5]) / total_emotion_readings_) * 100.0;
+        perc_neutral  = (static_cast<double>(emotion_counts_[6]) / total_emotion_readings_) * 100.0;
+
+        int max_count = -1;
+        for (const auto& pair : emotion_counts_) {
+            if (pair.second > max_count) {
+                max_count = pair.second;
+                predominant_emotion_idx = pair.first;
+            }
+        }
+
+        switch(predominant_emotion_idx) {
+            case 3: predominant_emotion_name = "ALEGRIA"; break;
+            case 4: predominant_emotion_name = "TRISTEZA"; break;
+            case 5: predominant_emotion_name = "SORPRESA"; break;
+            case 6: predominant_emotion_name = "NEUTRAL"; break;
+        }
+    }
+
+    std::ostringstream json_payload;
+    json_payload << "{"
+                 << "\"action\": \"session_report\", "
+                 << "\"poses_logradas\": " << successful_attempts_ << ", "
+                 << "\"fallos\": " << (total_attempts_ - successful_attempts_) << ", "
+                 << "\"tasa_exito\": " << success_rate << ", "
+                 << "\"concentracion\": " << static_cast<int>(concentration_index) << ", "
+                 << "\"alegria\": " << static_cast<int>(perc_alegria) << ", "
+                 << "\"neutral\": " << static_cast<int>(perc_neutral) << ", "
+                 << "\"sorpresa\": " << static_cast<int>(perc_sorpresa) << ", "
+                 << "\"tristeza\": " << static_cast<int>(perc_tristeza) << ", "
+                 << "\"emocion_predominante\": \"" << predominant_emotion_name << "\""
+                 << "}";
+
+    auto state_msg = std::make_unique<std_msgs::msg::String>();
+    state_msg->data = json_payload.str();
+    ui_state_publisher_->publish(std::move(state_msg));
+
+    if (use_help_ || is_session_) {
         move_robot({0.0, 0.0, 0.0, 0.00, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5});
     }
 
     auto game_over_msg = std::make_unique<std_msgs::msg::String>();
     game_over_msg->data = is_english_ ? 
-        "It was really fun playing with you, the game is over. Your final score is " + std::to_string(score_) + "." :
-        "Ha sido muy divertido jugar contigo, el juego termino. Tu puntuación final es " + std::to_string(score_) + ".";
+        "The session is over." :
+        "La sesión ha finalizado.";
     
     feedback_publisher_->publish(std::move(game_over_msg));
     rclcpp::shutdown();
@@ -473,13 +608,16 @@ void YarenGameManager::handle_successful_challenge()
     pending_detection_start_time_ = 0.0;
     robot_moving_ = false;
     robot_move_end_time_ = 0.0;
+    
     score_++;
+    successful_attempts_++; 
+    total_attempts_++;      
     
     auto feedback_msg = std::make_unique<std_msgs::msg::String>();
     int random_index = rand() % victory_texts_es_.size();
     std::string victory_text = is_english_ ? victory_texts_en_[random_index] : victory_texts_es_[random_index];
     
-    if (use_help_ || current_level_ == GameLevel::BASIC) {
+    if (use_help_ || is_session_ || current_level_ == GameLevel::BASIC) {
         feedback_msg->data = victory_text + std::to_string(score_) + ".";
     } else {
         std::string prefix = is_english_ ? "Incredible! You have completed the whole sequence. " : "¡Increíble! Has completado toda la secuencia. ";
@@ -489,8 +627,7 @@ void YarenGameManager::handle_successful_challenge()
     feedback_publisher_->publish(std::move(feedback_msg));
     std::this_thread::sleep_for(std::chrono::seconds(3));
     
-    // LÓGICA DE CONTINUACIÓN DEPENDIENDO DEL MODO
-    if (use_help_) {
+    if (use_help_ || is_session_) {
         challenges_played_++;
         if (challenges_played_ >= 10) {
             end_game();
@@ -529,28 +666,43 @@ void YarenGameManager::handle_failed_challenge(const std::string& feedback_text)
     pending_detection_start_time_ = 0.0;
     robot_moving_ = false;
     robot_move_end_time_ = 0.0;
-    lives_--;
+    
+    total_attempts_++; 
 
-    if (lives_ <= 0)
-    {
-        end_game();
-        return;
-    }
-        
-    auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-    std::string defeat_text = feedback_text + std::to_string(lives_);
-    defeat_text += is_english_ ? (lives_ == 1 ? " attempt left." : " attempts left.") 
-                               : (lives_ == 1 ? " intento." : " intentos.");
-    
-    feedback_msg->data = defeat_text;
-    feedback_publisher_->publish(std::move(feedback_msg));
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    
-    if (use_help_) {
+    // En sesión clínica NO descontamos vidas ni cortamos el juego
+    if (is_session_) {
+        auto feedback_msg = std::make_unique<std_msgs::msg::String>();
+        feedback_msg->data = is_english_ ? "Don't worry, let's go with the next pose." : "No te preocupes, vamos con la siguiente pose.";
+        feedback_publisher_->publish(std::move(feedback_msg));
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
         challenges_played_++;
         if (challenges_played_ >= 10) {
             end_game();
             return;
+        }
+    } 
+    else {
+        lives_--;
+        if (lives_ <= 0) {
+            end_game();
+            return;
+        }
+            
+        auto feedback_msg = std::make_unique<std_msgs::msg::String>();
+        std::string defeat_text = feedback_text + std::to_string(lives_);
+        defeat_text += is_english_ ? (lives_ == 1 ? " attempt left." : " attempts left.") : (lives_ == 1 ? " intento." : " intentos.");
+        
+        feedback_msg->data = defeat_text;
+        feedback_publisher_->publish(std::move(feedback_msg));
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        
+        if (use_help_) {
+            challenges_played_++;
+            if (challenges_played_ >= 10) {
+                end_game();
+                return;
+            }
         }
     }
 

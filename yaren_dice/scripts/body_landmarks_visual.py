@@ -144,9 +144,22 @@ class BodyPointsDetectorNode(LifecycleNode):
             try:
                 cv2.imshow(WIN, vis)
                 cv2.waitKey(1)
+                
+                # --- NUEVO: Detectar cierre con la X ---
+                if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+                    self.get_logger().info('Ventana cerrada con la X. Notificando a C++...')
+                    msg = String()
+                    msg.data = 'idle'
+                    self.mode_publisher.publish(msg)
+                    self._show_window = False
+                    cv2.destroyAllWindows()
+                    
             except cv2.error:
-                # Evita un crash si la ventana fue destruida asíncronamente
-                pass
+                self.get_logger().info('Ventana destruida. Notificando a C++...')
+                msg = String()
+                msg.data = 'idle'
+                self.mode_publisher.publish(msg)
+                self._show_window = False
 
     def _infer_loop(self):
         while self._active and rclpy.ok():

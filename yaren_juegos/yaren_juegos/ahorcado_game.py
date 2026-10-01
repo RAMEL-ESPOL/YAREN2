@@ -4,6 +4,8 @@ ahorcado_game.py — YAREN2 Hangman Game
 LifecycleNode | OpenCV touch input | Bilingual | 3 difficulty levels
 Estructura Thread-Safe adaptada al formato de YAREN.
 Incluye seguro de salida (Overlay) y mecánica de reposición de letras.
+Al salir por decision del usuario publica 'idle' en /yaren_mode para que
+face_screen cierre el modo (y la app remota vuelva al estado de reposo).
 """
 
 import rclpy
@@ -17,6 +19,7 @@ import threading
 import random
 import time
 import os
+import subprocess
 
 # ─────────────────────────────────────────────
 #  WORD BANK
@@ -195,11 +198,14 @@ class AhorcadoNode(LifecycleNode):
         self._active  = False
         self.is_english = False
         self._lang_sub = None
+        self._mode_pub = None
         self.show_exit_confirm = False
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Configuring ahorcado_node...')
         self._game_active_pub = self.create_publisher(Bool, '/yaren/game_active', 10)
+        # Para avisar a face_screen cuando el usuario sale del juego
+        self._mode_pub = self.create_publisher(String, '/yaren_mode', 1)
 
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._lang_sub = self.create_subscription(Bool, '/yaren/is_english', self._lang_cb, qos)
@@ -222,18 +228,22 @@ class AhorcadoNode(LifecycleNode):
         msg = Bool()
         msg.data = False
         self._game_active_pub.publish(msg)
-        
+
         try:
             cv2.destroyAllWindows()
             cv2.waitKey(1)
         except Exception:
             pass
-            
+
         return super().on_deactivate(state)
 
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
         if self._lang_sub:
             self.destroy_subscription(self._lang_sub)
+            self._lang_sub = None
+        if self._mode_pub is not None:
+            self.destroy_publisher(self._mode_pub)
+            self._mode_pub = None
         try:
             cv2.destroyAllWindows()
         except Exception:
@@ -247,6 +257,16 @@ class AhorcadoNode(LifecycleNode):
         except Exception:
             pass
         return TransitionCallbackReturn.SUCCESS
+
+    # ── Salida iniciada por el usuario ──────
+    def _exit_to_menu(self):
+        """Cierra el juego y avisa al robot (face_screen) para que cierre el modo."""
+        self._active = False
+        if self._mode_pub is not None:
+            try:
+                self._mode_pub.publish(String(data='idle'))
+            except Exception as e:
+                self.get_logger().warning(f'No se pudo publicar idle: {e}')
 
     # ── ROS Callbacks ───────────────────────
     def _lang_cb(self, msg):
@@ -409,14 +429,14 @@ class AhorcadoNode(LifecycleNode):
         if self.show_exit_confirm:
             if self.confirm_buttons['yes'].is_clicked(x, y):
                 self.show_exit_confirm = False
-                self._active = False
+                self._exit_to_menu()
             elif self.confirm_buttons['no'].is_clicked(x, y):
                 self.show_exit_confirm = False
             return
 
         if x < 60 and y < 60:
             if self.screen == 'intro':
-                self._active = False
+                self._exit_to_menu()
             else:
                 self.show_exit_confirm = True
             return
@@ -426,7 +446,7 @@ class AhorcadoNode(LifecycleNode):
                 self.screen = 'level'
                 self._build_level_buttons()
             elif self.buttons.get('back') and self.buttons['back'].is_clicked(x, y):
-                self._active = False
+                self._exit_to_menu()
 
         elif self.screen == 'level':
             for lvl in ('facil', 'medio', 'dificil'):
@@ -759,19 +779,19 @@ class AhorcadoNode(LifecycleNode):
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_mouse)
-            # Forzar foco
-import subprocess
-def _force_focus():
-    time.sleep(0.5)
-    try:
-        subprocess.run(
-            ["xdotool", "search", "--name", win_name,
-             "windowactivate", "--sync", "windowfocus"],
-            check=False, capture_output=True
-        )
-    except FileNotFoundError:
-        pass
-threading.Thread(target=_force_focus, daemon=True).start()
+
+            # Forzar foco de la ventana
+            def _force_focus():
+                time.sleep(0.5)
+                try:
+                    subprocess.run(
+                        ["xdotool", "search", "--name", win_name,
+                         "windowactivate", "--sync", "windowfocus"],
+                        check=False, capture_output=True)
+                except FileNotFoundError:
+                    pass
+            threading.Thread(target=_force_focus, daemon=True).start()
+
             self._reset_game_state()
             self.screen = 'intro'
             self._build_intro_buttons()
@@ -780,10 +800,10 @@ threading.Thread(target=_force_focus, daemon=True).start()
             frame = np.zeros((H, W, 3), dtype=np.uint8)
             while self._active and rclpy.ok():
                 try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
-                        self._active = False; break
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
+                        self._exit_to_menu(); break
                 except Exception:
-                    self._active = False; break
+                    self._exit_to_menu(); break
 
                 frame[:] = BG_DARK
                 if self.screen == 'intro':             self._render_intro(frame)
@@ -798,7 +818,7 @@ threading.Thread(target=_force_focus, daemon=True).start()
                 cv2.imshow(win_name, frame)
                 key = cv2.waitKey(1000 // FPS) & 0xFF
                 if key == 27:
-                    self._active = False; break
+                    self._exit_to_menu(); break
 
             try:
                 cv2.destroyAllWindows(); cv2.waitKey(1)

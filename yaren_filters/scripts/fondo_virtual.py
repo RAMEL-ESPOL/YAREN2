@@ -122,6 +122,7 @@ class VirtualBackgroundNode(LifecycleNode):
 
         # Timer a ~30 Hz para no asfixiar el ejecutor de ROS 2
         self._render_timer = self.create_timer(0.033, self._spin_render)
+        self._window_created = False  # <-- NUEVO: Reiniciar bandera al activar
 
         self.get_logger().info('ACTIVADO — mostrando menú de fondos.')
         return TransitionCallbackReturn.SUCCESS
@@ -208,19 +209,26 @@ class VirtualBackgroundNode(LifecycleNode):
 
         # Crear/verificar ventana
         try:
-            visible = cv2.getWindowProperty(
-                self._window_name, cv2.WND_PROP_VISIBLE)
+            visible = cv2.getWindowProperty(self._window_name, cv2.WND_PROP_VISIBLE)
             window_exists = visible >= 1
         except cv2.error:
             window_exists = False
 
         if not window_exists:
-            cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
-            cv2.setWindowProperty(
-                self._window_name, cv2.WND_PROP_FULLSCREEN,
-                cv2.WINDOW_FULLSCREEN)
-            cv2.setMouseCallback(self._window_name, self._mouse_callback)
-            self.get_logger().info('Ventana creada.')
+            # Si no existe la ventana, evaluamos por qué:
+            if not getattr(self, '_window_created', False):
+                # 1. Es la primera vez que arranca, la creamos normalmente
+                cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
+                cv2.setWindowProperty(self._window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                cv2.setMouseCallback(self._window_name, self._mouse_callback)
+                self.get_logger().info('Ventana creada.')
+                self._window_created = True
+            else:
+                # 2. Ya había sido creada, significa que el usuario pulsó la X
+                self.get_logger().info('Ventana cerrada con X. Publicando idle...')
+                self._window_created = False
+                self._go_idle()
+                return
 
         # Renderizar según estado
         if self._state == 'MENU':

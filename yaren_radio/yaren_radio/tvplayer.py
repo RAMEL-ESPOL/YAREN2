@@ -524,6 +524,14 @@ class YarenTVApp(QMainWindow):
         self._update_page()
         self.showFullScreen()
 
+    def closeEvent(self, event):
+            """Se ejecuta automáticamente cuando el usuario presiona la X de la ventana"""
+            subprocess.Popen([
+                "ros2", "topic", "pub", "--once", "/yaren_mode", 
+                "std_msgs/msg/String", '"{data: \'idle\'}"'
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os._exit(0)
+            
     def _on_intro_confirmed(self):
         self.stack.setCurrentIndex(1)
 
@@ -604,7 +612,7 @@ class YarenTVApp(QMainWindow):
         idx = next((i for i, v in enumerate(self.filtered_videos) if v['id'] == video_data['id']), 0)
         self.stack.setCurrentIndex(2)
         self.player_view.load_playlist(self.filtered_videos, idx)
-
+    
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

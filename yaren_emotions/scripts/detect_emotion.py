@@ -64,6 +64,10 @@ PLAYLIST_ES = [
     "LaGozadera.mp3", "MiGente.mp3",
 ]
 
+# Id del modo (en /yaren_mode) que muestra la interfaz completa.
+# Cualquier otro modo (ej. yaren_dice_sesion) corre la deteccion en segundo plano.
+UI_MODE_ID = "yaren_emotions"
+
 # =============================================================================
 #  INTRO SCREEN
 # =============================================================================
@@ -309,6 +313,8 @@ class ImageParticle:
 class EmotionDetectionNode(LifecycleNode):
 
     PARTICLE_COUNT = 40
+    INFER_EVERY_UI       = 3   # con interfaz (modo EMOCIONES)
+    INFER_EVERY_HEADLESS = 6   # segundo plano (modo sesion): menos carga de CPU
 
     def __init__(self):
         super().__init__('detector')
@@ -324,7 +330,7 @@ class EmotionDetectionNode(LifecycleNode):
         self._result_label     = "..."
         self._result_box       = None
         self._frame_count      = 0
-        self._INFER_EVERY      = 3
+        self._INFER_EVERY      = self.INFER_EVERY_HEADLESS
         self._active           = False
         self._infer_thread     = None
         self.window_name       = "YAREN2 - Emotion Detector"
@@ -333,7 +339,15 @@ class EmotionDetectionNode(LifecycleNode):
         self._rain_lock        = threading.Lock()
         self.loaded_emojis     = {}
         self._music            = None
+        # --- control de interfaz segun el modo activo ---
+        self._mode             = ""      # ultimo modo recibido en /yaren_mode
+        self._ui_active        = False   # ventana + musica + emojis
+        self._mode_sub         = None
+        self._mode_pub         = None
 
+    # -------------------------------------------------------------------------
+    #  Lifecycle
+    # -------------------------------------------------------------------------
     def on_configure(self, state):
         self.get_logger().info('Cargando modelo TF, MediaPipe y emojis PNG...')
         try:
@@ -369,6 +383,11 @@ class EmotionDetectionNode(LifecycleNode):
             self.lang_subscription = self.create_subscription(
                 Bool, '/yaren/is_english', self.language_callback, qos)
 
+            # Modo activo: decide si se muestra la interfaz o se corre en segundo plano
+            self._mode_sub = self.create_subscription(
+                String, '/yaren_mode', self.mode_callback, 10)
+            self._mode_pub = self.create_publisher(String, '/yaren_mode', 1)
+
             self._music = MusicManager(logger=self.get_logger())
             self.get_logger().info('Modelo TF + MediaPipe + Emojis + Música listos ✓')
             return TransitionCallbackReturn.SUCCESS
@@ -377,39 +396,24 @@ class EmotionDetectionNode(LifecycleNode):
             return TransitionCallbackReturn.FAILURE
 
     def on_activate(self, state):
-        self.get_logger().info('EmotionDetector: mostrando intro...')
+        # Solo EMOCIONES muestra interfaz. Si el modo aun no llego (toque en el menu,
+        # donde /yaren_mode se publica despues de activar), mode_callback abrira la
+        # interfaz cuando llegue "yaren_emotions".
+        if self._mode == UI_MODE_ID:
+            self._start_ui()
+        else:
+            self.get_logger().info(
+                f'EmotionDetector activo en segundo plano (modo: "{self._mode or "?"}")')
 
-        if not show_intro_screen(self.window_name, self.is_english):
-            self.get_logger().info('Intro cancelada.')
-            idle_pub = self.create_publisher(String, '/yaren_mode', 1)
-            idle_pub.publish(String(data='idle'))
-            self.destroy_publisher(idle_pub)
-            return TransitionCallbackReturn.SUCCESS
-
-        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
-        cv2.setMouseCallback(self.window_name, self.on_mouse_click)
-
-        def force_focus():
-            time.sleep(0.3)
-            os.system(f"xdotool search --sync --name '{self.window_name}' "
-                      "windowactivate --sync windowraise 2>/dev/null")
-        threading.Thread(target=force_focus, daemon=True).start()
-
-        self._active           = True
-        self._frame_count      = 0
-        self._latest_frame     = None
-        self._particles        = []
-        self._current_emotion  = ""
+        self._active       = True
+        self._frame_count  = 0
+        self._latest_frame = None
 
         self.subscription = self.create_subscription(
             Image, '/csi_camera/image_raw', self.image_callback, 10)
 
         self._infer_thread = threading.Thread(target=self._infer_loop, daemon=True)
         self._infer_thread.start()
-
-        if self._music:
-            self._music.start()
 
         return super().on_activate(state)
 
@@ -422,9 +426,7 @@ class EmotionDetectionNode(LifecycleNode):
         if self.subscription is not None:
             self.destroy_subscription(self.subscription)
             self.subscription = None
-        if self._music:
-            self._music.stop()
-        cv2.destroyAllWindows()
+        self._stop_ui()
         return super().on_deactivate(state)
 
     def on_cleanup(self, state):
@@ -437,6 +439,12 @@ class EmotionDetectionNode(LifecycleNode):
         if self.lang_subscription is not None:
             self.destroy_subscription(self.lang_subscription)
             self.lang_subscription = None
+        if self._mode_sub is not None:
+            self.destroy_subscription(self._mode_sub)
+            self._mode_sub = None
+        if self._mode_pub is not None:
+            self.destroy_publisher(self._mode_pub)
+            self._mode_pub = None
         if self._music:
             self._music.quit()
             self._music = None
@@ -445,23 +453,84 @@ class EmotionDetectionNode(LifecycleNode):
 
     def on_shutdown(self, state):
         self._active = False
+        self._ui_active = False
         if self._music:
             self._music.quit()
             self._music = None
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
 
+    # -------------------------------------------------------------------------
+    #  Callbacks
+    # -------------------------------------------------------------------------
     def language_callback(self, msg):
         self.is_english = msg.data
         self.get_logger().info(f"Idioma: {'English' if self.is_english else 'Español'}")
 
+    def mode_callback(self, msg):
+        self._mode = msg.data
+        if not self._active:
+            return
+        if self._mode == UI_MODE_ID:
+            self._start_ui()
+        elif self._ui_active:
+            self._stop_ui()
+
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             self.get_logger().info('Clic detectado. Cerrando modo emociones...')
-            idle_pub = self.create_publisher(String, '/yaren_mode', 1)
-            idle_pub.publish(String(data='idle'))
-            self.destroy_publisher(idle_pub)
+            self._publish_idle()
 
+    def _publish_idle(self):
+        if self._mode_pub is not None:
+            self._mode_pub.publish(String(data='idle'))
+
+    # -------------------------------------------------------------------------
+    #  Interfaz (ventana + musica + emojis) — solo modo EMOCIONES
+    # -------------------------------------------------------------------------
+    def _start_ui(self) -> bool:
+        if self._ui_active:
+            return True
+        self.get_logger().info('EmotionDetector: mostrando intro...')
+
+        if not show_intro_screen(self.window_name, self.is_english):
+            self.get_logger().info('Intro cancelada.')
+            self._publish_idle()
+            return False
+
+        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
+        cv2.setMouseCallback(self.window_name, self.on_mouse_click)
+
+        def force_focus():
+            time.sleep(0.3)
+            os.system(f"xdotool search --sync --name '{self.window_name}' "
+                      "windowactivate --sync windowraise 2>/dev/null")
+        threading.Thread(target=force_focus, daemon=True).start()
+
+        with self._rain_lock:
+            self._particles       = []
+            self._current_emotion = ""
+        self._INFER_EVERY = self.INFER_EVERY_UI
+
+        if self._music:
+            self._music.start()
+
+        self._ui_active = True
+        return True
+
+    def _stop_ui(self):
+        if not self._ui_active:
+            return
+        self._ui_active   = False
+        self._INFER_EVERY = self.INFER_EVERY_HEADLESS
+        if self._music:
+            self._music.stop()
+        cv2.destroyAllWindows()
+
+    # -------------------------------------------------------------------------
+    #  Emojis
+    # -------------------------------------------------------------------------
     def _rebuild_particles(self, emotion: str, W: int, H: int):
         images_list   = self.loaded_emojis.get(emotion, [])
         new_particles = []
@@ -482,6 +551,9 @@ class EmotionDetectionNode(LifecycleNode):
             p.update()
             p.draw(frame)
 
+    # -------------------------------------------------------------------------
+    #  Camara
+    # -------------------------------------------------------------------------
     def image_callback(self, msg):
         if not self._active or not rclpy.ok(): return
         self._frame_count += 1
@@ -494,6 +566,10 @@ class EmotionDetectionNode(LifecycleNode):
         if self._frame_count % self._INFER_EVERY == 0:
             with self._lock:
                 self._latest_frame = frame.copy()
+
+        # Modo segundo plano (sesion): solo inferencia, sin dibujar ni mostrar ventana
+        if not self._ui_active:
+            return
 
         vis = frame.copy()
         with self._lock:
@@ -536,10 +612,25 @@ class EmotionDetectionNode(LifecycleNode):
                         cv2.FONT_HERSHEY_DUPLEX, 1.6, accent, 3, cv2.LINE_AA)
 
         vis = cv2.resize(vis, (800, 480))
-        if self._active and rclpy.ok():
-            cv2.imshow(self.window_name, vis)
-            cv2.waitKey(1)
-
+        if self._active and self._ui_active and rclpy.ok():
+            try:
+                cv2.imshow(self.window_name, vis)
+                cv2.waitKey(1)
+                
+                # --- NUEVO: Detectar si cerraron la ventana con la X ---
+                if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    self.get_logger().info('Ventana cerrada con la X. Notificando a C++...')
+                    self._publish_idle()
+                    self._stop_ui()
+                    
+            except cv2.error:
+                # Si imshow falla porque la ventana ya no existe
+                self.get_logger().info('Ventana destruida. Notificando a C++...')
+                self._publish_idle()
+                self._stop_ui()
+    # -------------------------------------------------------------------------
+    #  Inferencia (corre en ambos modos y publica en /emotion)
+    # -------------------------------------------------------------------------
     def _infer_loop(self):
         while self._active and rclpy.ok():
             frame = None

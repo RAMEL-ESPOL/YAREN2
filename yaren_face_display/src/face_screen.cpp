@@ -108,6 +108,21 @@ static std::string getPulseDefault(bool isSink) {
     while (!r.empty() && (r.back()=='\n'||r.back()=='\r'||r.back()==' ')) r.pop_back();
     return r;
 }
+static std::string getLocalIP() {
+    FILE* pipe = popen("hostname -I | awk '{print $1}'", "r");
+    if (!pipe) return "Unknown IP";
+    char buf[128];
+    std::string ip = "Offline";
+    if (fgets(buf, sizeof(buf), pipe) != nullptr) {
+        ip = buf;
+        ip.erase(std::remove(ip.begin(), ip.end(), '\n'), ip.end());
+        ip.erase(std::remove(ip.begin(), ip.end(), '\r'), ip.end());
+        ip.erase(std::remove(ip.begin(), ip.end(), ' '), ip.end());
+    }
+    pclose(pipe);
+    if (ip.empty()) return "Offline";
+    return ip;
+}
 
 static void drawCenteredText(cv::Mat& frame, const std::string& txt,
                              int totalW, int y,
@@ -165,7 +180,7 @@ public:
     std::string selectedMicId;
     std::function<void()> onWifi;
     std::string selectedSpkId;
-
+    std::string localIP; // <-- NUEVA VARIABLE
     bool eng() const { return isEnglish != nullptr && *isEnglish; }
 
     SettingsMenu() {
@@ -210,6 +225,7 @@ public:
         editYear_init = editYear;
         initHour = editHour;
         initMin = editMin;
+        localIP = getLocalIP();
     }
 
     void render(cv::Mat& frame) {
@@ -219,9 +235,12 @@ public:
         cv::Mat ov = frame.clone();
         cv::rectangle(ov, {0, 0, W, H}, cv::Scalar(4, 10, 22), cv::FILLED);
         cv::addWeighted(ov, 0.95, frame, 0.05, 0, frame);
-        drawCenteredText(frame, eng() ? "SETTINGS" : "CONFIGURACION", W, 32,
-                         cv::FONT_HERSHEY_DUPLEX, 0.80, cv::Scalar(0, 229, 255), 2);
-        cv::line(frame, {W/2-320, 48}, {W/2+320, 48}, cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
+
+        drawCenteredText(frame, eng() ? "SETTINGS" : "CONFIGURACION", W, 26,
+                         cv::FONT_HERSHEY_DUPLEX, 0.75, cv::Scalar(0, 229, 255), 2);
+        drawCenteredText(frame, "IP: " + localIP, W, 44, 
+                         cv::FONT_HERSHEY_PLAIN, 0.9, cv::Scalar(150, 180, 150), 1);
+        cv::line(frame, {W/2-320, 52}, {W/2+320, 52}, cv::Scalar(0, 80, 120), 1, cv::LINE_AA);
         int langW = 120, langH = 36;
         btnLang = {W - langW - 20, 15, langW, langH};
         bool hovLang = btnLang.contains(hoveredRect.tl());
@@ -2374,6 +2393,12 @@ public:
             "/audio_playing", 10, std::bind(&VideoSynchronizer::audioPlayingCallback, this, std::placeholders::_1));
         faceScreenPublisher = this->create_publisher<sensor_msgs::msg::Image>("/face_screen", 10);
         modePublisher       = this->create_publisher<std_msgs::msg::String>("/yaren_mode", 10);
+        rclcpp::QoS uiQos(1);
+        uiQos.transient_local();   // la app recibe el último estado apenas se conecta
+        uiStatePub_ = this->create_publisher<std_msgs::msg::String>(kUiStateTopic, uiQos);
+        commandSub_ = this->create_subscription<std_msgs::msg::String>(
+            kCommandTopic, 10,
+            std::bind(&VideoSynchronizer::onRemoteCommand, this, std::placeholders::_1));
 
         modeSubscription_ = this->create_subscription<std_msgs::msg::String>(
             "/yaren_mode", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
@@ -2608,14 +2633,14 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
+        std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
         const char* home = std::getenv("HOME");
         if (home) {
             std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
             std::string ws      = std::string(home) + "/robotis_ws";
             std::string setup   = ws + "/install/setup.bash";
             std::string venv    = ws + "/venv_yaren/bin/activate";
-
+            std::string bridge = ws + "/src/YAREN2/yaren_face_display/scripts/ws_bridge.py";
             std::string wake    = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/wake_word_node.py";
             std::string voice   = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/yaren_voice_menu.py";
             std::string lang    = ws + "/src/YAREN2/yaren_idioma/yaren_idioma/gestor_idioma.py";
@@ -2647,6 +2672,7 @@ public:
             std::string cmd_controller   = "bash -c 'source " + setup + " && ros2 run yaren_arm_mimic yaren_controller' &";
             std::string cmd_mimic_gate   = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_arm_mimic mimic_gate_node.py' &";
             std::string cmd_body_mimic = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_arm_mimic body_points_detector.py' &";
+            std::string cmd_bridge = "bash -c 'source " + setup +" && python3 " + bridge +" --ros-args -p allow_poweroff:=true' > /tmp/ws_bridge.log 2>&1 &";
 
             std::system(cmd_wake.c_str());
             std::system(cmd_voice.c_str());
@@ -2674,6 +2700,7 @@ public:
             std::system(cmd_controller.c_str());
             std::system(cmd_mimic_gate.c_str());
             std::system(cmd_body_mimic.c_str());
+            std::system(cmd_bridge.c_str());
 
 
                         std::thread([this, setup]() {
@@ -2891,7 +2918,7 @@ public:
         // FIX-F: verificar joinable antes de join en testThread
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-            std::system("for pid in $(ps aux | grep -E 'wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");    
+            std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|chistes_node|ahorcado_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
         }
 
     void drawWindow() {
@@ -3122,9 +3149,12 @@ private:
 
             MI("yaren_dice_sesion",
             isEnglish ? "SESSION"      : "SESION",
-            isEnglish ? "Coming soon"  : "Proximamente",
-            {80,80,80},
-            "", "", false, "", "dice"),
+            isEnglish ? "Clinical record" : "Registro clinico",
+            {100, 200, 100}, // Changed color from gray to a more active color (e.g., green-ish)
+            "ros2 run yaren_dice game_manager --ros-args -p use_help:=false &", // Assuming you want it without help, or change to true if needed
+            "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done",
+            false, "", "dice",
+            {"csi_cam_node", "body_points_detector_node", "yaren_speaker_node", "detector"}),
         }};
         subMenuMap["sub_yaren"].key = "sub_yaren";
         subMenuMap["sub_yaren_movements"] = { isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", {251,64,224}, {
@@ -3389,6 +3419,99 @@ private:
             micTestRunning = false;
         }).detach();
     }
+    void onRemoteCommand(const std_msgs::msg::String::SharedPtr msg) {
+        const std::string cmd = msg->data;
+        RCLCPP_INFO(get_logger(), "[ REMOTE ] comando: %s", cmd.c_str());
+        if (configuring.load()) return;      // ignorar mientras arranca
+        resetIdleTimer();
+
+        bool sSettings, sRadio, sRoutines, sWifi;
+        {
+            std::lock_guard<std::mutex> lk(modeFlagMutex);
+            sSettings = showSettings_; sRadio = showRadio_;
+            sRoutines = showRoutines_; sWifi  = showWifiSetup_;
+        }
+
+        // --- pantallas especiales ---
+        if (cmd == "power_off") {
+            showErrorOverlay(isEnglish ? "Shutting down robot..." : "Apagando robot...", 5.0);
+            std::system("sudo poweroff &");
+            return;
+        }
+        if (cmd == "open_settings") {
+            std::lock_guard<std::mutex> lk(modeFlagMutex);
+            showSettings_ = true; settingsMenu.refresh();
+            return;
+        }
+        if (cmd == "back" || (cmd == "stop" && (sRadio || sRoutines))) {
+            if (sSettings) { std::lock_guard<std::mutex> lk(modeFlagMutex); showSettings_ = false; return; }
+            if (sWifi)     { std::lock_guard<std::mutex> lk(modeFlagMutex); showWifiSetup_ = false; return; }
+            if (sRadio)    { if (radioApp.onBack) radioApp.onBack(); return; }
+            if (sRoutines) { if (routinesApp.onBack) routinesApp.onBack(); return; }
+        }
+        if (sSettings || sRadio || sRoutines || sWifi) return; // solo "back" aplica ahí
+
+        if (cmd == "stop") {                 // equivale al botón DETENER
+            std_msgs::msg::String m; m.data = "idle";
+            modePublisher->publish(m);
+            return;
+        }
+
+        // --- navegación del menú ---
+        std::lock_guard<std::mutex> lock(navMutex);
+
+        auto ensureRoot = [&]() {
+            if (navStack.empty()) {
+                NavLevel root;
+                root.title       = isEnglish ? "MAIN MENU" : "MENU PRINCIPAL";
+                root.accentColor = {0, 200, 200};
+                root.items       = rootMenuItems;
+                navStack.push_back(root);
+                hoveredItem = -1;
+                startMenuMusic();
+            }
+        };
+        auto pushSub = [&](const std::string& key) {
+            auto it = subMenuMap.find(key);
+            if (it == subMenuMap.end()) {
+                RCLCPP_WARN(get_logger(), "[ REMOTE ] submenu desconocido: %s", key.c_str());
+                return;
+            }
+            if (!navStack.empty() && navStack.back().key == key) return;
+            NavLevel lvl = it->second; lvl.key = key;
+            navStack.push_back(lvl);
+            hoveredItem = -1;
+        };
+
+        if (cmd == "open_menu") {
+            ensureRoot();
+        } else if (cmd == "go_home") {
+            navStack.clear();
+            hoveredItem = -1;
+            ensureRoot(); 
+        }else if (cmd == "back") {
+            if (navStack.size() > 1) navStack.pop_back();
+            hoveredItem = -1;
+        } else if (cmd == "exit") {
+            navStack.clear(); hoveredItem = -1; stopMenuMusic();
+        } else if (cmd.rfind("open_submenu_", 0) == 0) {
+            ensureRoot();
+            pushSub(cmd.substr(13));
+        } else if (cmd.rfind("select_", 0) == 0) {
+            // ejecuta un item del menú por su id (igual que tocarlo)
+            std::string id = cmd.substr(7);
+            MenuItem item = findMenuItem(id);
+            if (item.id.empty()) {
+                RCLCPP_WARN(get_logger(), "[ REMOTE ] item desconocido: %s", id.c_str());
+                return;
+            }
+            if (item.id == "yaren_chat" && !chatAvailable_) { lastUIState_.clear(); return; }  // fuerza reenviar el estado actual            
+            if (item.hasSubMenu) { ensureRoot(); pushSub(item.subMenuKey); }
+            else                 { executeMode(item); }
+        } else {
+            RCLCPP_WARN(get_logger(), "[ REMOTE ] comando no reconocido: %s", cmd.c_str());
+        }
+    }
     void handleMouse(int event, int x, int y) {
         if (isIdleScreenActive) {
             if (event == cv::EVENT_LBUTTONDOWN) {
@@ -3607,7 +3730,6 @@ private:
         if (pos != std::string::npos) cleanCmd = cleanCmd.substr(0, pos + 1);
 
         // === OPCIÓN C: EJECUCIÓN EN SEGUNDO PLANO ===
-        // Creamos un hilo independiente para que la cara de Yaren no se congele
         std::thread([this, item, cleanCmd, publish_mode]() {
             
             // 1. Mostrar cartel de "Iniciando..." (solo si el modo usa nodos)
@@ -3636,8 +3758,6 @@ private:
             active_lifecycle_nodes = item.lifecycle_nodes;
 
             // 4. Configurar y activar los nuevos nodos
-            // AQUÍ ocurren los 3 segundos de espera, pero como estamos en un hilo,
-            // la cara de Yaren sigue moviéndose y parpadeando libremente.
             for (const auto& node : active_lifecycle_nodes) {
                 ensure_lifecycle_active(node);
             }
@@ -3658,7 +3778,14 @@ private:
 
             // 7. Ejecutar el script/comando del modo si lo hay
             if (!cleanCmd.empty()) {
-                std::system(cleanCmd.c_str());
+                std::system(cleanCmd.c_str());   // bloquea hasta que el programa termina
+
+                // Terminó (cerraron tvplayer, acabó la rutina, etc.): si seguimos en este modo, volver a idle
+                if (activeMode == item.id) {
+                    std_msgs::msg::String m;
+                    m.data = "idle";
+                    modePublisher->publish(m);
+                }
             }
 
         }).detach(); // <- Esto "libera" el hilo para que corra por su cuenta sin trabar la pantalla
@@ -4341,7 +4468,6 @@ private:
                 frame = getFaceFrame();
             }
 
-            // --- ESTO ES LO QUE FALTABA ---
             // Ahora dibujamos el WiFi ENCIMA del fondo, incluso si sigue configurando
             if (sWifi) {
                 wifiSetup_.render(frame);
@@ -4425,7 +4551,37 @@ private:
                                 cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
                 }
             }
-
+            // Estado para la app remota
+            {
+                std::string uiState;
+                if (configuring.load()) {
+                    uiState = "loading";
+                } else if (sWifi) {
+                    uiState = "wifi";
+                } else if (sSettings) {
+                    uiState = "settings";
+                } else if (sRadio) {
+                    uiState = "mode:radio_musica"; 
+                } else if (sRoutines) {
+                    uiState = "routines";
+                } else {
+                    std::lock_guard<std::mutex> lock(navMutex);
+                    if (!navStack.empty()) {
+                        if (navStack.size() == 1)            uiState = "menu_root";
+                        else if (!navStack.back().key.empty()) uiState = navStack.back().key;
+                        else                                  uiState = navStack.back().title;
+                    } else if (!activeMode.empty()) {
+                        uiState = "mode:" + activeMode;
+                    } else {
+                        uiState = "face";
+                    }
+                }
+                if (uiState != lastUIState_) {
+                    lastUIState_ = uiState;
+                    std_msgs::msg::String m; m.data = uiState;
+                    uiStatePub_->publish(m);
+                }
+            }
             // 6. PUBLICAR ESTADOS
             {
                 std::lock_guard<std::mutex> lock(idleStateMutex);
@@ -4541,7 +4697,6 @@ private:
     std::atomic<bool> isBlinking { false };
     std::atomic<bool> running    { false };
     std::atomic<bool> configuring{true};
-    // FIX-B: configProgress como atomic<int> para acceso seguro desde múltiples hilos
     std::atomic<int>  configProgress{0};
     static constexpr int configTotal{20};
     std::string       configStatus{"Iniciando sistema..."};
@@ -4619,6 +4774,11 @@ private:
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     idleStatePublisher;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr     micTestPublisher_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  wakeEventSubscription;
+    static constexpr const char* kCommandTopic = "/yaren/command";
+    static constexpr const char* kUiStateTopic = "/yaren/ui_state";
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr commandSub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr    uiStatePub_;
+    std::string lastUIState_;
 
     std::mutex idleStateMutex;
     bool lastIdleState { false };
@@ -4652,7 +4812,6 @@ private:
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<VideoSynchronizer>();
-    // FIX: arrancar renderThread DESPUÉS de la construcción completa del nodo
     node->startRenderThread();
     rclcpp::Rate rate(30);
     while (rclcpp::ok()) {

@@ -13,11 +13,20 @@
 #include <mutex>
 #include <chrono>
 #include <random>
+#include <map>
+#include <atomic>
+#include <opencv2/opencv.hpp>
 
 enum class GameLevel {
     BASIC,
     INTERMEDIATE,
     ADVANCED
+};
+
+// Estructura para los botones de las interfaces
+struct IntroData {
+    bool clicked;
+    cv::Rect btn;
 };
 
 class YarenGameManager : public rclcpp::Node
@@ -30,6 +39,7 @@ private:
     void handle_pose_result(const yaren_interfaces::msg::PoseResult::SharedPtr msg);
     void handle_audio_status(const std_msgs::msg::Bool::SharedPtr msg);
     void handle_language_change(const std_msgs::msg::Bool::SharedPtr msg);
+    void handle_emotion(const std_msgs::msg::Int16::SharedPtr msg);
     void check_challenge_timeout();
 
     // ── Carga de YAMLs ─────────────────────────────────────────────────────
@@ -39,6 +49,8 @@ private:
     void load_advanced_challenges_from_yaml();
 
     // ── Lógica del juego ───────────────────────────────────────────────────
+    void show_intro_screen();
+    void show_control_panel();
     void select_challenge();
     void start_detection();
     void move_robot(const std::vector<double>& raw_pose);
@@ -54,10 +66,12 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr feedback_publisher_;
     rclcpp::Publisher<std_msgs::msg::Int16>::SharedPtr current_challenge_publisher_;
     rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_publisher_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ui_state_publisher_;
 
     rclcpp::Subscription<yaren_interfaces::msg::PoseResult>::SharedPtr pose_result_subscription_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr audio_status_subscription_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr language_subscription_;
+    rclcpp::Subscription<std_msgs::msg::Int16>::SharedPtr emotion_subscription_;
 
     rclcpp::TimerBase::SharedPtr challenge_timer_;
 
@@ -73,6 +87,8 @@ private:
     bool is_english_;
     bool game_initialized_;
     bool use_help_;
+    bool is_session_;
+    std::atomic<bool> session_aborted_{false};
 
     double challenge_timeout_;
     double correct_pose_start_time_;
@@ -98,18 +114,22 @@ private:
     std::vector<std::string> defeat_texts_es_;
     std::vector<std::string> defeat_texts_en_;
 
-    // ── NUEVAS variables para control del robot ────────────────────────────
+    // ── Variables para control del robot ────────────────────────────
     std::vector<double> pending_robot_pose_;
     bool has_pending_robot_pose_;
     double pending_detection_start_time_;
-
-    // ── Control de movimiento del robot ────────────────────────────────────
     bool robot_moving_ = false;
     double robot_move_end_time_ = 0.0;
-    double robot_move_duration_ = 2.5;           // Duración del movimiento (debe coincidir con time_from_start)
-    double detection_delay_after_move_ = 0.5;    // Espera extra después del movimiento
-    double audio_end_delay_ = 0.5;               // Espera después de que el audio termina
-    double challenge_timeout_seconds_ = 20.0;    // Timeout para completar la pose
+    double robot_move_duration_ = 2.5;           
+    double detection_delay_after_move_ = 0.5;    
+    double audio_end_delay_ = 0.5;               
+    double challenge_timeout_seconds_ = 20.0;    
+
+    // ── Variables de Reporte Clínico ───────────────────────────────────────
+    int total_attempts_;
+    int successful_attempts_;
+    int total_emotion_readings_;
+    std::map<int, int> emotion_counts_;
 };
 
 #endif // GAME_MANAGER_HPP

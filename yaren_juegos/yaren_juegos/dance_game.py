@@ -1470,13 +1470,13 @@ class DanceGameNode(LifecycleNode):
 
             while rclpy.ok() and self._active:
                 try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
-                        self._active = False
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
                         self.publish_idle()
+                        self._active = False
                         break
                 except Exception:
-                    self._active = False
                     self.publish_idle()
+                    self._active = False
                     break
 
                 now = time.time()

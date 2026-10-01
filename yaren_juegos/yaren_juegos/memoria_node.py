@@ -508,10 +508,14 @@ class MemoriaNode(LifecycleNode):
             while self._active and rclpy.ok():
                 # ✅ Verificar si la ventana sigue abierta
                 try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
+                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
+                        self.get_logger().info("Ventana cerrada con X. Publicando idle...")
+                        self._publish_idle()
                         self._active = False
                         break
                 except Exception:
+                    self.get_logger().info("Ventana destruida. Publicando idle...")
+                    self._publish_idle()
                     self._active = False
                     break
                 

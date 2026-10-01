@@ -65,7 +65,10 @@ install(DIRECTORY
   # Asegúrate de que esta ruta sea relativa o absoluta correcta al compilar
   DESTINATION share/${PROJECT_NAME}
 )
-
+install(PROGRAMS
+  scripts/ws_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 install(TARGETS 
   face_screen
   DESTINATION lib/${PROJECT_NAME}
