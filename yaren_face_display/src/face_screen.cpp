@@ -2422,8 +2422,8 @@ public:
                         }
                         active_lifecycle_nodes.clear();
                         stopCmdToRun = activeStopCmd;
-                        if (activeMode == "yaren_dice_con_ayuda") {
-                            std::string homeCmd = "ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"";
+                        if (activeMode == "yaren_dice_con_ayuda" || activeMode == "yaren_dice_sesion") {
+                                std::string homeCmd = "ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"";
                             std::thread([homeCmd]() { std::system(homeCmd.c_str()); }).detach();
                         }
                         activeMode.clear(); activeStopCmd.clear();
@@ -3148,13 +3148,13 @@ private:
             {"csi_cam_node", "body_points_detector_node_visual", "yaren_speaker_node"}),
 
             MI("yaren_dice_sesion",
-            isEnglish ? "SESSION"      : "SESION",
-            isEnglish ? "Clinical record" : "Registro clinico",
-            {100, 200, 100}, // Changed color from gray to a more active color (e.g., green-ish)
-            "ros2 run yaren_dice game_manager --ros-args -p use_help:=false &", // Assuming you want it without help, or change to true if needed
-            "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done",
-            false, "", "dice",
-            {"csi_cam_node", "body_points_detector_node", "yaren_speaker_node", "detector"}),
+                isEnglish ? "SESSION" : "SESION",
+                isEnglish ? "Clinical record" : "Registro clinico",
+                {100,200,100},
+                "ros2 run yaren_dice game_manager --ros-args -p is_session:=true &",
+                "for pid in $(ps aux | grep -E 'game_manager' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done",
+                false, "", "dice",
+                {"csi_cam_node", "body_points_detector_node", "yaren_speaker_node", "detector"}),
         }};
         subMenuMap["sub_yaren"].key = "sub_yaren";
         subMenuMap["sub_yaren_movements"] = { isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", {251,64,224}, {
@@ -3900,7 +3900,8 @@ private:
         bool hasStop = (activeMode == "yaren_chat" || 
                         activeMode == "yaren_chat_local" || 
                         activeMode == "yaren_chistes" || 
-                        activeMode == "yaren_dice_sin_ayuda");
+                        activeMode == "yaren_dice_sin_ayuda"|| 
+                        activeMode == "yaren_dice_sesion");
         bool hasBack = (navStack.size() > 1);
         int totalW = navW;
         if (hasBack) totalW += navW + gap;
