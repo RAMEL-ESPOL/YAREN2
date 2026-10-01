@@ -130,6 +130,7 @@ private:
     int successful_attempts_;
     int total_emotion_readings_;
     std::map<int, int> emotion_counts_;
+    std::string patient_name_;
 };
 
 #endif // GAME_MANAGER_HPP

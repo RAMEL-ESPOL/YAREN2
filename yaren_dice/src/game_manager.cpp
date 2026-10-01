@@ -5,8 +5,219 @@
 #include <cmath>
 #include <algorithm>
 #include <sstream>
+#include <opencv2/opencv.hpp>
 
 using namespace std::chrono_literals;
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  OnScreenKeyboard — Teclado QWERTY táctil para la pantalla de Yaren
+// ══════════════════════════════════════════════════════════════════════════════
+class OnScreenKeyboard {
+public:
+    std::string text;
+    bool visible { false };
+    std::string prompt;
+    bool isPassword_ { false };
+
+    bool showNumbers_ { false };
+    bool shiftActive_ { false };
+    int  hovKey_      { -1 };
+    cv::Point hovPt_  { 0, 0 };
+    std::vector<cv::Rect> keyRects_;
+    cv::Rect btnBackspace_{0,0,0,0}, btnNumToggle_{0,0,0,0};
+    cv::Rect btnOk_{0,0,0,0}, btnCancel_{0,0,0,0};
+    cv::Rect btnSpace_{0,0,0,0}, btnShift_{0,0,0,0};
+    bool confirmed = false;
+    bool cancelled = false;
+
+    void show(const std::string& promptText, const std::string& initial = "") {
+        prompt  = promptText;
+        text    = initial;
+        visible = true;
+        showNumbers_ = false;
+        hovKey_  = -1;
+        confirmed = false;
+        cancelled = false;
+    }
+
+    void hide() { visible = false; }
+
+    const std::vector<std::vector<std::string>> ROWS_ALPHA = {
+        {"q","w","e","r","t","y","u","i","o","p"},
+        {"a","s","d","f","g","h","j","k","l"},
+        {"z","x","c","v","b","n","m"},
+        {}  // fila de controles
+    };
+
+    const std::vector<std::vector<std::string>> ROWS_NUM = {
+        {"1","2","3","4","5","6","7","8","9","0"},
+        {"-","/",":",";","(",")","$","&","@","\""},
+        {".","_","#","!","?","=","+","<",">"},
+        {}
+    };
+
+    const std::vector<std::vector<std::string>>& getCurrentKeys() {
+        return showNumbers_ ? ROWS_NUM : ROWS_ALPHA;
+    }
+
+    int findKey(int x, int y) {
+        for (int i=0;i<(int)keyRects_.size();++i)
+            if (keyRects_[i].contains({x,y})) return i;
+        return -1;
+    }
+
+    bool handleMouse(int ev, int x, int y) {
+        if (!visible) return false;
+        hovPt_ = {x, y};
+        if (ev == cv::EVENT_MOUSEMOVE) {
+            hovKey_ = findKey(x, y);
+            return false;
+        }
+        if (ev != cv::EVENT_LBUTTONDOWN) return false;
+        
+        if (btnBackspace_.contains({x,y})) {
+            if (!text.empty()) text.pop_back();
+            return false;
+        }
+        if (btnNumToggle_.contains({x,y})) { showNumbers_ = !showNumbers_; return false; }
+        if (btnOk_.contains({x,y})) { visible = false; confirmed = true; return true; }
+        if (btnCancel_.contains({x,y})) { visible = false; cancelled = true; text = ""; return false; }
+        if (btnSpace_.contains({x,y})) { text += ' '; return false; }
+        if (btnShift_.contains({x,y})) { shiftActive_ = !shiftActive_; return false; }
+        
+        int ki = findKey(x, y);
+        if (ki >= 0 && ki < (int)keyRects_.size()) {
+            auto keys = getCurrentKeys();
+            std::vector<std::string> flat;
+            for(const auto& row : keys) for(const auto& k : row) flat.push_back(k);
+            
+            if (ki < (int)flat.size()) {
+                std::string ch = flat[ki];
+                if (shiftActive_) {
+                    if (!ch.empty()) ch[0] = (char)std::toupper((unsigned char)ch[0]);
+                    shiftActive_ = false;
+                }
+                text += ch;
+            }
+        }
+        return false;
+    }
+
+    void render(cv::Mat& frame) {
+        if (!visible) return;
+        int W = frame.cols, H = frame.rows;
+
+        cv::Mat ov = frame.clone();
+        cv::rectangle(ov, {0,0,W,H}, cv::Scalar(2,6,16), cv::FILLED);
+        cv::addWeighted(ov, 0.88, frame, 0.12, 0, frame);
+
+        const int KBW = 760, KBH = 310;
+        const int KBX = (W - KBW) / 2;
+        const int KBY = H - KBH - 10;
+        cv::rectangle(frame, {KBX, KBY, KBW, KBH}, cv::Scalar(8,14,28), cv::FILLED);
+        cv::rectangle(frame, {KBX, KBY, KBW, KBH}, cv::Scalar(0,150,200), 2, cv::LINE_AA);
+
+        int fieldY = KBY + 18;
+        cv::putText(frame, prompt, {KBX+16, fieldY+14},
+                    cv::FONT_HERSHEY_PLAIN, 0.95, cv::Scalar(80,180,220), 1, cv::LINE_AA);
+        cv::Rect fieldRect{KBX+16, fieldY+20, KBW-32, 32};
+        cv::rectangle(frame, fieldRect, cv::Scalar(4,12,26), cv::FILLED);
+        cv::rectangle(frame, fieldRect, cv::Scalar(0,180,230), 1, cv::LINE_AA);
+        
+        std::string display = text;
+        double t = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (std::fmod(t * 2.0, 1.0) < 0.5) display += "|";
+        cv::putText(frame, display, {fieldRect.x+8, fieldRect.y+22},
+                    cv::FONT_HERSHEY_PLAIN, 1.1, cv::Scalar(220,235,255), 1, cv::LINE_AA);
+
+        auto& ROWS = getCurrentKeys();
+        keyRects_.clear();
+        const int keyH = 44, keyGap = 5;
+        int rowY = KBY + 75;
+
+        for (int r = 0; r < 3; ++r) {
+            const auto& row = ROWS[r];
+            int n = (int)row.size();
+            if(n == 0) continue;
+            int keyW = (KBW - keyGap*(n+1)) / n;
+            int rowX = KBX + (KBW - (keyW*n + keyGap*(n-1))) / 2;
+            for (int c = 0; c < n; ++c) {
+                int kx = rowX + c*(keyW+keyGap);
+                cv::Rect kr{kx, rowY, keyW, keyH};
+                keyRects_.push_back(kr);
+                bool hov = ((int)keyRects_.size()-1 == hovKey_);
+                cv::Scalar bg   = hov ? cv::Scalar(30,80,120) : cv::Scalar(14,24,42);
+                cv::Scalar bord = hov ? cv::Scalar(0,220,255) : cv::Scalar(30,60,90);
+                cv::rectangle(frame, kr, bg, cv::FILLED);
+                cv::rectangle(frame, kr, bord, 1, cv::LINE_AA);
+                std::string label = row[c];
+                if (!showNumbers_ && shiftActive_ && !label.empty())
+                    label[0] = (char)std::toupper((unsigned char)label[0]);
+                int bl=0; cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_DUPLEX, 0.55, 1, &bl);
+                cv::putText(frame, label, {kx+(keyW-ts.width)/2, rowY+keyH/2+7},
+                            cv::FONT_HERSHEY_DUPLEX, 0.55, hov?cv::Scalar(255,255,255):cv::Scalar(180,200,220),
+                            1, cv::LINE_AA);
+            }
+            rowY += keyH + keyGap;
+        }
+
+        int ctrlY  = rowY;
+        int ctrlH  = keyH;
+
+        btnNumToggle_ = {KBX+keyGap, ctrlY, 90, ctrlH};
+        bool hNum = btnNumToggle_.contains(hovPt_);
+        cv::rectangle(frame, btnNumToggle_, hNum?cv::Scalar(30,50,80):cv::Scalar(10,20,35), cv::FILLED);
+        cv::rectangle(frame, btnNumToggle_, cv::Scalar(40,80,120), 1, cv::LINE_AA);
+        cv::putText(frame, showNumbers_?"ABC":"123", {btnNumToggle_.x+18, ctrlY+ctrlH/2+7},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(160,200,230), 1, cv::LINE_AA);
+
+        if (!showNumbers_) {
+            btnShift_ = {KBX+keyGap+95, ctrlY, 70, ctrlH};
+            bool hSh = btnShift_.contains(hovPt_);
+            cv::Scalar shBord = shiftActive_ ? cv::Scalar(0,220,120) : cv::Scalar(40,80,120);
+            cv::rectangle(frame, btnShift_, hSh?cv::Scalar(20,50,30):cv::Scalar(10,20,35), cv::FILLED);
+            cv::rectangle(frame, btnShift_, shBord, 1, cv::LINE_AA);
+            cv::putText(frame, "SHIFT", {btnShift_.x+6, ctrlY+ctrlH/2+7},
+                        cv::FONT_HERSHEY_DUPLEX, 0.42, shiftActive_?cv::Scalar(0,230,120):cv::Scalar(140,180,200),
+                        1, cv::LINE_AA);
+        } else {
+            btnShift_ = {0,0,0,0};
+        }
+
+        int spX = KBX + (showNumbers_ ? 100+keyGap*2 : 175+keyGap*2);
+        int spW = KBW - spX + KBX - 100 - keyGap*3 - 90;
+        btnSpace_ = {spX, ctrlY, spW, ctrlH};
+        bool hSp = btnSpace_.contains(hovPt_);
+        cv::rectangle(frame, btnSpace_, hSp?cv::Scalar(25,50,80):cv::Scalar(12,20,38), cv::FILLED);
+        cv::rectangle(frame, btnSpace_, cv::Scalar(30,70,110), 1, cv::LINE_AA);
+        cv::putText(frame, "ESPACIO", {spX+spW/2-36, ctrlY+ctrlH/2+7},
+                    cv::FONT_HERSHEY_DUPLEX, 0.46, cv::Scalar(120,160,190), 1, cv::LINE_AA);
+
+        btnBackspace_ = {KBX+KBW-keyGap-90, ctrlY, 90, ctrlH};
+        bool hBs = btnBackspace_.contains(hovPt_);
+        cv::rectangle(frame, btnBackspace_, hBs?cv::Scalar(60,20,20):cv::Scalar(25,10,10), cv::FILLED);
+        cv::rectangle(frame, btnBackspace_, cv::Scalar(140,40,40), 1, cv::LINE_AA);
+        cv::putText(frame, "<-", {btnBackspace_.x+20, ctrlY+ctrlH/2+7},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(220,100,100), 1, cv::LINE_AA);
+
+        int btnRow2Y = ctrlY + ctrlH + keyGap;
+        btnOk_ = {KBX+KBW-keyGap-200, btnRow2Y, 200, ctrlH-6};
+        bool hOk = btnOk_.contains(hovPt_);
+        cv::rectangle(frame, btnOk_, hOk?cv::Scalar(0,60,20):cv::Scalar(0,30,10), cv::FILLED);
+        cv::rectangle(frame, btnOk_, cv::Scalar(0,180,80), hOk?2:1, cv::LINE_AA);
+        cv::putText(frame, "GUARDAR", {btnOk_.x+28, btnRow2Y+ctrlH/2+1},
+                    cv::FONT_HERSHEY_DUPLEX, 0.55, cv::Scalar(0,230,100), 1, cv::LINE_AA);
+
+        btnCancel_ = {KBX+keyGap, btnRow2Y, 130, ctrlH-6};
+        bool hCan = btnCancel_.contains(hovPt_);
+        cv::rectangle(frame, btnCancel_, hCan?cv::Scalar(40,30,10):cv::Scalar(18,14,6), cv::FILLED);
+        cv::rectangle(frame, btnCancel_, cv::Scalar(140,100,30), hCan?2:1, cv::LINE_AA);
+        cv::putText(frame, "CANCELAR", {btnCancel_.x+4, btnRow2Y+ctrlH/2+1},
+                    cv::FONT_HERSHEY_DUPLEX, 0.42, cv::Scalar(200,160,60), 1, cv::LINE_AA);
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 
 YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
 {
@@ -69,8 +280,10 @@ YarenGameManager::YarenGameManager() : Node("yaren_game_manager")
     emotion_counts_[4] = 0;
     emotion_counts_[5] = 0;
     emotion_counts_[6] = 0;
+    patient_name_ = "";
 
     if (use_help_ || is_session_) {
+        // En sesión las vidas no se usan (ver handle_failed_challenge); se deja el valor por consistencia
         lives_ = 5; 
         load_challenges_robot_from_yaml();
     } else {
@@ -146,16 +359,32 @@ void YarenGameManager::show_intro_screen()
     cv::setWindowProperty(win_name, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
     cv::setWindowProperty(win_name, cv::WND_PROP_TOPMOST, 1);
 
+    // ── TECLADO PARA LA SESIÓN CLÍNICA ──
+    OnScreenKeyboard keyboard;
+    if (is_session_) {
+        keyboard.show(is_english_ ? "Patient Name (Letters, numbers, _):" : "Nombre del Paciente (Letras, num, _):", "");
+        patient_name_ = "";
+    }
+
     IntroData idata {false, cv::Rect(300, 370, 200, 52)};
 
+    // Estructura combinada para manejar ambos (botón y teclado)
+    struct CallbackData {
+        IntroData* idata;
+        OnScreenKeyboard* kb;
+    };
+    CallbackData cbData {&idata, &keyboard};
+
     cv::setMouseCallback(win_name, [](int event, int x, int y, int, void* userdata) {
-        if (event == cv::EVENT_LBUTTONDOWN) {
-            IntroData* data = static_cast<IntroData*>(userdata);
-            if (data->btn.contains(cv::Point(x, y))) {
-                data->clicked = true;
+        CallbackData* data = static_cast<CallbackData*>(userdata);
+        if (data->kb->visible) {
+            data->kb->handleMouse(event, x, y);
+        } else {
+            if (event == cv::EVENT_LBUTTONDOWN && data->idata->btn.contains(cv::Point(x, y))) {
+                data->idata->clicked = true;
             }
         }
-    }, &idata);
+    }, &cbData);
 
     std::system("xdotool search --sync --name 'Yaren Dice - Intro' windowactivate --sync windowraise 2>/dev/null &");
 
@@ -205,9 +434,39 @@ void YarenGameManager::show_intro_screen()
         cv::Size bs = cv::getTextSize(btn_lbl, cv::FONT_HERSHEY_DUPLEX, 0.8, 2, &bl);
         cv::putText(frame, btn_lbl, cv::Point(idata.btn.x + (idata.btn.width - bs.width)/2, idata.btn.y + 34), cv::FONT_HERSHEY_DUPLEX, 0.8, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
 
+        // Si el teclado está visible (sesión activa y aún no ingresan nombre), dibujarlo encima.
+        if (keyboard.visible) {
+            keyboard.render(frame);
+            if (keyboard.confirmed) {
+                patient_name_ = keyboard.text.empty() ? "Paciente_Anonimo" : keyboard.text;
+                keyboard.hide(); 
+            } else if (keyboard.cancelled) {
+                auto msg = std::make_unique<std_msgs::msg::String>();
+                msg->data = "idle";
+                ui_state_publisher_->publish(std::move(msg));
+                rclcpp::shutdown();
+                break;
+            }
+        }
+
         cv::imshow(win_name, frame);
         int key = cv::waitKey(16) & 0xFF;
-        if (key == 27) { // ESC para salir si es necesario
+
+        if (keyboard.visible && key != -1 && key != 255) {
+            if (key == 8 || key == 127) {   // Backspace
+                if (!keyboard.text.empty()) keyboard.text.pop_back();
+            } else if (key == 13 || key == 10) { // Enter -> confirmar
+                patient_name_ = keyboard.text.empty() ? "Paciente_Anonimo" : keyboard.text;
+                keyboard.hide();
+            } else if (key >= 32 && key <= 126) {
+                char ch = static_cast<char>(key);
+                if (std::isalnum(ch) || ch == '_') {
+                    if (keyboard.text.size() < 20) keyboard.text += ch;
+                }
+            }
+        }
+
+        if (key == 27) { // ESC para salir
             auto msg = std::make_unique<std_msgs::msg::String>();
             msg->data = "idle";
             ui_state_publisher_->publish(std::move(msg));
@@ -534,6 +793,10 @@ void YarenGameManager::end_game()
 
     // Notificamos que la sesión cerró para que la ventana de control también se limpie
     session_aborted_ = true; 
+
+    // Duración de la sesión (desde que el usuario pulsó COMENZAR)
+    double duracion_seg = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - game_start_time_).count();
     
     double concentration_index = 0.0;
     int success_rate = 0;
@@ -571,6 +834,8 @@ void YarenGameManager::end_game()
     std::ostringstream json_payload;
     json_payload << "{"
                  << "\"action\": \"session_report\", "
+                 << "\"paciente\": \"" << (patient_name_.empty() ? "Anonimo" : patient_name_) << "\", "
+                 << "\"duracion_seg\": " << static_cast<int>(duracion_seg) << ", "
                  << "\"poses_logradas\": " << successful_attempts_ << ", "
                  << "\"fallos\": " << (total_attempts_ - successful_attempts_) << ", "
                  << "\"tasa_exito\": " << success_rate << ", "
@@ -596,6 +861,9 @@ void YarenGameManager::end_game()
         "La sesión ha finalizado.";
     
     feedback_publisher_->publish(std::move(game_over_msg));
+
+    // Deja que el reporte salga hacia el bridge antes de cerrar el nodo
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
     rclcpp::shutdown();
 }
 
@@ -669,18 +937,15 @@ void YarenGameManager::handle_failed_challenge(const std::string& feedback_text)
     
     total_attempts_++; 
 
-    // En sesión clínica NO descontamos vidas ni cortamos el juego
+    // En sesión clínica NO hay vidas y el fallo NO cuenta como desafío jugado:
+    // el paciente repite con otra pose hasta lograr 10 aciertos.
+    // El fallo queda registrado en total_attempts_ para el reporte.
     if (is_session_) {
         auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-        feedback_msg->data = is_english_ ? "Don't worry, let's go with the next pose." : "No te preocupes, vamos con la siguiente pose.";
+        feedback_msg->data = is_english_ ? "Don't worry, let's try another pose." : "No te preocupes, intentemos otra pose.";
         feedback_publisher_->publish(std::move(feedback_msg));
         std::this_thread::sleep_for(std::chrono::seconds(2));
-
-        challenges_played_++;
-        if (challenges_played_ >= 10) {
-            end_game();
-            return;
-        }
+        // SIN challenges_played_++: solo cuentan los aciertos
     } 
     else {
         lives_--;
