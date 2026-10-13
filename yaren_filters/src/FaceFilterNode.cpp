@@ -1,9 +1,6 @@
-// face_filter_node.cpp  —  LifecycleNode (Accesorios / Fondos)
-// ─────────────────────────────────────────────────────────────
-// on_configure  → carga assets, crea filtros (una sola vez)
-// on_activate   → crea sync/pub, lanza hilo de UI
-// on_deactivate → destruye sync/pub, para hilo de UI
-// ─────────────────────────────────────────────────────────────
+// face_filter_node.cpp  —  LifecycleNode (Accesorios)
+// Menu : estilo "dress-up" (Yaren a la izquierda + tabs verticales + grid de 4 + conjuntos)
+// Intro: estilo ficha Pokemon (logo, titulo, badges, descripcion recortada, boton, Yaren a la derecha)
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -23,74 +20,96 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <array>
+#include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
 using namespace message_filters;
-using ImageMsg    = sensor_msgs::msg::Image;
-using Landmarks   = yaren_interfaces::msg::Landmarks;
-using ApproximateTimePolicy =
-    sync_policies::ApproximateTime<ImageMsg, Landmarks>;
-using CallbackReturn =
-    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+using ImageMsg  = sensor_msgs::msg::Image;
+using Landmarks = yaren_interfaces::msg::Landmarks;
+using ApproximateTimePolicy = sync_policies::ApproximateTime<ImageMsg, Landmarks>;
+using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
-// ── Constantes de layout / structs ───────────────────────────
-
+// ── Layout / constantes ──────────────────────────────────────
 static const int  WIN_W      = 800;
 static const int  WIN_H      = 480;
 static const char MENU_WIN[] = "Face Filter Menu";
 static const char CAM_WIN[]  = "Face Filter";
+static const char YAREN_IMG[] = "/home/roberto/robotis_ws/src/YAREN2/yaren_face_display/icons/yaren.png";
 
-struct LangStrings {
-    std::string menu_title, apply_btn, categories_title,
-                disabled_txt, active_txt, of_txt;
-    bool is_eng;
-    std::string cat_label(const std::string& id) const {
-        if (is_eng) {
-            if (id=="hat")     return "Hat";
-            if (id=="glasses") return "Glasses";
-            if (id=="nose")    return "Nose";
-            if (id=="mouth")   return "Mouth";
-            if (id=="mask")    return "Mask";
-        } else {
-            if (id=="hat")     return "Sombrero";
-            if (id=="glasses") return "Gafas";
-            if (id=="nose")    return "Nariz";
-            if (id=="mouth")   return "Boca";
-            if (id=="mask")    return "Mascara";
-        }
-        return id;
-    }
-};
+enum { C_HAT = 0, C_GLASSES, C_NOSE, C_MOUTH, C_MASK, N_CATS };
+static const int TAB_SETS = N_CATS;       // tab 5 = conjuntos
+static const int N_TABS   = N_CATS + 1;
 
-static LangStrings get_strings(bool en) {
-    LangStrings s; s.is_eng = en;
-    if (en) { s.menu_title="Configure your accessories"; s.apply_btn="Apply";
-              s.categories_title="CATEGORIES"; s.disabled_txt="disabled";
-              s.active_txt=" active"; s.of_txt=" of "; }
-    else    { s.menu_title="Configura tus accesorios";   s.apply_btn="Aplicar";
-              s.categories_title="CATEGORIAS"; s.disabled_txt="desactivado";
-              s.active_txt=" activo"; s.of_txt=" de "; }
-    return s;
-}
+static cv::Scalar rgb(int r, int g, int b) { return cv::Scalar(b, g, r); }
 
-struct Category { std::string id, icon_char; cv::Scalar color; std::string assets_subdir; };
+static const cv::Scalar WHITE(255, 255, 255);
+static const cv::Scalar COL_ORANGE_TOP = rgb(247, 190, 80);
+static const cv::Scalar COL_ORANGE_BOT = rgb(236, 148, 38);
+static const cv::Scalar COL_PANEL      = rgb(214, 218, 160);
+static const cv::Scalar COL_CARD       = rgb(233, 236, 192);
+static const cv::Scalar COL_CARD_SHD   = rgb(190, 195, 135);
+static const cv::Scalar COL_TAB_IDLE   = rgb(190, 197, 130);
+static const cv::Scalar COL_TAB_ACTIVE = rgb(252, 252, 238);
+static const cv::Scalar COL_OLIVE      = rgb(110, 140, 20);
+static const cv::Scalar COL_SEL        = rgb(245, 160, 40);
+static const cv::Scalar COL_LABEL      = rgb(235, 140, 30);
+
+struct Category { std::string id; cv::Scalar accent; std::string assets_subdir; };
 static const std::vector<Category> CATS = {
-    {"hat",     "HAT",  {50,180,255}, "hats"   },
-    {"glasses", "GLASS",{200,100,50}, "glasses"},
-    {"nose",    "NOSE", {60,200,100}, "noses"  },
-    {"mouth",   "MOUTH",{100,60,220}, "mouths" },
-    {"mask",    "MASK", {180,30,180}, "faces"  },
+    {"hat",     rgb(240,160, 40), "hats"   },
+    {"glasses", rgb( 50,150,220), "glasses"},
+    {"nose",    rgb( 60,190,100), "noses"  },
+    {"mouth",   rgb(220, 70,120), "mouths" },
+    {"mask",    rgb(150, 80,200), "faces"  },
 };
 
 struct CatState {
-    int  index=-1, max_idx=0;
-    bool enabled=false;
-    std::vector<cv::Mat> previews;
+    int  index = -1, max_idx = 0;
+    bool enabled = false;
+    std::vector<cv::Mat>     previews;
+    std::vector<std::string> names;   // stems de archivo
 };
 
-// ── Helpers de dibujo ────────────────────────────────────────
+// ── Textos ES/EN ─────────────────────────────────────────────
+struct Txt {
+    std::string title, apply, clear, sets_tab, intro1, intro2, intro_desc, start;
+    std::string cat[N_CATS];
+};
+static Txt make_txt(bool en) {
+    Txt t;
+    t.title = "Yaren";
+    if (en) {
+        t.apply = "Apply"; t.clear = "Clear all"; t.sets_tab = "Sets";
+        t.intro1 = "Face"; t.intro2 = "Accessories"; t.start = "Start";
+        t.intro_desc = "Dress up Yaren and yourself in real time. Mix hats, glasses, noses, mouths and masks, or pick a ready-made set.";
+        t.cat[0]="Hats"; t.cat[1]="Glasses"; t.cat[2]="Noses"; t.cat[3]="Mouths"; t.cat[4]="Masks";
+    } else {
+        t.apply = "Aplicar"; t.clear = "Quitar todo"; t.sets_tab = "Conjuntos";
+        t.intro1 = "Accesorios"; t.intro2 = "Faciales"; t.start = "Comenzar";
+        t.intro_desc = "Viste a Yaren y a ti en tiempo real. Combina sombreros, gafas, narices, bocas y mascaras, o elige un conjunto listo.";
+        t.cat[0]="Sombrero"; t.cat[1]="Gafas"; t.cat[2]="Nariz"; t.cat[3]="Boca"; t.cat[4]="Mascara";
+    }
+    return t;
+}
+
+// ── Utilidades ───────────────────────────────────────────────
+static double now_sec() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+static double clampd(double v, double a, double b) { return std::max(a, std::min(b, v)); }
+static double out_cubic_d(double x) { x = clampd(x, 0, 1); return 1.0 - std::pow(1.0 - x, 3); }
+static double out_back_d(double x) {
+    x = clampd(x, 0, 1);
+    const double c1 = 1.70158, c3 = c1 + 1.0;
+    return 1.0 + c3 * std::pow(x - 1.0, 3) + c1 * std::pow(x - 1.0, 2);
+}
 
 static void overlay_rgba_menu(cv::Mat& bg, const cv::Mat& fg, int ox, int oy) {
     if (fg.empty()) return;
@@ -114,7 +133,112 @@ static void overlay_rgba_menu(cv::Mat& bg, const cv::Mat& fg, int ox, int oy) {
     cv::Mat o8; out.convertTo(o8,CV_8UC3,255.); o8.copyTo(bc);
 }
 
-static std::vector<cv::Mat> load_thumbs(const std::string& dir, int tw, int th) {
+static void drawRoundedRect(cv::Mat& img, cv::Rect rec, cv::Scalar color, int radius) {
+    if (rec.width <= 0 || rec.height <= 0) return;
+    if (radius<0) radius=0;
+    radius=std::min({radius,rec.width/2,rec.height/2});
+    cv::rectangle(img,cv::Point(rec.x+radius,rec.y),cv::Point(rec.x+rec.width-radius,rec.y+rec.height),color,-1,cv::LINE_AA);
+    cv::rectangle(img,cv::Point(rec.x,rec.y+radius),cv::Point(rec.x+rec.width,rec.y+rec.height-radius),color,-1,cv::LINE_AA);
+    cv::circle(img,cv::Point(rec.x+radius,rec.y+radius),radius,color,-1,cv::LINE_AA);
+    cv::circle(img,cv::Point(rec.x+rec.width-radius,rec.y+radius),radius,color,-1,cv::LINE_AA);
+    cv::circle(img,cv::Point(rec.x+radius,rec.y+rec.height-radius),radius,color,-1,cv::LINE_AA);
+    cv::circle(img,cv::Point(rec.x+rec.width-radius,rec.y+rec.height-radius),radius,color,-1,cv::LINE_AA);
+}
+static void rrect(cv::Mat& img, cv::Rect r, const cv::Scalar& c, int rad) { drawRoundedRect(img, r, c, rad); }
+static void rrect_border(cv::Mat& img, cv::Rect r, const cv::Scalar& fill, const cv::Scalar& border, int rad, int bw) {
+    drawRoundedRect(img, r, border, rad);
+    drawRoundedRect(img, cv::Rect(r.x+bw, r.y+bw, r.width-2*bw, r.height-2*bw), fill, std::max(0, rad-bw));
+}
+
+static void vgrad(cv::Mat& img, const cv::Rect& r, const cv::Scalar& a, const cv::Scalar& b) {
+    for (int y = 0; y < r.height; ++y) {
+        double k = r.height > 1 ? (double)y / (r.height - 1) : 0.0;
+        img(cv::Rect(r.x, r.y + y, r.width, 1)).setTo(a * (1.0 - k) + b * k);
+    }
+}
+
+static void shadow_txt(cv::Mat& f, const std::string& s, cv::Point o, int font, double sc,
+                       const cv::Scalar& col, int th, const cv::Scalar& shd = cv::Scalar(60,35,10)) {
+    cv::putText(f, s, cv::Point(o.x+2, o.y+2), font, sc, shd, th+2, cv::LINE_AA);
+    cv::putText(f, s, o, font, sc, col, th, cv::LINE_AA);
+}
+
+static void ctext(cv::Mat& f, const std::string& s, const cv::Rect& r, int font, double sc,
+                  const cv::Scalar& col, int th, int dx = 0) {
+    int b = 0; cv::Size z = cv::getTextSize(s, font, sc, th, &b);
+    cv::putText(f, s, cv::Point(r.x + (r.width - z.width)/2 + dx, r.y + (r.height + z.height)/2),
+                font, sc, col, th, cv::LINE_AA);
+}
+
+static std::string fit_text(const std::string& s, int font, double sc, int maxw) {
+    int b = 0;
+    if (cv::getTextSize(s, font, sc, 1, &b).width <= maxw) return s;
+    std::string t = s;
+    while (!t.empty() && cv::getTextSize(t + "..", font, sc, 1, &b).width > maxw) t.pop_back();
+    return t + "..";
+}
+
+static std::string upper(std::string s) {
+    for (auto& c : s) c = (char)std::toupper((unsigned char)c);
+    return s;
+}
+static std::string pretty(const std::string& stem) {
+    std::string o = stem;
+    for (auto& c : o) if (c=='_'||c=='-') c=' ';
+    return upper(o);
+}
+
+// Envuelve texto y recorta con "..." si no cabe en maxlines
+static std::vector<std::string> wrap_text(const std::string& s, int font, double sc, int maxw, int maxlines) {
+    std::vector<std::string> lines; std::istringstream iss(s);
+    std::string w, line; int b = 0; bool cut = false;
+    while (iss >> w) {
+        std::string test = line.empty() ? w : line + " " + w;
+        if (cv::getTextSize(test, font, sc, 1, &b).width > maxw && !line.empty()) {
+            lines.push_back(line); line = w;
+            if ((int)lines.size() == maxlines) { cut = true; line.clear(); break; }
+        } else line = test;
+    }
+    if (!cut && !line.empty()) lines.push_back(line);
+    if (cut) {
+        std::string l = lines.back();
+        while (!l.empty() && cv::getTextSize(l + "...", font, sc, 1, &b).width > maxw) l.pop_back();
+        lines.back() = l + "...";
+    }
+    return lines;
+}
+
+// ── Iconos vectoriales (0..4 categorias, 5 = corazon/conjuntos) ──
+static void draw_icon(cv::Mat& f, int kind, cv::Point c, int r, const cv::Scalar& col) {
+    const int L = cv::LINE_AA; const int th = std::max(2, r/5);
+    switch (kind) {
+    case 0: {
+        cv::ellipse(f, cv::Point(c.x, c.y + r/2), cv::Size(r, std::max(2, r/4)), 0, 0, 360, col, -1, L);
+        std::vector<cv::Point> p = {{c.x-r/2,c.y+r/2},{c.x-r/3,c.y-r},{c.x+r/3,c.y-r},{c.x+r/2,c.y+r/2}};
+        cv::fillPoly(f, p, col, L); break; }
+    case 1: {
+        int rr = std::max(2, r/2 + 1);
+        cv::circle(f, cv::Point(c.x - r/2 - 1, c.y), rr, col, th, L);
+        cv::circle(f, cv::Point(c.x + r/2 + 1, c.y), rr, col, th, L);
+        cv::line(f, cv::Point(c.x - 1, c.y - 1), cv::Point(c.x + 1, c.y - 1), col, th, L); break; }
+    case 2:
+        cv::circle(f, c, std::max(2, (int)(r*0.65)), col, -1, L); break;
+    case 3:
+        cv::ellipse(f, cv::Point(c.x, c.y - r/3), cv::Size(r, (int)(r*0.9)), 0, 25, 155, col, th+1, L); break;
+    case 4:
+        cv::ellipse(f, c, cv::Size(r, (int)(r*0.78)), 0, 0, 360, col, -1, L); break;
+    default: {
+        int cr = std::max(2, (int)(r*0.55));
+        cv::circle(f, cv::Point(c.x - r/2, c.y - r/4), cr, col, -1, L);
+        cv::circle(f, cv::Point(c.x + r/2, c.y - r/4), cr, col, -1, L);
+        std::vector<cv::Point> p = {{c.x-(int)(r*0.97),c.y-r/6},{c.x+(int)(r*0.97),c.y-r/6},{c.x,c.y+r}};
+        cv::fillPoly(f, p, col, L); break; }
+    }
+}
+
+// ── Carga de assets ──────────────────────────────────────────
+static std::vector<cv::Mat> load_thumbs(const std::string& dir, int tw, int th,
+                                        std::vector<std::string>* names) {
     std::vector<cv::Mat> out;
     try {
         namespace fs = std::filesystem;
@@ -131,205 +255,522 @@ static std::vector<cv::Mat> load_thumbs(const std::string& dir, int tw, int th) 
                 cv::Rect bb=cv::boundingRect(ch[3]);if(bb.area()>0)img=img(bb).clone();}
             double s=std::min((double)tw/img.cols,(double)th/img.rows);
             cv::Mat thumb;
-            cv::resize(img,thumb,cv::Size((int)(img.cols*s),(int)(img.rows*s)),0,0,cv::INTER_AREA);
+            cv::resize(img,thumb,cv::Size(std::max(1,(int)(img.cols*s)),std::max(1,(int)(img.rows*s))),
+                       0,0,s<1.0?cv::INTER_AREA:cv::INTER_LINEAR);
             out.push_back(thumb);
+            if (names) names->push_back(fs::path(f).stem().string());
         }
     } catch(...) {}
     return out;
 }
 
+// ── Imagen de Yaren ──────────────────────────────────────────
+// Se recorta al bbox del alfa (~492x541 px con el yaren.png actual).
+static cv::Mat make_fallback_robot() {
+    cv::Mat r(541, 492, CV_8UC4, cv::Scalar(0,0,0,0));
+    auto C = [](int rr,int g,int b){ return cv::Scalar(b,g,rr,255); };
+    drawRoundedRect(r, cv::Rect(118,0,320,276),   C(245,180,20), 70);
+    drawRoundedRect(r, cv::Rect(150,36,256,170),  C(15,15,20),   40);
+    cv::circle(r, {216,128}, 28, C(220,220,255), -1, cv::LINE_AA);
+    cv::circle(r, {316,128}, 28, C(220,220,255), -1, cv::LINE_AA);
+    drawRoundedRect(r, cv::Rect(150,300,240,190), C(245,180,20), 60);
+    return r;
+}
+
+static cv::Mat load_robot() {
+    cv::Mat img = cv::imread(YAREN_IMG, cv::IMREAD_UNCHANGED);
+    if (img.empty()) {
+        try {
+            std::string p = ament_index_cpp::get_package_share_directory("yaren_face_display") + "/icons/yaren.png";
+            img = cv::imread(p, cv::IMREAD_UNCHANGED);
+        } catch (...) {}
+    }
+    if (img.empty()) return make_fallback_robot();
+    if (img.channels()==3) cv::cvtColor(img,img,cv::COLOR_BGR2BGRA);
+    if (img.channels()!=4) return make_fallback_robot();
+    std::vector<cv::Mat> ch; cv::split(img,ch);
+    cv::Rect bb=cv::boundingRect(ch[3]); if (bb.area()>0) img=img(bb).clone();
+    return img;
+}
+
+static cv::Rect fit_box(const cv::Mat& img, const cv::Rect& area) {
+    double s = std::min((double)area.width/img.cols, (double)area.height/img.rows);
+    int w = std::max(1,(int)(img.cols*s)), h = std::max(1,(int)(img.rows*s));
+    return {area.x + (area.width-w)/2, area.y + (area.height-h)/2, w, h};
+}
+
+// ── Anclas de cada accesorio sobre Yaren ─────────────────────
+// Fracciones de la imagen recortada (cx, cy, ancho). bottom=true -> cy es el borde INFERIOR del item.
+// AJUSTA ESTOS VALORES si los accesorios no calzan.
+struct Anchor { float cx, cy, w; bool bottom; };
+static const Anchor ANCH[N_CATS] = {
+    {0.56f, 0.08f, 0.74f, true },   // hat
+    {0.54f, 0.30f, 0.44f, false},   // glasses
+    {0.54f, 0.36f, 0.09f, false},   // nose
+    {0.54f, 0.40f, 0.17f, false},   // mouth
+    {0.54f, 0.29f, 0.50f, false},   // mask
+};
+
+// Vista: zona de la imagen que se muestra (fracciones; puede salirse de [0,1] para dar espacio a sombreros)
+struct View { float x, y, w, h; };
+static const View VIEW_FULL{0.00f, -0.30f, 1.00f, 1.30f};   // cuerpo completo
+static const View VIEW_HEAD{0.12f, -0.35f, 0.88f, 0.91f};   // solo cabeza (tarjetas)
+
+struct Geo { cv::Rect vbox, F; };   // vbox = vista en pantalla, F = imagen completa en pantalla
+static Geo make_geo(const cv::Mat& robot, const View& v, const cv::Rect& area) {
+    double vw = v.w * robot.cols, vh = v.h * robot.rows;
+    double s = std::min(area.width / vw, area.height / vh);
+    int bw = std::max(1, (int)(vw * s)), bh = std::max(1, (int)(vh * s));
+    Geo g;
+    g.vbox = cv::Rect(area.x + (area.width - bw) / 2, area.y + (area.height - bh) / 2, bw, bh);
+    g.F = cv::Rect(g.vbox.x - (int)(v.x * robot.cols * s), g.vbox.y - (int)(v.y * robot.rows * s),
+                   std::max(1, (int)(robot.cols * s)), std::max(1, (int)(robot.rows * s)));
+    return g;
+}
+
+static void place_item(cv::Mat& dst, const cv::Mat& item, const cv::Rect& F, const Anchor& a) {
+    if (item.empty()) return;
+    double s = (a.w * F.width) / item.cols;
+    double maxh = F.height * 0.45;
+    if (item.rows * s > maxh) s = maxh / item.rows;
+    cv::Mat r;
+    cv::resize(item, r, cv::Size(std::max(1,(int)(item.cols*s)), std::max(1,(int)(item.rows*s))),
+               0, 0, s < 1.0 ? cv::INTER_AREA : cv::INTER_LINEAR);
+    int ox = F.x + (int)(a.cx * F.width) - r.cols/2;
+    int oy = F.y + (int)(a.cy * F.height) - (a.bottom ? r.rows : r.rows/2);
+    overlay_rgba_menu(dst, r, ox, oy);
+}
+
+static void draw_robot_items(cv::Mat& dst, const cv::Mat& robot, const Geo& g,
+                             const std::vector<CatState>& assets, const std::array<int,N_CATS>& sel) {
+    cv::Mat rs;
+    cv::resize(robot, rs, g.F.size(), 0, 0, g.F.width < robot.cols ? cv::INTER_AREA : cv::INTER_LINEAR);
+    cv::Rect clip = g.F & g.vbox & cv::Rect(0, 0, dst.cols, dst.rows);
+    if (clip.area() > 0)
+        overlay_rgba_menu(dst, rs(cv::Rect(clip.x - g.F.x, clip.y - g.F.y, clip.width, clip.height)), clip.x, clip.y);
+    auto put = [&](int c) {
+        int i = sel[c];
+        if (i < 0 || c >= (int)assets.size() || i >= (int)assets[c].previews.size()) return;
+        place_item(dst, assets[c].previews[i], g.F, ANCH[c]);
+    };
+    if (sel[C_MASK] >= 0) put(C_MASK);
+    else { put(C_MOUTH); put(C_NOSE); put(C_GLASSES); put(C_HAT); }
+}
+
+static std::array<int,N_CATS> current_sel(const std::vector<CatState>& st) {
+    std::array<int,N_CATS> s; s.fill(-1);
+    for (int c = 0; c < N_CATS && c < (int)st.size(); ++c)
+        s[c] = (st[c].enabled && st[c].index >= 0) ? st[c].index : -1;
+    return s;
+}
+
+// ── Conjuntos predefinidos ───────────────────────────────────
+// kw = palabras clave (separadas por '|') buscadas en el nombre del archivo.
+// Si no hay coincidencia usa el indice fb (modulo cantidad). kw "" = categoria vacia.
+struct SetDef { const char* es; const char* en; const char* kw[N_CATS]; int fb[N_CATS]; };
+static const SetDef SET_DEFS[] = {
+    {"Zombie",   "Zombie",  {"zombie|top|bone|hat", "zombie|skull|cracked|dark", "", "zombie|fang|teeth|vampire|skull", ""}, {0,2,-1,0,-1}},
+    {"Pirata",   "Pirate",  {"pirat", "pirat|patch|parche", "", "beard|barba|mustach", ""}, {1,1,-1,1,-1}},
+    {"Fiesta",   "Party",   {"party|fiesta|cone|birth", "party|star|fiesta|heart", "clown|red|payaso", "", ""}, {2,2,1,-1,-1}},
+    {"Cool",     "Cool",    {"cap|gorra|hip", "sun|cool|shade|black", "", "", ""}, {3,0,-1,-1,-1}},
+    {"Payaso",   "Clown",   {"clown|payaso|wig|peluca", "", "clown|payaso|red|roja", "clown|payaso|smile", ""}, {4,-1,0,2,-1}},
+    {"Mascara",  "Mask",    {"", "", "", "", "mask|face|masc"}, {-1,-1,-1,-1,0}},
+};
+
+struct ResolvedSet { std::string es, en; std::array<int,N_CATS> sel; };
+
+static int find_item(const CatState& cs, const std::string& kws, int fb) {
+    if (kws.empty() || cs.max_idx <= 0) return -1;
+    std::vector<std::string> keys; std::stringstream ss(kws); std::string k;
+    while (std::getline(ss, k, '|')) if (!k.empty()) keys.push_back(k);
+    for (int i = 0; i < (int)cs.names.size(); ++i) {
+        std::string n = cs.names[i];
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+        for (auto& kk : keys) if (n.find(kk) != std::string::npos) return i;
+    }
+    return fb >= 0 ? fb % cs.max_idx : -1;
+}
+
+static std::vector<ResolvedSet> resolve_sets(const std::vector<CatState>& st) {
+    std::vector<ResolvedSet> out;
+    for (const auto& d : SET_DEFS) {
+        ResolvedSet r; r.es = d.es; r.en = d.en; r.sel.fill(-1);
+        bool any = false;
+        for (int c = 0; c < N_CATS && c < (int)st.size(); ++c) {
+            r.sel[c] = find_item(st[c], d.kw[c], d.fb[c]);
+            if (r.sel[c] >= 0) any = true;
+        }
+        if (any) out.push_back(r);
+    }
+    return out;
+}
+
+// ── Datos del menu ───────────────────────────────────────────
+static const int CARD_IMG_W = 206, CARD_IMG_H = 158;
+
+struct MenuData {
+    cv::Mat robot;
+    std::vector<CatState>* states = nullptr;
+    std::vector<ResolvedSet> sets;
+    std::vector<cv::Mat> set_cards;
+};
+
+static void build_set_cards(MenuData& md) {
+    md.set_cards.clear();
+    for (auto& s : md.sets) {
+        cv::Mat c(CARD_IMG_H, CARD_IMG_W, CV_8UC3, COL_CARD);
+        Geo g = make_geo(md.robot, VIEW_HEAD, cv::Rect(2, 2, CARD_IMG_W - 4, CARD_IMG_H - 4));
+        draw_robot_items(c, md.robot, g, *md.states, s.sel);
+        md.set_cards.push_back(c);
+    }
+}
+
+static bool set_matches(const std::vector<CatState>& st, const ResolvedSet& rs) {
+    for (int c = 0; c < N_CATS; ++c) {
+        bool en = st[c].enabled;
+        if (rs.sel[c] < 0) { if (en) return false; }
+        else if (!en || st[c].index != rs.sel[c]) return false;
+    }
+    return true;
+}
+
+// ── Estado del mouse / rects ─────────────────────────────────
 struct MenuMouseState {
-    int hovered_cat=-1,hovered_arrow=-1,scroll_y=0,max_scroll_y=0,last_mouse_y=0;
-    bool apply_hit=false,close_hit=false,is_dragging=false;
+    int  tab = TAB_SETS, scroll_y = 0, max_scroll_y = 0, last_y = 0;
+    bool apply_hit = false, close_hit = false, down = false, dragged = false;
+    cv::Point down_pt{0,0};
 };
-struct UIRects {
-    cv::Rect toggle[5],prev[5],next[5],apply,close;
-};
+struct UIRects { cv::Rect tab[N_TABS], apply, clear, close; };
 static UIRects g_ui;
 
-static void drawRoundedRect(cv::Mat& img, cv::Rect rec, cv::Scalar color, int radius, int thickness=-1) {
-    if (radius<0) radius=0;
-    radius=std::min({radius,rec.width/2,rec.height/2});
-    if (thickness<0){
-        cv::rectangle(img,cv::Point(rec.x+radius,rec.y),cv::Point(rec.x+rec.width-radius,rec.y+rec.height),color,-1,cv::LINE_AA);
-        cv::rectangle(img,cv::Point(rec.x,rec.y+radius),cv::Point(rec.x+rec.width,rec.y+rec.height-radius),color,-1,cv::LINE_AA);
-        cv::circle(img,cv::Point(rec.x+radius,rec.y+radius),radius,color,-1,cv::LINE_AA);
-        cv::circle(img,cv::Point(rec.x+rec.width-radius,rec.y+radius),radius,color,-1,cv::LINE_AA);
-        cv::circle(img,cv::Point(rec.x+radius,rec.y+rec.height-radius),radius,color,-1,cv::LINE_AA);
-        cv::circle(img,cv::Point(rec.x+rec.width-radius,rec.y+rec.height-radius),radius,color,-1,cv::LINE_AA);
-    } else {
-        cv::line(img,cv::Point(rec.x+radius,rec.y),cv::Point(rec.x+rec.width-radius,rec.y),color,thickness,cv::LINE_AA);
-        cv::line(img,cv::Point(rec.x+radius,rec.y+rec.height),cv::Point(rec.x+rec.width-radius,rec.y+rec.height),color,thickness,cv::LINE_AA);
-        cv::line(img,cv::Point(rec.x,rec.y+radius),cv::Point(rec.x,rec.y+rec.height-radius),color,thickness,cv::LINE_AA);
-        cv::line(img,cv::Point(rec.x+rec.width,rec.y+radius),cv::Point(rec.x+rec.width,rec.y+rec.height-radius),color,thickness,cv::LINE_AA);
-        cv::ellipse(img,cv::Point(rec.x+radius,rec.y+radius),cv::Size(radius,radius),180,0,90,color,thickness,cv::LINE_AA);
-        cv::ellipse(img,cv::Point(rec.x+rec.width-radius,rec.y+radius),cv::Size(radius,radius),270,0,90,color,thickness,cv::LINE_AA);
-        cv::ellipse(img,cv::Point(rec.x+rec.width-radius,rec.y+rec.height-radius),cv::Size(radius,radius),0,0,90,color,thickness,cv::LINE_AA);
-        cv::ellipse(img,cv::Point(rec.x+radius,rec.y+rec.height-radius),cv::Size(radius,radius),90,0,90,color,thickness,cv::LINE_AA);
-    }
+// Panel de opciones: 2 columnas x 2 filas = 4 visibles (el resto con scroll)
+static const cv::Rect PANEL_R(300, 14, 486, 452);
+static const cv::Rect GV(308, 22, 470, 436);
+static const int CARD_W = 222, CARD_H = 208, CARD_GAP = 12;
+
+static cv::Rect card_rect(int i, int scroll) {
+    return cv::Rect(6 + (i % 2) * (CARD_W + CARD_GAP), 2 + (i / 2) * (CARD_H + CARD_GAP) - scroll, CARD_W, CARD_H);
+}
+static int tab_item_count(const MenuData& md, int tab) {
+    return tab < N_CATS ? (*md.states)[tab].max_idx : (int)md.sets.size();
 }
 
-static void draw_menu(cv::Mat& canvas, const std::vector<CatState>& states,
-                      MenuMouseState* ms, bool is_english)
+// ── Dibujo del menu ──────────────────────────────────────────
+static void draw_menu(cv::Mat& canvas, MenuData& md, MenuMouseState& ms, bool en)
 {
-    LangStrings txt = get_strings(is_english);
-    canvas.setTo(cv::Scalar(20,13,13));
-    const cv::Scalar BG_HEADER(31,19,19), BORDER_COLOR(58,42,42),
-                     TEXT_LIGHT(240,226,226), TEXT_MUTED(160,124,124),
-                     APPLY_GREEN(52,101,22), CAT_HEADER_BG(30,14,30);
-    static const char* CAT_ICO[] = {"HAT","EYE","NSE","MCH","MSK"};
-    static const cv::Scalar ICON_BG[] = {{30,60,160},{20,120,200},{40,160,80},{160,40,120},{100,30,180}};
-    static const cv::Scalar ACCENT[]  = {{30,60,160},{20,120,200},{40,160,80},{160,40,120},{100,30,180}};
-    static const cv::Scalar ROW_BDR[] = {{30,60,160},{20,120,200},{40,160,80},{160,40,120},{100,30,180}};
+    const Txt t = make_txt(en);
+    const std::vector<CatState>& st = *md.states;
+    const double tm = now_sec();
+    const int F = cv::FONT_HERSHEY_SIMPLEX, FD = cv::FONT_HERSHEY_DUPLEX;
 
-    cv::rectangle(canvas,cv::Rect(0,0,WIN_W,55),BG_HEADER,cv::FILLED);
-    cv::line(canvas,{0,55},{WIN_W,55},BORDER_COLOR,1);
-    drawRoundedRect(canvas,cv::Rect(18,17,20,20),cv::Scalar(74,37,83),4);
-    cv::putText(canvas,txt.menu_title,{46,35},cv::FONT_HERSHEY_SIMPLEX,0.6,TEXT_LIGHT,1,cv::LINE_AA);
-    g_ui.close=cv::Rect(WIN_W-45,12,32,32);
-    drawRoundedRect(canvas,g_ui.close,cv::Scalar(26,26,58),8);
-    cv::line(canvas,{g_ui.close.x+10,g_ui.close.y+10},{g_ui.close.x+22,g_ui.close.y+22},cv::Scalar(113,113,248),2,cv::LINE_AA);
-    cv::line(canvas,{g_ui.close.x+22,g_ui.close.y+10},{g_ui.close.x+10,g_ui.close.y+22},cv::Scalar(113,113,248),2,cv::LINE_AA);
-    const int LEFT_W=380;
-    cv::line(canvas,{LEFT_W,55},{LEFT_W,WIN_H-55},BORDER_COLOR,1);
-    cv::rectangle(canvas,cv::Rect(0,55,LEFT_W,28),CAT_HEADER_BG,cv::FILLED);
-    cv::line(canvas,{0,83},{LEFT_W,83},cv::Scalar(30,30,46),1);
-    cv::putText(canvas,txt.categories_title,{14,73},cv::FONT_HERSHEY_SIMPLEX,0.33,TEXT_MUTED,1,cv::LINE_AA);
-    int row_y=90;
-    for (int i=0;i<(int)CATS.size();++i){
-        const auto& cat=CATS[i]; const auto& st=states[i];
-        g_ui.toggle[i]=cv::Rect(8,row_y,LEFT_W-16,54);
-        if (st.enabled){
-            drawRoundedRect(canvas,g_ui.toggle[i],cv::Scalar(ROW_BDR[i][0]/6,ROW_BDR[i][1]/6,ROW_BDR[i][2]/6),8);
-            drawRoundedRect(canvas,g_ui.toggle[i],ROW_BDR[i],8,1);
-            cv::Rect ib(g_ui.toggle[i].x+10,row_y+10,34,34);
-            drawRoundedRect(canvas,ib,ICON_BG[i],8);
-            cv::putText(canvas,CAT_ICO[i],{ib.x+2,ib.y+22},cv::FONT_HERSHEY_SIMPLEX,0.28,ACCENT[i],1,cv::LINE_AA);
-            cv::putText(canvas,txt.cat_label(cat.id),{g_ui.toggle[i].x+54,row_y+24},cv::FONT_HERSHEY_SIMPLEX,0.48,TEXT_LIGHT,1,cv::LINE_AA);
-            char buf[32]; snprintf(buf,sizeof(buf),"%d%s%d",st.index+1,txt.of_txt.c_str(),st.max_idx);            
-            cv::putText(canvas,buf,{g_ui.toggle[i].x+54,row_y+40},cv::FONT_HERSHEY_SIMPLEX,0.36,TEXT_MUTED,1,cv::LINE_AA);
-            cv::Point cc{g_ui.toggle[i].x+g_ui.toggle[i].width-20,row_y+27};
-            cv::circle(canvas,cc,11,ROW_BDR[i],-1,cv::LINE_AA);
-            cv::line(canvas,{cc.x-6,cc.y},{cc.x-2,cc.y+5},TEXT_LIGHT,2,cv::LINE_AA);
-            cv::line(canvas,{cc.x-2,cc.y+5},{cc.x+6,cc.y-5},TEXT_LIGHT,2,cv::LINE_AA);
+    vgrad(canvas, cv::Rect(0, 0, WIN_W, WIN_H), COL_ORANGE_TOP, COL_ORANGE_BOT);
+
+    // cerrar + titulo
+    g_ui.close = cv::Rect(14, 12, 34, 34);
+    rrect(canvas, g_ui.close, rgb(205, 70, 70), 10);
+    cv::line(canvas, {g_ui.close.x+10, g_ui.close.y+10}, {g_ui.close.x+24, g_ui.close.y+24}, WHITE, 3, cv::LINE_AA);
+    cv::line(canvas, {g_ui.close.x+24, g_ui.close.y+10}, {g_ui.close.x+10, g_ui.close.y+24}, WHITE, 3, cv::LINE_AA);
+    shadow_txt(canvas, t.title, {58, 40}, FD, 1.0, WHITE, 2);
+
+    // Yaren con lo que esta seleccionado
+    cv::Rect area(8, 56, 214, 272);
+    area.y += (int)(3.0 * std::sin(tm * 2.5));
+    Geo g = make_geo(md.robot, VIEW_FULL, area);
+    cv::ellipse(canvas, cv::Point(g.F.x + (int)(g.F.width * 0.45), g.F.y + g.F.height + 3),
+                cv::Size((int)(g.F.width * 0.24), 8), 0, 0, 360, rgb(205,122,22), cv::FILLED, cv::LINE_AA);
+    draw_robot_items(canvas, md.robot, g, st, current_sel(st));
+
+    // botones izquierda
+    g_ui.clear = cv::Rect(14, 346, 210, 36);
+    rrect(canvas, g_ui.clear, rgb(255, 228, 170), 12);
+    ctext(canvas, t.clear, g_ui.clear, FD, 0.55, rgb(200, 110, 20), 1);
+
+    g_ui.apply = cv::Rect(14, 392, 210, 60);
+    rrect(canvas, cv::Rect(g_ui.apply.x, g_ui.apply.y + 4, g_ui.apply.width, g_ui.apply.height), rgb(70, 95, 10), 16);
+    rrect(canvas, g_ui.apply, COL_OLIVE, 16);
+    int my = g_ui.apply.y + g_ui.apply.height / 2;
+    std::vector<cv::Point> tri = {{g_ui.apply.x+36, my-11}, {g_ui.apply.x+36, my+11}, {g_ui.apply.x+54, my}};
+    cv::fillPoly(canvas, tri, WHITE, cv::LINE_AA);
+    ctext(canvas, t.apply, g_ui.apply, FD, 0.9, WHITE, 2, 16);
+
+    // tabs VERTICALES (inactivas primero)
+    const int TX = 228, TW = 72, TH = 64, TG = 6, TY = 24;
+    for (int i = 0; i < N_TABS; ++i) g_ui.tab[i] = cv::Rect(TX, TY + i * (TH + TG), TW, TH);
+    for (int i = 0; i < N_TABS; ++i)
+        if (i != ms.tab) rrect(canvas, g_ui.tab[i], COL_TAB_IDLE, 14);
+
+    rrect(canvas, PANEL_R, COL_PANEL, 22);
+
+    {
+        cv::Rect a = g_ui.tab[ms.tab];
+        rrect(canvas, cv::Rect(a.x, a.y, a.width + 10, a.height), COL_TAB_ACTIVE, 14);   // se une al panel
+    }
+    for (int i = 0; i < N_TABS; ++i) {
+        cv::Rect r = g_ui.tab[i];
+        bool active = (i == ms.tab);
+        cv::Scalar ic = active ? (i < N_CATS ? CATS[i].accent : rgb(230, 60, 80)) : COL_OLIVE;
+        draw_icon(canvas, i, cv::Point(r.x + r.width/2, r.y + 22), 11, ic);
+        std::string lb = (i < N_CATS) ? t.cat[i] : t.sets_tab;
+        ctext(canvas, fit_text(lb, F, 0.36, r.width - 4), cv::Rect(r.x, r.y + 40, r.width, 16), F, 0.36, ic, 1);
+        if (i < N_CATS && st[i].enabled)
+            cv::circle(canvas, cv::Point(r.x + r.width - 10, r.y + 10), 5, COL_SEL, -1, cv::LINE_AA);
+    }
+
+    // grid (2 columnas, 4 visibles)
+    int n = tab_item_count(md, ms.tab);
+    int rows = (n + 1) / 2;
+    int content = rows * (CARD_H + CARD_GAP) + 4;
+    ms.max_scroll_y = std::max(0, content - GV.height);
+    ms.scroll_y = std::clamp(ms.scroll_y, 0, ms.max_scroll_y);
+
+    cv::Mat gv = canvas(GV);
+    for (int i = 0; i < n; ++i) {
+        cv::Rect card = card_rect(i, ms.scroll_y);
+        if (card.y + card.height < 0 || card.y > GV.height) continue;
+
+        bool selected;
+        if (ms.tab < N_CATS) selected = st[ms.tab].enabled && st[ms.tab].index == i;
+        else                 selected = set_matches(st, md.sets[i]);
+
+        rrect(gv, cv::Rect(card.x, card.y + 3, card.width, card.height), COL_CARD_SHD, 16);
+        if (selected) rrect_border(gv, card, COL_CARD, COL_SEL, 16, 4);
+        else          rrect(gv, card, COL_CARD, 16);
+
+        cv::Rect area(card.x + 8, card.y + 8, CARD_IMG_W, CARD_IMG_H);
+        std::string label;
+        if (ms.tab < N_CATS) {
+            const cv::Mat& th = st[ms.tab].previews[i];
+            cv::Rect fb = fit_box(th, cv::Rect(area.x + 10, area.y + 6, area.width - 20, area.height - 12));
+            cv::Mat rs; cv::resize(th, rs, fb.size(), 0, 0, cv::INTER_AREA);
+            overlay_rgba_menu(gv, rs, fb.x, fb.y);
+            label = pretty(st[ms.tab].names[i]);
         } else {
-            drawRoundedRect(canvas,g_ui.toggle[i],cv::Scalar(30,20,30),8);
-            cv::Rect ib(g_ui.toggle[i].x+10,row_y+10,34,34);
-            cv::Scalar ib_dim(ICON_BG[i][0]/2,ICON_BG[i][1]/2,ICON_BG[i][2]/2);
-            drawRoundedRect(canvas,ib,ib_dim,8);
-            cv::putText(canvas,CAT_ICO[i],{ib.x+2,ib.y+22},cv::FONT_HERSHEY_SIMPLEX,0.28,TEXT_MUTED,1,cv::LINE_AA);
-            cv::putText(canvas,txt.cat_label(cat.id),{g_ui.toggle[i].x+54,row_y+24},cv::FONT_HERSHEY_SIMPLEX,0.48,TEXT_MUTED,1,cv::LINE_AA);
-            cv::putText(canvas,txt.disabled_txt,{g_ui.toggle[i].x+54,row_y+40},cv::FONT_HERSHEY_SIMPLEX,0.36,cv::Scalar(90,58,90),1,cv::LINE_AA);
+            overlay_rgba_menu(gv, md.set_cards[i], area.x, area.y);
+            label = upper(en ? md.sets[i].en : md.sets[i].es);
         }
-        row_y+=59;
-    }
-    const int RX=LEFT_W+16,RY=65,RW=WIN_W-RX-16,RH=(WIN_H-55)-RY;
-    cv::Rect right_view(RX,RY,RW,RH);
-    cv::Mat right_canvas(RH,RW,CV_8UC3,cv::Scalar(20,13,13));
-    const int CARD_H=176,CARD_SP=10;
-    int active_count=0; for(const auto& s:states) if(s.enabled) active_count++;
-    int total_h=active_count*(CARD_H+CARD_SP);
-    ms->max_scroll_y=std::max(0,total_h-RH);
-    ms->scroll_y=std::clamp(ms->scroll_y,0,ms->max_scroll_y);
-    int cur_y=-ms->scroll_y;
-    for(int i=0;i<(int)CATS.size();++i){
-        g_ui.prev[i]=g_ui.next[i]=cv::Rect(0,0,0,0);
-        if (!states[i].enabled) continue;
-        if (cur_y+CARD_H<0||cur_y>RH){cur_y+=CARD_H+CARD_SP;continue;}
-        const auto& st=states[i];
-        cv::Rect card(0,cur_y,RW-15,CARD_H);
-        drawRoundedRect(right_canvas,card,cv::Scalar(26,14,26),10);
-        drawRoundedRect(right_canvas,card,cv::Scalar(58,42,42),10,1);
-        std::string title=txt.cat_label(CATS[i].id)+txt.active_txt;
-        std::transform(title.begin(),title.end(),title.begin(),::toupper);
-        cv::putText(right_canvas,title,{card.x+12,card.y+18},cv::FONT_HERSHEY_SIMPLEX,0.33,cv::Scalar(160,124,124),1,cv::LINE_AA);
-        cv::Rect pbox(card.x+12,card.y+24,card.width-24,100);
-        drawRoundedRect(right_canvas,pbox,cv::Scalar(19,19,31),8);
-        drawRoundedRect(right_canvas,pbox,cv::Scalar(58,42,42),8,1);
-        if (st.index>=0&&st.index<(int)st.previews.size()&&!st.previews[st.index].empty()){
-            const cv::Mat& thumb=st.previews[st.index];
-            double sc=std::min((double)(pbox.width-16)/thumb.cols,82.0/thumb.rows);
-            cv::Mat ts; cv::resize(thumb,ts,cv::Size((int)(thumb.cols*sc),(int)(thumb.rows*sc)),0,0,cv::INTER_AREA);
-            overlay_rgba_menu(right_canvas,ts,pbox.x+(pbox.width-ts.cols)/2,pbox.y+(pbox.height-ts.rows)/2);
+        label = fit_text(label, FD, 0.6, CARD_W - 20);
+        ctext(gv, label, cv::Rect(card.x, card.y + CARD_H - 40, card.width, 32), FD, 0.6, COL_LABEL, 1);
+
+        if (selected) {
+            cv::Point bc(card.x + card.width - 20, card.y + 20);
+            cv::circle(gv, bc, 12, COL_SEL, -1, cv::LINE_AA);
+            cv::line(gv, {bc.x-5, bc.y}, {bc.x-1, bc.y+4}, WHITE, 2, cv::LINE_AA);
+            cv::line(gv, {bc.x-1, bc.y+4}, {bc.x+6, bc.y-4}, WHITE, 2, cv::LINE_AA);
         }
-        cv::Rect bprev(card.x+12,card.y+134,32,32),bnext(card.x+card.width-44,card.y+134,32,32);
-        drawRoundedRect(right_canvas,bprev,cv::Scalar(80,36,80),8);
-        drawRoundedRect(right_canvas,bnext,cv::Scalar(80,36,80),8);
-        cv::putText(right_canvas,"<",{bprev.x+10,bprev.y+22},cv::FONT_HERSHEY_SIMPLEX,0.6,ACCENT[i],2,cv::LINE_AA);
-        cv::putText(right_canvas,">",{bnext.x+10,bnext.y+22},cv::FONT_HERSHEY_SIMPLEX,0.6,ACCENT[i],2,cv::LINE_AA);
-        char buf[32]; snprintf(buf,sizeof(buf),"%d%s%d",st.index+1,txt.of_txt.c_str(),st.max_idx);
-        int tw=cv::getTextSize(buf,cv::FONT_HERSHEY_SIMPLEX,0.45,1,nullptr).width;
-        cv::putText(right_canvas,buf,{card.x+(card.width-tw)/2,card.y+154},cv::FONT_HERSHEY_SIMPLEX,0.45,cv::Scalar(144,144,176),1,cv::LINE_AA);
-        g_ui.prev[i]=cv::Rect(RX+bprev.x,RY+bprev.y,bprev.width,bprev.height)&right_view;
-        g_ui.next[i]=cv::Rect(RX+bnext.x,RY+bnext.y,bnext.width,bnext.height)&right_view;
-        cur_y+=CARD_H+CARD_SP;
     }
-    if (ms->max_scroll_y>0){
-        float vr=(float)RH/total_h; int hh=std::max(30,(int)(RH*vr));
-        float sr=(float)ms->scroll_y/ms->max_scroll_y; int hy=(int)(sr*(RH-hh));
-        drawRoundedRect(right_canvas,cv::Rect(RW-7,0,6,RH),cv::Scalar(30,20,30),3);
-        drawRoundedRect(right_canvas,cv::Rect(RW-7,hy,6,hh),cv::Scalar(80,60,80),3);
+
+    // scrollbar
+    if (ms.max_scroll_y > 0) {
+        float vr = (float)GV.height / content; int hh = std::max(30, (int)(GV.height * vr));
+        float sr = (float)ms.scroll_y / ms.max_scroll_y; int hy = (int)(sr * (GV.height - hh));
+        rrect(gv, cv::Rect(GV.width - 7, 0, 6, GV.height), COL_CARD_SHD, 3);
+        rrect(gv, cv::Rect(GV.width - 7, hy, 6, hh), COL_OLIVE, 3);
     }
-    right_canvas.copyTo(canvas(right_view));
-    cv::rectangle(canvas,cv::Rect(0,WIN_H-55,WIN_W,55),BG_HEADER,cv::FILLED);
-    cv::line(canvas,{0,WIN_H-55},{WIN_W,WIN_H-55},BORDER_COLOR,1);
-    int px=14,py=WIN_H-55+13;
-    for(int i=0;i<(int)CATS.size();++i){
-        if(!states[i].enabled) continue;
-        cv::Scalar pbg(ICON_BG[i][0]/3,ICON_BG[i][1]/3,ICON_BG[i][2]/3);
-        int lw=cv::getTextSize(txt.cat_label(CATS[i].id),cv::FONT_HERSHEY_SIMPLEX,0.33,1,nullptr).width;
-        cv::Rect pill(px,py,lw+26,26);
-        drawRoundedRect(canvas,pill,pbg,6);
-        cv::circle(canvas,{pill.x+10,pill.y+13},4,ACCENT[i],-1,cv::LINE_AA);
-        cv::putText(canvas,txt.cat_label(CATS[i].id),{pill.x+18,pill.y+18},cv::FONT_HERSHEY_SIMPLEX,0.33,ACCENT[i],1,cv::LINE_AA);
-        px+=pill.width+6;
-    }
-    g_ui.apply=cv::Rect(WIN_W-140,WIN_H-45,120,35);
-    drawRoundedRect(canvas,g_ui.apply,APPLY_GREEN,8);
-    std::vector<cv::Point> tri={{g_ui.apply.x+18,g_ui.apply.y+10},{g_ui.apply.x+18,g_ui.apply.y+25},{g_ui.apply.x+30,g_ui.apply.y+17}};
-    cv::fillPoly(canvas,tri,cv::Scalar(255,255,255));
-    cv::putText(canvas,txt.apply_btn,{g_ui.apply.x+36,g_ui.apply.y+23},cv::FONT_HERSHEY_SIMPLEX,0.55,cv::Scalar(255,255,255),1,cv::LINE_AA);
 }
 
-struct MenuContext { MenuMouseState* ms; std::vector<CatState>* states; };
+// ── Logica de seleccion ──────────────────────────────────────
+static void select_item(std::vector<CatState>& st, int cat, int i) {
+    auto& s = st[cat];
+    if (s.enabled && s.index == i) { s.enabled = false; return; }
+    s.enabled = true; s.index = i;
+    if (cat == C_MASK) { for (int j = 0; j < C_MASK; ++j) st[j].enabled = false; }
+    else st[C_MASK].enabled = false;
+}
+static void apply_set(std::vector<CatState>& st, const ResolvedSet& rs) {
+    for (int c = 0; c < N_CATS; ++c) {
+        st[c].enabled = rs.sel[c] >= 0;
+        if (rs.sel[c] >= 0) st[c].index = rs.sel[c];
+    }
+}
+
+struct MenuContext { MenuMouseState* ms; MenuData* md; };
 
 static void on_menu_mouse(int event, int x, int y, int flags, void* ud) {
-    auto* ctx=reinterpret_cast<MenuContext*>(ud);
-    auto* ms=ctx->ms; auto* states=ctx->states;
-    if (event==cv::EVENT_MOUSEWHEEL){
-        int d=cv::getMouseWheelDelta(flags);
-        if(d>0) ms->scroll_y-=40; else ms->scroll_y+=40;
-        ms->scroll_y=std::clamp(ms->scroll_y,0,ms->max_scroll_y); return;
+    auto* c = reinterpret_cast<MenuContext*>(ud);
+    MenuMouseState& ms = *c->ms; MenuData& md = *c->md;
+    auto& st = *md.states;
+
+    if (event == cv::EVENT_MOUSEWHEEL) {
+        int d = cv::getMouseWheelDelta(flags);
+        ms.scroll_y += (d > 0 ? -60 : 60);
+        ms.scroll_y = std::clamp(ms.scroll_y, 0, ms.max_scroll_y);
+        return;
     }
-    if (event==cv::EVENT_MOUSEMOVE){
-        if(ms->is_dragging){int dy=y-ms->last_mouse_y;ms->scroll_y-=dy;
-            ms->scroll_y=std::clamp(ms->scroll_y,0,ms->max_scroll_y);ms->last_mouse_y=y;} return;
-    }
-    if (event==cv::EVENT_LBUTTONUP){ms->is_dragging=false; return;}
-    if (event!=cv::EVENT_LBUTTONDOWN) return;
-    if (g_ui.close.contains({x,y})){ms->close_hit=true;return;}
-    if (g_ui.apply.contains({x,y})){ms->apply_hit=true;return;}
-    for(int i=0;i<(int)CATS.size();++i){
-        if(g_ui.toggle[i].contains({x,y})){
-            states->at(i).enabled=!states->at(i).enabled;
-            if(states->at(i).enabled){
-                if(i==4){for(int j=0;j<4;++j)states->at(j).enabled=false;}
-                else if(states->size()>4) states->at(4).enabled=false;
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        cv::Point p(x, y);
+        if (g_ui.close.contains(p)) { ms.close_hit = true; return; }
+        if (g_ui.apply.contains(p)) { ms.apply_hit = true; return; }
+        if (g_ui.clear.contains(p)) { for (auto& s : st) s.enabled = false; return; }
+        for (int i = 0; i < N_TABS; ++i)
+            if (g_ui.tab[i].contains(p)) {
+                if (ms.tab != i) { ms.tab = i; ms.scroll_y = 0; }
+                return;
             }
-            if(states->at(i).enabled&&states->at(i).index<0&&states->at(i).max_idx>0)
-                states->at(i).index=0;
-            return;
-        }
-        if(states->at(i).enabled){
-            if(g_ui.prev[i].contains({x,y})){auto& s=states->at(i);s.index=(s.index-1+s.max_idx)%s.max_idx;return;}
-            if(g_ui.next[i].contains({x,y})){auto& s=states->at(i);s.index=(s.index+1)%s.max_idx;return;}
-        }
+        if (GV.contains(p)) { ms.down = true; ms.dragged = false; ms.last_y = y; ms.down_pt = p; }
+        return;
     }
-    if(x>380&&ms->max_scroll_y>0){ms->is_dragging=true;ms->last_mouse_y=y;}
+    if (event == cv::EVENT_MOUSEMOVE) {
+        if (ms.down) {
+            if (std::abs(y - ms.down_pt.y) > 6) ms.dragged = true;
+            if (ms.dragged) {
+                ms.scroll_y -= (y - ms.last_y);
+                ms.scroll_y = std::clamp(ms.scroll_y, 0, ms.max_scroll_y);
+            }
+            ms.last_y = y;
+        }
+        return;
+    }
+    if (event == cv::EVENT_LBUTTONUP) {
+        if (ms.down && !ms.dragged) {
+            cv::Point rel(ms.down_pt.x - GV.x, ms.down_pt.y - GV.y);
+            int n = tab_item_count(md, ms.tab);
+            for (int i = 0; i < n; ++i) {
+                if (!card_rect(i, ms.scroll_y).contains(rel)) continue;
+                if (ms.tab < N_CATS) select_item(st, ms.tab, i);
+                else                 apply_set(st, md.sets[i]);
+                break;
+            }
+        }
+        ms.down = false;
+    }
 }
 
-static void on_cam_mouse(int event,int,int,int,void* ud){
-    if(event==cv::EVENT_LBUTTONDOWN)*reinterpret_cast<std::atomic<bool>*>(ud)=true;
+static void on_cam_mouse(int event, int, int, int, void* ud) {
+    if (event == cv::EVENT_LBUTTONDOWN) *reinterpret_cast<std::atomic<bool>*>(ud) = true;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  INTRO (estilo ficha Pokemon)
+// ══════════════════════════════════════════════════════════════
+static bool show_intro_screen(bool en, const MenuData& md)
+{
+    const int W = 800, H = 480;
+    const char* WIN = "Face Filter Intro";
+    struct St { bool clicked = false; bool hover = false; cv::Rect btn; } st;
+    st.btn = cv::Rect(50, 372, 390, 56);
+    bool closed = false;
+
+    cv::namedWindow(WIN, cv::WINDOW_NORMAL);
+    cv::setWindowProperty(WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+    cv::setWindowProperty(WIN, cv::WND_PROP_TOPMOST, 1);
+    cv::setMouseCallback(WIN, [](int event, int x, int y, int, void* ud) {
+        auto* s = reinterpret_cast<St*>(ud);
+        bool in = s->btn.contains(cv::Point(x, y));
+        if (event == cv::EVENT_MOUSEMOVE) s->hover = in;
+        else if (event == cv::EVENT_LBUTTONDOWN && in) s->clicked = true;
+    }, &st);
+
+    const Txt t = make_txt(en);
+    const int FD = cv::FONT_HERSHEY_DUPLEX, FS = cv::FONT_HERSHEY_SIMPLEX;
+    const cv::Scalar DARKG = rgb(20, 80, 25);
+    std::vector<std::string> lines = wrap_text(t.intro_desc, FS, 0.5, 390, 4);   // max 4 lineas, recorta con "..."
+
+    const double t0 = now_sec(), CYCLE = 2.6;
+    int base = 0;
+
+    while (!st.clicked && !closed) {
+        double tm = now_sec() - t0;
+        cv::Mat frame(H, W, CV_8UC3);
+        vgrad(frame, cv::Rect(0, 0, W, H), rgb(50, 160, 40), rgb(125, 225, 95));
+
+        // aro tipo pokebola + hojas
+        {
+            cv::Mat ov = frame.clone();
+            cv::circle(ov, cv::Point(615, 262), 195, WHITE, 16, cv::LINE_AA);
+            cv::circle(ov, cv::Point(615, 262), 150, WHITE, -1, cv::LINE_AA);
+            for (int i = 0; i < 7; ++i) {
+                cv::ellipse(ov, cv::Point(24 + i * 120, H - 22 - (i % 2) * 14), cv::Size(16, 8),
+                            30 + i * 25, 0, 360, WHITE, -1, cv::LINE_AA);
+            }
+            cv::addWeighted(ov, 0.10, frame, 0.90, 0, frame);
+        }
+
+        // logo (texto con contorno)
+        {
+            cv::Size ls = cv::getTextSize("YAREN", FD, 1.6, 3, &base);
+            cv::Point o((W - ls.width) / 2, 64);
+            cv::putText(frame, "YAREN", o, FD, 1.6, DARKG, 10, cv::LINE_AA);
+            cv::putText(frame, "YAREN", o, FD, 1.6, WHITE, 3, cv::LINE_AA);
+        }
+
+        // Yaren a la derecha con conjunto rotando
+        {
+            int ns = (int)md.sets.size();
+            std::array<int,N_CATS> sel; sel.fill(-1);
+            std::string chip;
+            double local = std::fmod(tm, CYCLE) / CYCLE;
+            if (ns > 0) {
+                int si = ((int)(tm / CYCLE)) % ns;
+                sel = md.sets[si].sel;
+                chip = upper(en ? md.sets[si].en : md.sets[si].es);
+            }
+            double pop = out_back_d(local / 0.2);
+            double sc = 0.75 + 0.25 * pop;
+            cv::Rect base_area(470, 84, 290, 330);
+            int aw = std::max(8, (int)(base_area.width * sc)), ah = std::max(8, (int)(base_area.height * sc));
+            int bob = (int)(8.0 * std::sin(tm * 2.2));
+            cv::Rect area(base_area.x + (base_area.width - aw) / 2,
+                          base_area.y + base_area.height - ah + bob, aw, ah);
+            Geo g = make_geo(md.robot, VIEW_FULL, area);
+
+            cv::Mat ov = frame.clone();
+            cv::ellipse(ov, cv::Point(g.F.x + (int)(g.F.width * 0.45), base_area.y + base_area.height + 6),
+                        cv::Size((int)(g.F.width * 0.25), 10), 0, 0, 360, cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
+            cv::addWeighted(ov, 0.22, frame, 0.78, 0, frame);
+
+            draw_robot_items(frame, md.robot, g, *md.states, sel);
+
+            if (!chip.empty()) {
+                cv::Rect pill(515, 436, 200, 32);
+                rrect(frame, pill, WHITE, 16);
+                ctext(frame, fit_text(chip, FD, 0.6, 180), pill, FD, 0.6, DARKG, 1);
+            }
+        }
+
+        // columna izquierda (entra deslizando)
+        double a_in = out_cubic_d(tm / 0.8);
+        int dx = (int)(-60 * (1.0 - a_in));
+
+        shadow_txt(frame, t.intro1, cv::Point(50 + dx, 142), FD, 1.6, WHITE, 3, DARKG);
+        shadow_txt(frame, t.intro2, cv::Point(50 + dx, 200), FD, 1.6, WHITE, 3, DARKG);
+
+        // badges
+        for (int i = 0; i < N_CATS; ++i) {
+            cv::Point c(68 + i * 44 + dx, 240);
+            cv::circle(frame, c, 17, WHITE, -1, cv::LINE_AA);
+            cv::circle(frame, c, 14, rgb(35, 115, 45), -1, cv::LINE_AA);
+            draw_icon(frame, i, c, 8, WHITE);
+        }
+
+        // descripcion
+        int y_d = 290;
+        for (const auto& ln : lines) {
+            cv::putText(frame, ln, cv::Point(51 + dx, y_d + 1), FS, 0.5, DARKG, 2, cv::LINE_AA);
+            cv::putText(frame, ln, cv::Point(50 + dx, y_d),     FS, 0.5, WHITE, 1, cv::LINE_AA);
+            y_d += 21;
+        }
+
+        // boton oscuro con rayo
+        {
+            cv::Rect b(st.btn.x + dx, st.btn.y, st.btn.width, st.btn.height);
+            rrect(frame, cv::Rect(b.x, b.y + 3, b.width, b.height), rgb(15, 40, 18), 14);
+            rrect(frame, b, st.hover ? rgb(45, 85, 50) : rgb(28, 58, 32), 14);
+            ctext(frame, t.start, b, FD, 0.85, WHITE, 2, 18);
+            cv::Size bs = cv::getTextSize(t.start, FD, 0.85, 2, &base);
+            int lx = b.x + (b.width - bs.width) / 2 + 18 - 26, ly = b.y + b.height / 2;
+            std::vector<cv::Point> bolt = {{lx+4,ly-12},{lx-7,ly+2},{lx-1,ly+2},{lx-4,ly+13},{lx+8,ly-3},{lx+1,ly-3}};
+            cv::fillPoly(frame, bolt, WHITE, cv::LINE_AA);
+        }
+
+        cv::imshow(WIN, frame);
+        int key = cv::waitKey(16);
+        if (key == 27) closed = true;
+        try {
+            if (cv::getWindowProperty(WIN, cv::WND_PROP_AUTOSIZE) == -1) closed = true;
+        } catch (...) { closed = true; }
+    }
+    cv::destroyWindow(WIN);
+    return st.clicked && !closed;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -341,8 +782,6 @@ public:
 
     FaceFilterNode() : rclcpp_lifecycle::LifecycleNode("face_filter_node") {}
 
-    // ── Lifecycle callbacks ──────────────────────────────────
-
     CallbackReturn on_configure(const rclcpp_lifecycle::State&) override {
         auto lang_qos = rclcpp::QoS(1).transient_local();
         language_sub_ = create_subscription<std_msgs::msg::Bool>(
@@ -353,10 +792,10 @@ public:
             });
 
         std::string ap = ament_index_cpp::get_package_share_directory("yaren_filters") + "/imgs";
-        std::vector<std::string> subdirs = {"hats","glasses","noses","mouths","faces"};
-        states_.resize(CATS.size());
+        states_.assign(CATS.size(), CatState());
         for (int i = 0; i < (int)CATS.size(); ++i) {
-            states_[i].previews = load_thumbs(ap + "/" + subdirs[i], 100, 70);
+            states_[i].names.clear();
+            states_[i].previews = load_thumbs(ap + "/" + CATS[i].assets_subdir, 240, 180, &states_[i].names);
             states_[i].max_idx  = (int)states_[i].previews.size();
             states_[i].index    = states_[i].max_idx > 0 ? 0 : -1;
             states_[i].enabled  = false;
@@ -368,13 +807,17 @@ public:
         hat_filter_        = std::make_shared<HatFilter>      (ap + "/hats");
         face_mask_filter_  = std::make_shared<FaceMaskFilter> (ap + "/faces");
 
-        RCLCPP_INFO(get_logger(), "Configurado. Assets cargados en RAM.");
+        md_.robot  = load_robot();
+        md_.states = &states_;
+        md_.sets   = resolve_sets(states_);
+        build_set_cards(md_);
+
+        RCLCPP_INFO(get_logger(), "Configurado. Assets cargados en RAM (%d conjuntos).", (int)md_.sets.size());
         mode_pub_ = this->create_publisher<std_msgs::msg::String>("/yaren_mode", 10);
         return CallbackReturn::SUCCESS;
     }
 
     CallbackReturn on_activate(const rclcpp_lifecycle::State&) override {
-        // Aprovechamos para usar el QoS correcto de la cámara (sensor_data)
         image_sub_.subscribe(this, "/csi_camera/image_raw", rmw_qos_profile_sensor_data);
         landmarks_sub_.subscribe(this, "/face_landmarks");
 
@@ -385,12 +828,8 @@ public:
         image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("filtered_image", 10);
         image_pub_->on_activate();
 
-        // Resetear estados de UI
         for (auto& s : states_) s.enabled = false;
-        
-        // ¡LA SOLUCIÓN MÁGICA AQUÍ ABAJO! 
-        // Inicializamos la lista activa para que no explote cuando llegue el primer frame
-        active_states_ = states_; 
+        active_states_ = states_;
 
         cam_clicked_ = false;
         ui_running_  = true;
@@ -421,6 +860,7 @@ public:
         glasses_filter_.reset(); mouth_filter_.reset();
         nose_filter_.reset();    hat_filter_.reset();
         face_mask_filter_.reset();
+        md_.sets.clear(); md_.set_cards.clear();
         states_.clear();
         RCLCPP_INFO(get_logger(), "Limpieza completada.");
         return CallbackReturn::SUCCESS;
@@ -434,142 +874,9 @@ public:
     }
 
 private:
-    // ── Intro screen ──────────────────────────────────────────────────────────────
-    static bool show_intro_screen(bool is_english)
-    {
-        const int W = 800, H = 480;
-        const char* WIN = "Face Filter Intro";
-        bool clicked = false, closed = false;
-
-        struct State { bool* clicked; cv::Rect btn; };
-        cv::Rect btn_rect(300, 370, 200, 52);
-        State st{ &clicked, btn_rect };
-
-        cv::namedWindow(WIN, cv::WINDOW_NORMAL);
-        cv::setWindowProperty(WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-        cv::setWindowProperty(WIN, cv::WND_PROP_TOPMOST, 1);
-        cv::setMouseCallback(WIN, [](int event, int x, int y, int, void* ud) {
-            auto* s = reinterpret_cast<State*>(ud);
-            if (event == cv::EVENT_LBUTTONDOWN && s->btn.contains({x, y}))
-                *s->clicked = true;
-        }, &st);
-
-        std::string title   = is_english ? "Face Accessories" : "Accesorios Faciales";
-        std::string desc    = is_english
-            ? "Combine hats, glasses, noses, mouths and masks on your face in real time. You can enable several at once."
-            : "Combina sombreros, gafas, narices, bocas y mascaras sobre tu rostro en tiempo real. Puedes activar varios a la vez.";
-        std::string btn_lbl = is_english ? "Start" : "Comenzar";
-        std::vector<std::string> tags = is_english
-            ? std::vector<std::string>{"Hats", "Glasses", "Noses", "Mouths", "Masks"}
-            : std::vector<std::string>{"Sombreros", "Gafas", "Narices", "Bocas", "Mascaras"};
-
-        cv::Scalar ACCENT(160, 40, 140);
-        cv::Scalar BG(18, 10, 18), PANEL(40, 20, 40);
-
-        while (!clicked && !closed) {
-            cv::Mat frame(H, W, CV_8UC3, BG);
-            cv::rectangle(frame, {100, 50}, {700, 440}, PANEL, -1);
-            cv::rectangle(frame, {100, 50}, {700, 440}, ACCENT, 1);
-
-            int base = 0;
-            // icono
-            int cx = W / 2, cy = 118;
-
-            // Cabeza
-            cv::circle(frame, {cx, cy}, 38, ACCENT, 2);
-
-            // Ojos (asomando sobre la máscara)
-            cv::circle(frame, {cx - 12, cy - 10}, 4, ACCENT, -1);  // ojo izquierdo
-            cv::circle(frame, {cx + 12, cy - 10}, 4, ACCENT, -1);  // ojo derecho
-
-            // Brillo en los ojos
-            cv::circle(frame, {cx - 10, cy - 12}, 2, cv::Scalar(240, 235, 255), -1);
-            cv::circle(frame, {cx + 14, cy - 12}, 2, cv::Scalar(240, 235, 255), -1);
-
-            // Máscara (rectángulo redondeado que cubre boca y nariz)
-            cv::Scalar MASK_COLOR(120, 20, 160);
-            cv::rectangle(frame, {cx - 22, cy + 2}, {cx + 22, cy + 28}, MASK_COLOR, -1);
-            cv::rectangle(frame, {cx - 22, cy + 2}, {cx + 22, cy + 28}, ACCENT, 2);
-
-            // Línea decorativa en la máscara
-            cv::line(frame, {cx - 20, cy + 15}, {cx + 20, cy + 15}, ACCENT, 1, cv::LINE_AA);
-
-            // Tirantes de la máscara
-            cv::line(frame, {cx - 22, cy + 8},  {cx - 38, cy + 5},  ACCENT, 2, cv::LINE_AA);
-            cv::line(frame, {cx + 22, cy + 8},  {cx + 38, cy + 5},  ACCENT, 2, cv::LINE_AA);
-            cv::line(frame, {cx - 22, cy + 20}, {cx - 38, cy + 22}, ACCENT, 2, cv::LINE_AA);
-            cv::line(frame, {cx + 22, cy + 20}, {cx + 38, cy + 22}, ACCENT, 2, cv::LINE_AA);
-
-            // título
-            cv::Size ts = cv::getTextSize(title, cv::FONT_HERSHEY_DUPLEX, 1.2, 2, &base);
-            cv::putText(frame, title, {(W - ts.width)/2, 205},
-                        cv::FONT_HERSHEY_DUPLEX, 1.2, cv::Scalar(240, 235, 255), 2, cv::LINE_AA);
-
-            // descripción
-            std::istringstream iss(desc);
-            std::string word, line;
-            std::vector<std::string> lines;
-            while (iss >> word) {
-                std::string test = line.empty() ? word : line + " " + word;
-                cv::Size sz = cv::getTextSize(test, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
-                if (sz.width > 500 && !line.empty()) { lines.push_back(line); line = word; }
-                else line = test;
-            }
-
-            // tags
-                        if (!line.empty()) lines.push_back(line);
-            int y_d = 245;
-            for (auto& ln : lines) {
-                cv::Size lsz = cv::getTextSize(ln, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
-                cv::putText(frame, ln, {(W - lsz.width)/2, y_d},
-                            cv::FONT_HERSHEY_SIMPLEX, 0.56, cv::Scalar(190, 150, 190), 1, cv::LINE_AA);
-                y_d += 24;
-            }
-
-            // tags — centrados   <-- AQUÍ VA EL NUEVO CÓDIGO
-            int total_tags_w = 0;
-            int pad = 10;
-            std::vector<int> tag_widths;
-            for (auto& tag : tags) {
-                cv::Size tgsz = cv::getTextSize(tag, cv::FONT_HERSHEY_SIMPLEX, 0.46, 1, &base);
-                tag_widths.push_back(tgsz.width);
-                total_tags_w += tgsz.width + pad * 2;
-            }
-            int gap = 10;
-            total_tags_w += gap * ((int)tags.size() - 1);
-            int tx = (W - total_tags_w) / 2;
-            for (int i = 0; i < (int)tags.size(); i++) {
-                int tw = tag_widths[i];
-                cv::rectangle(frame, {tx - pad, 318}, {tx + tw + pad, 340},
-                            cv::Scalar(40, 15, 40), -1);
-                cv::rectangle(frame, {tx - pad, 318}, {tx + tw + pad, 340},
-                            cv::Scalar(90, 40, 90), 1);
-                cv::putText(frame, tags[i], {tx, 334},
-                            cv::FONT_HERSHEY_SIMPLEX, 0.46, cv::Scalar(190, 150, 190), 1, cv::LINE_AA);
-                tx += tw + pad * 2 + gap;
-            }
-
-            // botón
-            cv::rectangle(frame, btn_rect, cv::Scalar(100, 20, 120), -1);
-            cv::rectangle(frame, btn_rect, ACCENT, 2);
-            cv::Size bsz = cv::getTextSize(btn_lbl, cv::FONT_HERSHEY_DUPLEX, 0.9, 2, &base);
-            cv::putText(frame, btn_lbl,
-                        {btn_rect.x + (btn_rect.width - bsz.width)/2, btn_rect.y + 34},
-                        cv::FONT_HERSHEY_DUPLEX, 0.9, cv::Scalar(255, 240, 255), 2, cv::LINE_AA);
-
-            cv::imshow(WIN, frame);
-            int key = cv::waitKey(16);
-            if (key == 27) closed = true;
-            try {
-                if (cv::getWindowProperty(WIN, cv::WND_PROP_AUTOSIZE) == -1) closed = true;
-            } catch (...) { closed = true; }
-        }
-        cv::destroyWindow(WIN);
-        return clicked && !closed;
-    }
     void run_ui() {
-        // ── INTRO (Solo aparece una vez al iniciar el nodo) ──────────────────
-        if (!show_intro_screen(is_english_.load())) {
+        // INTRO (una vez al iniciar el nodo)
+        if (!show_intro_screen(is_english_.load(), md_)) {
             if (rclcpp::ok() && ui_running_.load() && mode_pub_) {
                 auto msg = std_msgs::msg::String();
                 msg.data = "idle";
@@ -577,13 +884,11 @@ private:
             }
             return;
         }
-        // ─────────────────────────────────────────────────────────────────────
 
-        // Bucle principal: al salir de la cámara regresa directamente al menú de accesorios
         while (rclcpp::ok() && ui_running_) {
             bool applied = show_menu_local();
             if (!applied || !ui_running_) break;
-            
+
             apply_states();
             cam_clicked_ = false;
 
@@ -609,6 +914,7 @@ private:
             mode_pub_->publish(msg);
         }
     }
+
     bool show_menu_local() {
         cv::namedWindow(MENU_WIN, cv::WINDOW_NORMAL);
         cv::setWindowProperty(MENU_WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
@@ -617,14 +923,14 @@ private:
             std::system("xdotool search --sync --name 'Face Filter Menu' windowactivate --sync windowraise 2>/dev/null");
         }).detach();
         MenuMouseState ms;
-        MenuContext ctx{&ms, &states_};
+        MenuContext ctx{&ms, &md_};
         cv::setMouseCallback(MENU_WIN, on_menu_mouse, &ctx);
         cv::Mat canvas(WIN_H, WIN_W, CV_8UC3);
         while (!ms.apply_hit && !ms.close_hit && ui_running_) {
-            draw_menu(canvas, states_, &ms, is_english_.load());
+            draw_menu(canvas, md_, ms, is_english_.load());
             cv::imshow(MENU_WIN, canvas);
             cv::setWindowProperty(MENU_WIN, cv::WND_PROP_TOPMOST, 1);
-            cv::waitKey(16);
+            if (cv::waitKey(16) == 27) ms.close_hit = true;
         }
         cv::destroyWindow(MENU_WIN);
         return ms.apply_hit;
@@ -667,7 +973,7 @@ private:
                         frame = face_mask_filter_->applyFilter(frame, landmarks, frame.size());
                     } else {
                         for (int i=0;i<(int)CATS.size();++i){
-                            if(!active_states_[i].enabled) continue;
+                            if(i>=(int)active_states_.size() || !active_states_[i].enabled) continue;
                             const std::string& id=CATS[i].id;
                             if      (id=="hat")     frame=hat_filter_->applyFilter(frame,landmarks,frame.size());
                             else if (id=="glasses") frame=glasses_filter_->applyFilter(frame,landmarks,frame.size());
@@ -688,7 +994,8 @@ private:
             }
             if (image_pub_ && image_pub_->is_activated()) {
                 image_pub_->publish(*cv_bridge::CvImage(img_msg->header, "bgr8", cropped).toImageMsg());
-            }        } catch (const std::exception& e) {
+            }
+        } catch (const std::exception& e) {
             RCLCPP_ERROR(get_logger(), "Error: %s", e.what());
         }
     }
@@ -700,8 +1007,8 @@ private:
     std::shared_ptr<HatFilter>       hat_filter_;
     std::shared_ptr<FaceMaskFilter>  face_mask_filter_;
 
-    message_filters::Subscriber<ImageMsg,    rclcpp_lifecycle::LifecycleNode> image_sub_;
-    message_filters::Subscriber<Landmarks,   rclcpp_lifecycle::LifecycleNode> landmarks_sub_;
+    message_filters::Subscriber<ImageMsg,  rclcpp_lifecycle::LifecycleNode> image_sub_;
+    message_filters::Subscriber<Landmarks, rclcpp_lifecycle::LifecycleNode> landmarks_sub_;
     std::shared_ptr<Synchronizer<ApproximateTimePolicy>> sync_;
 
     rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
@@ -709,6 +1016,7 @@ private:
     std::mutex                       mutex_;
     std::vector<CatState>            states_;
     std::vector<CatState>            active_states_;
+    MenuData                         md_;
     cv::Mat                          last_frame_;
     bool                             has_frame_{ false };
     std::thread                      ui_thread_;
@@ -716,9 +1024,6 @@ private:
     std::atomic<bool>                cam_clicked_{ false };
 };
 
-// ══════════════════════════════════════════════════════════════
-//  MAIN
-// ══════════════════════════════════════════════════════════════
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);

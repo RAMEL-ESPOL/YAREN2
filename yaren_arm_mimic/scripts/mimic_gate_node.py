@@ -14,6 +14,20 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn, State
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_msgs.msg import Bool, String
+import signal
+import sys
+import time
+
+try:
+    from rclpy.executors import ExternalShutdownException
+except ImportError:
+    class ExternalShutdownException(Exception):
+        pass
+
+try:
+    from rclpy.signals import SignalHandlerOptions
+except ImportError:
+    SignalHandlerOptions = None
 
 ENABLE_PHRASES  = ["activar modo", "activar", "enable", "start", "comenzar", "listo", "iniciar"]
 DISABLE_PHRASES = ["apagar modo", "a pagar", "disable", "stop", "parar", "detener","fin"]
@@ -34,6 +48,10 @@ class MimicGateNode(LifecycleNode):
         self.mic = None
         self.stream = None
         
+        self.audio_timer = None
+        self.mimic_pub = None
+        self.mic_owner_pub = None
+        self.sub_mic_owner = None
         self.get_logger().info("mimic_gate_node creado (Unconfigured).")
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
@@ -88,6 +106,7 @@ class MimicGateNode(LifecycleNode):
 
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Limpiando mimic_gate_node...")
+        self._release_resources()
         self._close_stream()
         
         if self.mic:
@@ -102,6 +121,7 @@ class MimicGateNode(LifecycleNode):
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self._release_resources()
         self._close_stream()
         if self.mic:
             self.mic.terminate()
@@ -147,6 +167,45 @@ class MimicGateNode(LifecycleNode):
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
+    def _release_resources(self):
+        """Libera mic, stream, PyAudio, timer y entidades ROS (idempotente)."""
+        try:
+            if self._is_active:
+                self._set_enabled(False)
+                self._release_mic()
+        except Exception:
+            pass
+        self._is_active = False
+        self._close_stream()
+        if self.audio_timer is not None:
+            try:
+                self.destroy_timer(self.audio_timer)
+            except Exception:
+                pass
+            self.audio_timer = None
+        if self.mic is not None:
+            try:
+                self.mic.terminate()
+            except Exception:
+                pass
+            self.mic = None
+        if self.sub_mic_owner is not None:
+            try:
+                self.destroy_subscription(self.sub_mic_owner)
+            except Exception:
+                pass
+            self.sub_mic_owner = None
+        for name in ("mimic_pub", "mic_owner_pub"):
+            pub = getattr(self, name, None)
+            if pub is not None:
+                try:
+                    self.destroy_publisher(pub)
+                except Exception:
+                    pass
+                setattr(self, name, None)
+        self.recognizer = None
+        self.vosk_model = None
+
     def _set_enabled(self, enabled: bool):
         self.mimic_enabled = enabled
         msg = Bool()
@@ -191,16 +250,49 @@ class MimicGateNode(LifecycleNode):
         self.stream = None
         self.get_logger().info("Microfono cerrado para Mimic Gate.")
 
-def main(args=None):
+def _on_term(signum, frame):
+    raise KeyboardInterrupt
+
+
+def _init_ros(args):
+    if SignalHandlerOptions is not None:
+        try:
+            rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            signal.signal(signal.SIGTERM, _on_term)
+            return
+        except TypeError:
+            pass
     rclpy.init(args=args)
+
+
+def main(args=None):
+    _init_ros(args)
     node = MimicGateNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        # Apagado ordenado: devuelve el microfono, cierra audio y entidades ROS
+        try:
+            node._release_resources()
+        except Exception:
+            pass
+        time.sleep(0.2)  # deja salir el ultimo mensaje (/yaren/mic_owner = none)
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
 
 if __name__ == "__main__":
     main()

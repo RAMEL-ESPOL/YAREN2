@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>yaren_chatbot</name>
+  <version>0.1.0</version>
+  <description>Chatbot offline para COCO/YAREN2: base de conocimiento SQLite FTS5 con respaldo en LLM online</description>
+  <maintainer email="roberto@todo.todo">Roberto</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

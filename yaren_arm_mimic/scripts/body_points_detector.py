@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 import sys
+import os
+import time
+
 import rclpy
 from std_msgs.msg import Bool, String
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn, State
@@ -11,9 +14,32 @@ import numpy as np
 import mediapipe as mp
 from yaren_interfaces.msg import BodyPoints, BodyPosition
 from geometry_msgs.msg import Point32
-import time
+import signal
+
+try:
+    from rclpy.executors import ExternalShutdownException
+except ImportError:
+    class ExternalShutdownException(Exception):
+        pass
+
+try:
+    from rclpy.signals import SignalHandlerOptions
+except ImportError:
+    SignalHandlerOptions = None
+
+from robot_parts import RobotFilter
 
 mp_pose = mp.solutions.pose
+
+WIN = "YAREN Mimic"   # UNA sola ventana: intro y mimic se dibujan aqui
+
+# --- Ajustes del filtro YAREN ---
+MIRROR_VIEW = False   # False = camara normal (NO espejo)
+SWAP_ARMS   = False   # pon True si los brazos quedan cambiados
+ARM_THICK   = 0.75    # grosor de los brazos (1.0 = original)
+CHEST_SCALE = 0.80    # tamano del pecho (1.0 = original)
+
+ASSETS_DIR = "/home/roberto/robotis_ws/src/YAREN2/yaren_arm_mimic/filtro/assets"
 
 C_BG     = (8,  14, 26)
 C_BLUE   = (255, 120,  40)
@@ -74,7 +100,8 @@ def skeleton(cam, lm, w, h, enabled):
     if lm is None:
         return
     def px(i):
-        return (int(lm[i].x * w), int(lm[i].y * h))
+        x = (1.0 - lm[i].x) if MIRROR_VIEW else lm[i].x
+        return (int(x * w), int(lm[i].y * h))
     rs = px(mp_pose.PoseLandmark.RIGHT_SHOULDER)
     re = px(mp_pose.PoseLandmark.RIGHT_ELBOW)
     rw = px(mp_pose.PoseLandmark.RIGHT_WRIST)
@@ -95,6 +122,249 @@ def skeleton(cam, lm, w, h, enabled):
         cv2.circle(cam, pt, r,   C_WHITE,     1, cv2.LINE_AA)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  PANTALLA DE INTRO (MIMIC MODE)
+# ═══════════════════════════════════════════════════════════════════════════
+I_YEL    = (35, 190, 255)
+I_YEL_HI = (110, 225, 255)
+I_YEL_LO = (15, 140, 230)
+I_BLACK  = (38, 32, 30)
+I_GRAY   = (85, 78, 74)
+I_WHITE  = (255, 255, 255)
+I_GREEN    = (50, 200, 90)
+I_GREEN_HI = (110, 235, 160)
+I_GREEN_LO = (35, 140, 45)
+I_BUBBLE   = (255, 238, 205)
+I_BUBBLE_I = (255, 252, 240)
+
+
+def _vgrad(h, w, top, bot):
+    t = np.linspace(0.0, 1.0, h, dtype=np.float32).reshape(h, 1, 1)
+    g = np.array(top, np.float32) * (1 - t) + np.array(bot, np.float32) * t
+    return np.repeat(g, w, axis=1).astype(np.uint8)
+
+
+def _txt(img, s, cx, cy, scale, face, edge, thick=2, edge_t=5, depth=0,
+         side=None, font=cv2.FONT_HERSHEY_DUPLEX):
+    (tw, th), _ = cv2.getTextSize(s, font, scale, thick)
+    x, y = int(cx - tw / 2), int(cy + th / 2)
+    for d in range(depth, -1, -1):
+        cv2.putText(img, s, (x, y + d), font, scale, edge, thick + edge_t, cv2.LINE_AA)
+    if depth > 0:
+        for d in range(depth - 1, -1, -1):
+            cv2.putText(img, s, (x, y + d), font, scale, side or edge,
+                        max(1, thick + edge_t - 3), cv2.LINE_AA)
+    cv2.putText(img, s, (x, y), font, scale, face, thick, cv2.LINE_AA)
+
+
+def _star(img, cx, cy, r, color):
+    pts = []
+    for i in range(10):
+        rad = r if i % 2 == 0 else r * 0.45
+        a = -np.pi / 2 + i * np.pi / 5
+        pts.append([int(cx + rad * np.cos(a)), int(cy + rad * np.sin(a))])
+    cv2.fillPoly(img, [np.array(pts, np.int32)], color, cv2.LINE_AA)
+
+
+def _gear(img, cx, cy, r, color):
+    for i in range(8):
+        a = i * np.pi / 4
+        p1 = (int(cx + (r - 2) * np.cos(a)), int(cy + (r - 2) * np.sin(a)))
+        p2 = (int(cx + (r + 7) * np.cos(a)), int(cy + (r + 7) * np.sin(a)))
+        cv2.line(img, p1, p2, color, 7, cv2.LINE_AA)
+    cv2.circle(img, (cx, cy), r, color, 6, cv2.LINE_AA)
+
+
+class IntroScreen:
+    def __init__(self, W=800, H=480):
+        self.W, self.H = W, H
+        self.BTN = (280, 400, 240, 62)          # START (x, y, w, h)
+        self._bg = self._make_bg()
+
+    # ── interacción ──────────────────────────────────────────────────────
+    def hit(self, x, y):
+        bx, by, bw, bh = self.BTN
+        if bx <= x <= bx + bw and by <= y <= by + bh:
+            return "start"
+        if (x - 18) ** 2 + (y - 18) ** 2 <= 52 ** 2:
+            return "back"
+        return None
+
+    # ── fondo estático ───────────────────────────────────────────────────
+    def _make_bg(self):
+        W, H = self.W, self.H
+        half = W // 2
+        bg = np.empty((H, W, 3), np.uint8)
+        bg[:, :half] = _vgrad(H, half, (255, 205, 100), (235, 150, 25))
+        bg[:, half:] = _vgrad(H, W - half, (240, 170, 40), (205, 105, 10))
+
+        ov = bg.copy()
+        for (x, y, r) in [(225, 62, 20), (58, 118, 15), (330, 205, 12),
+                          (570, 70, 16), (520, 215, 13), (742, 100, 17)]:
+            _star(ov, x, y, r, (255, 235, 200))
+        for (x, y, r) in [(95, 265, 20), (700, 60, 16), (748, 165, 20), (655, 330, 14)]:
+            _gear(ov, x, y, r, (255, 235, 200))
+        bg = cv2.addWeighted(ov, 0.28, bg, 0.72, 0)
+
+        ov = bg.copy()
+        cv2.ellipse(ov, (165, 418), (92, 13), 0, 0, 360, (150, 80, 5), -1, cv2.LINE_AA)
+        cv2.ellipse(ov, (600, 432), (96, 13), 0, 0, 360, (140, 70, 0), -1, cv2.LINE_AA)
+        bg = cv2.addWeighted(ov, 0.45, bg, 0.55, 0)
+
+        for y in range(-6, H, 24):
+            cv2.line(bg, (half, y), (half, y + 14), (255, 235, 190), 9, cv2.LINE_AA)
+        for y in range(-6, H, 24):
+            cv2.line(bg, (half, y), (half, y + 14), I_WHITE, 4, cv2.LINE_AA)
+
+        _txt(bg, "MIMIC", half, 64, 2.1, (40, 215, 255), (20, 90, 200),
+             thick=4, edge_t=8, depth=6, side=(20, 125, 240))
+        _txt(bg, "MODE", half, 122, 1.7, I_WHITE, (190, 100, 15),
+             thick=4, edge_t=8, depth=6, side=(235, 215, 190))
+
+        rrect(bg, 5, 5, W - 11, H - 11, 24, I_BUBBLE, fill=False, t=5)
+        corners_ = [(18, 18, 58, 50), (0, H, 70, 61), (62, H - 4, 34, 25),
+                    (W, H, 70, 61), (W - 62, H - 4, 34, 25), (W, 0, 58, 49)]
+        for (cx, cy, r, _) in corners_:
+            cv2.circle(bg, (cx, cy), r, I_BUBBLE, -1, cv2.LINE_AA)
+        for (cx, cy, _, r) in corners_:
+            cv2.circle(bg, (cx, cy), r, I_BUBBLE_I, -1, cv2.LINE_AA)
+        cv2.polylines(bg, [np.array([[34, 14], [22, 28], [34, 42]], np.int32)],
+                      False, (230, 150, 40), 6, cv2.LINE_AA)
+        return bg
+
+    # ── frame dinámico ───────────────────────────────────────────────────
+    def render(self, t):
+        img = self._bg.copy()
+        self._silhouette(img, t)
+        self._robot(img, t)
+        self._banner(img, t)
+        self._start(img, t)
+        return img
+
+    @staticmethod
+    def _limb(img, pts):
+        for a, b in zip(pts[:-1], pts[1:]):
+            cv2.line(img, a, b, I_BLACK, 13, cv2.LINE_AA)
+        for p in pts[:-1]:
+            cv2.circle(img, p, 8, I_GRAY, -1, cv2.LINE_AA)
+            cv2.circle(img, p, 8, I_BLACK, 2, cv2.LINE_AA)
+        h = pts[-1]
+        d = np.array(pts[-1], np.float32) - np.array(pts[-2], np.float32)
+        d /= (np.linalg.norm(d) + 1e-6)
+        cv2.circle(img, h, 12, I_BLACK, -1, cv2.LINE_AA)
+        for k in (-0.55, 0.0, 0.55):
+            ca, sa = np.cos(k), np.sin(k)
+            dd = (d[0] * ca - d[1] * sa, d[0] * sa + d[1] * ca)
+            p = (int(h[0] + 14 * dd[0]), int(h[1] + 14 * dd[1]))
+            cv2.circle(img, p, 5, I_BLACK, -1, cv2.LINE_AA)
+
+    def _robot(self, img, t):
+        cx = 165
+        b = int(4 * np.sin(t * 2.0))
+        # base
+        rrect(img, cx - 40, 362 + b, 80, 26, 10, I_BLACK)
+        cv2.ellipse(img, (cx, 364 + b), (30, 6), 0, 0, 360, I_GRAY, -1, cv2.LINE_AA)
+        # cuerpo
+        rrect(img, cx - 50, 268 + b, 100, 100, 30, I_YEL_LO)
+        rrect(img, cx - 50, 262 + b, 100, 100, 30, I_YEL)
+        rrect(img, cx - 40, 268 + b, 40, 18, 8, I_YEL_HI)
+        _txt(img, "YAREN", cx, 314 + b, 0.5, (25, 90, 150), (25, 90, 150),
+             thick=1, edge_t=0)
+        # cuello
+        rrect(img, cx - 15, 246 + b, 30, 24, 6, I_BLACK)
+        # brazo izquierdo (colgando)
+        sw = int(3 * np.sin(t * 2.0))
+        self._limb(img, [(cx - 52, 292 + b), (cx - 72, 322 + b), (cx - 66 + sw, 352 + b)])
+        # brazo derecho (saludando)
+        th = np.deg2rad(-90 + 24 * np.sin(t * 6.0))
+        S = (cx + 52, 292 + b)
+        E = (cx + 86, 268 + b)
+        W = (int(E[0] + 46 * np.cos(th)), int(E[1] + 46 * np.sin(th)))
+        self._limb(img, [S, E, W])
+        # cabeza
+        rrect(img, cx - 70, 144 + b, 140, 110, 34, I_YEL_LO)
+        rrect(img, cx - 70, 140 + b, 140, 110, 34, I_YEL)
+        rrect(img, cx - 58, 146 + b, 50, 14, 7, I_YEL_HI)
+        rrect(img, cx - 84, 182 + b, 18, 44, 8, I_BLACK)
+        rrect(img, cx + 66, 182 + b, 18, 44, 8, I_BLACK)
+        rrect(img, cx - 56, 158 + b, 112, 78, 26, I_BLACK)
+        cv2.circle(img, (cx, 148 + b), 4, I_BLACK, -1, cv2.LINE_AA)
+        # ojos
+        op = 0.12 if (t % 3.4) < 0.14 else 1.0
+        ey = 194 + b
+        for ex in (cx - 24, cx + 24):
+            cv2.ellipse(img, (ex, ey), (17, max(2, int(17 * op))), 0, 0, 360,
+                        (250, 228, 228), -1, cv2.LINE_AA)
+            if op > 0.5:
+                cv2.circle(img, (ex, ey + 1), 11, (205, 105, 115), -1, cv2.LINE_AA)
+                cv2.circle(img, (ex, ey + 1), 6, (60, 30, 40), -1, cv2.LINE_AA)
+                cv2.circle(img, (ex - 4, ey - 4), 3, I_WHITE, -1, cv2.LINE_AA)
+        cv2.ellipse(img, (cx, 214 + b), (9, 6), 0, 20, 160, I_WHITE, 2, cv2.LINE_AA)
+
+    def _silhouette(self, img, t):
+        x0, y0, w, h = 450, 110, 300, 340
+        m = np.zeros((h, w), np.uint8)
+        cx = 150
+        bob = int(3 * np.sin(t * 2.0 + 1.0))
+        wave = int(14 * np.sin(t * 6.0))
+        # nube
+        cv2.ellipse(m, (cx, 305), (100, 20), 0, 0, 360, 200, -1, cv2.LINE_AA)
+        cv2.ellipse(m, (cx - 45, 298), (40, 18), 0, 0, 360, 200, -1, cv2.LINE_AA)
+        cv2.ellipse(m, (cx + 50, 298), (38, 16), 0, 0, 360, 200, -1, cv2.LINE_AA)
+        # cabeza y pelo
+        cv2.circle(m, (cx, 72 + bob), 40, 255, -1, cv2.LINE_AA)
+        cv2.ellipse(m, (cx - 14, 40 + bob), (28, 14), -20, 0, 360, 255, -1, cv2.LINE_AA)
+        # torso
+        body = np.array([[cx - 48, 122 + bob], [cx + 48, 122 + bob],
+                         [cx + 62, 292], [cx - 62, 292]], np.int32)
+        cv2.fillPoly(m, [body], 255, cv2.LINE_AA)
+        # brazo levantado
+        sh, el = (cx - 44, 140 + bob), (cx - 92, 112 + bob)
+        wr = (cx - 100 + wave, 62 + bob)
+        cv2.line(m, sh, el, 255, 28, cv2.LINE_AA)
+        cv2.line(m, el, wr, 255, 26, cv2.LINE_AA)
+        cv2.circle(m, wr, 17, 255, -1, cv2.LINE_AA)
+        # brazo colgando
+        sh2, el2, wr2 = (cx + 46, 142 + bob), (cx + 78, 204), (cx + 84, 262)
+        cv2.line(m, sh2, el2, 255, 26, cv2.LINE_AA)
+        cv2.line(m, el2, wr2, 255, 24, cv2.LINE_AA)
+        cv2.circle(m, wr2, 14, 255, -1, cv2.LINE_AA)
+
+        mf = m.astype(np.float32) / 255.0
+        g = cv2.GaussianBlur(mf, (31, 31), 0)
+        roi = img[y0:y0 + h, x0:x0 + w].astype(np.float32)
+        ag = np.clip(g * 0.9, 0, 1)[..., None]
+        roi = roi * (1 - ag) + np.array((255, 240, 120), np.float32) * ag
+        asil = (mf * 0.92)[..., None]
+        roi = roi * (1 - asil) + np.array((255, 255, 225), np.float32) * asil
+        img[y0:y0 + h, x0:x0 + w] = roi.astype(np.uint8)
+
+    def _banner(self, img, t):
+        cx = self.W // 2
+        cy = 312 + int(3 * np.sin(t * 3.0))
+        w, h = 270, 96
+        x, y = cx - w // 2, cy - h // 2
+        rrect(img, x, y + 5, w, h, 26, (190, 110, 20))
+        rrect(img, x, y, w, h, 26, (255, 248, 235))
+        rrect(img, x, y, w, h, 26, (235, 190, 120), fill=False, t=3)
+        _txt(img, "CONVIERTETE EN", cx, y + 30, 0.62, (200, 90, 30), (200, 90, 30),
+             thick=2, edge_t=0)
+        _txt(img, "YAREN!", cx, y + 66, 1.35, (40, 215, 255), (20, 100, 215),
+             thick=3, edge_t=6, depth=3, side=(20, 125, 240))
+
+    def _start(self, img, t):
+        x, y, w, h = self.BTN
+        k = int(3 * np.sin(t * 4.0))
+        x, y, w, h = x - k, y - k, w + 2 * k, h + 2 * k
+        r = h // 2
+        rrect(img, x, y + 6, w, h, r, I_GREEN_LO)
+        rrect(img, x, y, w, h, r, I_GREEN)
+        rrect(img, x + 16, y + 5, w - 32, 14, 7, I_GREEN_HI)
+        rrect(img, x, y, w, h, r, I_WHITE, fill=False, t=3)
+        _txt(img, "START", x + w // 2, y + h // 2, 1.4, I_WHITE, (35, 110, 30),
+             thick=3, edge_t=6, depth=2, side=(35, 140, 45))
+
+
 class BodyPointsDetectorNode(LifecycleNode):
 
     def __init__(self):
@@ -106,11 +376,22 @@ class BodyPointsDetectorNode(LifecycleNode):
         self._t0           = time.time()
         self.should_exit   = False
         self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H = 630, 395, 150, 45
+        self.show_intro  = True
+        self._exited     = False
+        self.pub_mode    = None
+        self.intro       = None
+        self.ui_timer    = None      # UN solo timer dibuja la ventana (intro y mimic)
+        self.robot_filter = None
         self.pub_pts  = None
         self.pub_dbg  = None
         self.sub_img  = None
         self.sub_pos  = None
         self.sub_gate = None
+        # ultimo resultado de la camara (lo escribe image_callback, lo dibuja _ui_tick)
+        self._frame     = None
+        self._lm        = None
+        self._detected  = False
+        self._new_frame = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -122,6 +403,17 @@ class BodyPointsDetectorNode(LifecycleNode):
             smooth_landmarks=True)
         self.pub_pts = self.create_lifecycle_publisher(BodyPoints, 'body_points',     10)
         self.pub_dbg = self.create_lifecycle_publisher(Image,      'arm_debug/image', 10)
+
+        try:
+            self.robot_filter = RobotFilter(ASSETS_DIR, arm_thick=ARM_THICK,
+                                            chest_scale=CHEST_SCALE)
+            self.get_logger().info("Filtro YAREN (pecho y brazos) cargado exitosamente.")
+        except Exception as e:
+            self.get_logger().error(f"No se pudo cargar RobotFilter: {e}")
+            self.robot_filter = None
+
+        if self.pub_mode is None:
+            self.pub_mode = self.create_publisher(String, '/yaren_mode', 10)
         self.get_logger().info("body_points_detector configurado.")
         return TransitionCallbackReturn.SUCCESS
 
@@ -131,30 +423,53 @@ class BodyPointsDetectorNode(LifecycleNode):
             Image, '/csi_camera/image_raw', self.image_callback, 10)
         self.sub_pos = self.create_subscription(
             BodyPosition, 'body_tracker', self.pos_callback, 10)
-        from std_msgs.msg import Bool
         self.sub_gate = self.create_subscription(
             Bool, '/mimic/enabled', self._cb_gate, 10)
-        cv2.namedWindow("YAREN Mimic", cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty("YAREN Mimic", cv2.WND_PROP_FULLSCREEN,
-                              cv2.WINDOW_FULLSCREEN)
-        cv2.setMouseCallback("YAREN Mimic", self.mouse_callback)
+
+        # Una sola ventana para todo el modo (intro + mimic)
+        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        cv2.setMouseCallback(WIN, self.mouse_callback)
+
         self._t0 = time.time()
         self.should_exit = False
+        self.show_intro = True
+        self._exited = False
+        self._frame, self._lm, self._detected, self._new_frame = None, None, False, False
+        self.intro = IntroScreen(800, 480)
+        self.ui_timer = self.create_timer(1.0 / 30.0, self._ui_tick)
         self.get_logger().info("body_points_detector activo.")
         return TransitionCallbackReturn.SUCCESS
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        for _s in (self.sub_img, self.sub_pos, self.sub_gate):
+            if _s is not None:
+                try:
+                    self.destroy_subscription(_s)
+                except Exception:
+                    pass
         super().on_deactivate(state)
         self.sub_img  = None
         self.sub_pos  = None
         self.sub_gate = None
         self.mimic_enabled = False
         self.latest_pos    = None
-        cv2.destroyAllWindows()
+        if self.ui_timer is not None:
+            self.destroy_timer(self.ui_timer)
+            self.ui_timer = None
+        self.show_intro = True
+        self._close_window()
         self.get_logger().info("body_points_detector desactivado.")
         return TransitionCallbackReturn.SUCCESS
 
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        for _p in (self.pub_pts, self.pub_dbg, self.pub_mode):
+            if _p is not None:
+                try:
+                    self.destroy_publisher(_p)
+                except Exception:
+                    pass
+        self.pub_mode = None
         if self.pose:
             self.pose.close()
             self.pose = None
@@ -164,20 +479,98 @@ class BodyPointsDetectorNode(LifecycleNode):
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
-        cv2.destroyAllWindows()
-        if self.pose:
-            self.pose.close()
-            self.pose = None
+        self._release_all()
         return TransitionCallbackReturn.SUCCESS
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
+    def _start_mimic(self):
+        """Intro -> Mimic en la MISMA ventana (no se cierra ni se crea otra)."""
+        if not self.show_intro:
+            return
+        self.show_intro = False
+        self._t0 = time.time()
+        self.get_logger().info("Intro: START presionado.")
+
     def mouse_callback(self, event, x, y, flags, param):
+        if self._exited:
+            return
+        if self.show_intro:
+            if event == cv2.EVENT_LBUTTONDOWN and self.intro is not None:
+                hit = self.intro.hit(x, y)
+                if hit == "start":
+                    self._start_mimic()
+                elif hit == "back":
+                    self.should_exit = True
+            return
         if event == cv2.EVENT_LBUTTONDOWN:
             if (self.BTN_X <= x <= self.BTN_X + self.BTN_W and
                     self.BTN_Y <= y <= self.BTN_Y + self.BTN_H):
                 self.get_logger().info("Botón Volver presionado.")
                 self.should_exit = True
+
+    def _ui_tick(self):
+        """UNICO lugar que dibuja y hace imshow/waitKey: intro y mimic salen por aqui."""
+        if self._exited or self.intro is None:
+            return
+        try:
+            if self.show_intro:
+                img = self.intro.render(time.time() - self._t0)
+            else:
+                img = self._build(self._frame, self._lm, self._detected)
+                if self._new_frame:
+                    self._new_frame = False
+                    if self.pub_dbg is not None:
+                        self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(img, encoding='bgr8'))
+            cv2.imshow(WIN, img)
+            key = cv2.waitKey(1) & 0xFF
+        except Exception as e:
+            self.get_logger().error(f"Error UI: {e}")
+            return
+
+        if key == 27 or self.should_exit:
+            self._exit_to_menu()
+        elif self.show_intro and key in (13, 32):  # Enter / Espacio = START
+            self._start_mimic()
+
+    def _close_window(self):
+        try:
+            cv2.destroyAllWindows()
+            for _ in range(4):
+                cv2.waitKey(1)
+        except Exception:
+            pass
+
+    def _release_all(self):
+        """Libera ventana, timer y MediaPipe (idempotente)."""
+        if self.ui_timer is not None:
+            try:
+                self.destroy_timer(self.ui_timer)
+            except Exception:
+                pass
+            self.ui_timer = None
+        self._close_window()
+        if self.pose is not None:
+            try:
+                self.pose.close()
+            except Exception:
+                pass
+            self.pose = None
+
+    def _exit_to_menu(self):
+        """Vuelve al menu SIN matar el proceso: el orquestador desactiva el nodo."""
+        if self._exited:
+            return
+        self._exited = True
+        self.should_exit = False
+        self.get_logger().info("Cerrando ventana de YAREN Mimic...")
+        if self.ui_timer is not None:
+            self.ui_timer.cancel()
+        self._close_window()
+        if self.pub_mode is not None:
+            msg = String()
+            msg.data = "idle"
+            self.pub_mode.publish(msg)
 
     def _cb_gate(self, msg):
         self.mimic_enabled = msg.data
@@ -186,10 +579,12 @@ class BodyPointsDetectorNode(LifecycleNode):
         self.latest_pos = msg
 
     def image_callback(self, msg):
+        """Solo procesa la pose y guarda el resultado; NO dibuja (eso lo hace _ui_tick)."""
+        if self.show_intro or self._exited or self.pose is None:
+            return
         try:
             frame  = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             frame  = cv2.flip(frame, 0)
-            h, w   = frame.shape[:2]
             image  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             result = self.pose.process(image)
 
@@ -216,34 +611,15 @@ class BodyPointsDetectorNode(LifecycleNode):
                     lm_img                  = img_lm
                     self.pub_pts.publish(pts)
 
-            debug = self._build(frame, w, h, lm_img, pts.is_detected)
-            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(debug, encoding='bgr8'))
-            cv2.imshow("YAREN Mimic", debug)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == 27 or self.should_exit:
-                self.get_logger().info("Cerrando ventana de YAREN Mimic...")
-                cv2.destroyAllWindows()
-                self.should_exit = False  # Reseteamos para la próxima vez
-                
-                # Publicar "idle" al topic /yaren_mode para que el C++ en C++
-                # detecte que saliste, apague los nodos y regrese al menú principal.
-                pub = self.create_publisher(String, '/yaren_mode', 10)
-                # Damos un pequeño respiro para que el publisher cree la conexión
-                time.sleep(0.1)
-                msg = String()
-                msg.data = "idle"
-                pub.publish(msg)
-                
-                # Forzamos la salida limpia de este nodo actual
-                raise SystemExit
+            self._frame, self._lm = frame, lm_img
+            self._detected, self._new_frame = pts.is_detected, True
 
         except Exception as e:
             self.get_logger().error(f"Error: {e}")
 
     # ── Render ────────────────────────────────────────────────────────────────
 
-    def _build(self, frame, fw, fh, lm_img, detected):
+    def _build(self, frame, lm_img, detected):
         W, H = 800, 480
         t    = time.time() - self._t0
         c    = np.full((H, W, 3), C_BG, dtype=np.uint8)
@@ -254,9 +630,28 @@ class BodyPointsDetectorNode(LifecycleNode):
             cv2.line(c, (0, gy), (W, gy), C_GRID, 1)
 
         CAM_X, CAM_Y, CAM_W, CAM_H = 210, 20, 582, 422
-        cam = cv2.resize(frame, (CAM_W, CAM_H))
+        if frame is None:
+            cam = np.zeros((CAM_H, CAM_W, 3), np.uint8)
+            cv2.putText(cam, "Esperando camara...", (150, CAM_H // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (90, 105, 130), 1, cv2.LINE_AA)
+        else:
+            cam = cv2.resize(frame, (CAM_W, CAM_H))
+            if MIRROR_VIEW:
+                cam = cv2.flip(cam, 1)
+
         if lm_img is not None:
-            skeleton(cam, lm_img, CAM_W, CAM_H, self.mimic_enabled)
+            if self.mimic_enabled and self.robot_filter is not None:
+                # Landmarks normalizados -> pixeles de la imagen que se muestra
+                pose_px, vis = [], []
+                for lm in lm_img:
+                    x = (1.0 - lm.x) if MIRROR_VIEW else lm.x
+                    pose_px.append([x * CAM_W, lm.y * CAM_H])
+                    vis.append(lm.visibility)
+                cam = self.robot_filter.apply(cam, pose_px, vis, swap_arms=SWAP_ARMS)
+            else:
+                # Esqueleto de lineas si el modo Mimic esta en espera (o no cargo el filtro)
+                skeleton(cam, lm_img, CAM_W, CAM_H, self.mimic_enabled)
+
         c[CAM_Y:CAM_Y+CAM_H, CAM_X:CAM_X+CAM_W] = cam
 
         brd = C_GREEN if detected else C_RED
@@ -294,7 +689,7 @@ class BodyPointsDetectorNode(LifecycleNode):
         rrect(c, 12, 94, PW - 20, 22, 5, det_bg)
         rrect(c, 12, 94, PW - 20, 22, 5, det_col, fill=False)
         cv2.putText(c, det_txt, (20, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.37, det_col, 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.37, det_col, 1, cv2.LINE_AA)
 
         cv2.line(c, (12, 124), (PW - 6, 124), (28, 42, 68), 1)
 
@@ -321,14 +716,14 @@ class BodyPointsDetectorNode(LifecycleNode):
 
         rrect(c, self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H, 4, (30, 40, 60))
         rrect(c, self.BTN_X, self.BTN_Y, self.BTN_W, self.BTN_H, 4, C_RED, fill=False)
-        
+
         # Centrar el texto "VOLVER" automáticamente
         texto = "VOLVER"
         escala = 0.55
         (tw, th), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_DUPLEX, escala, 1)
         tx = self.BTN_X + (self.BTN_W - tw) // 2
         ty = self.BTN_Y + (self.BTN_H + th) // 2 - 2
-        
+
         cv2.putText(c, texto, (tx, ty),
                     cv2.FONT_HERSHEY_DUPLEX, escala, C_WHITE, 1, cv2.LINE_AA)
 
@@ -367,19 +762,48 @@ class BodyPointsDetectorNode(LifecycleNode):
         bar(c, x0 + 22, y, el_yx, -90, 90, "YX", col2, bw=bw)
 
 
-def main(args=None):
+def _on_term(signum, frame):
+    raise KeyboardInterrupt
+
+
+def _init_ros(args):
+    if SignalHandlerOptions is not None:
+        try:
+            rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            signal.signal(signal.SIGTERM, _on_term)
+            return
+        except TypeError:
+            pass
     rclpy.init(args=args)
+
+
+def main(args=None):
+    _init_ros(args)
     node = BodyPointsDetectorNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    except SystemExit:
+    except (KeyboardInterrupt, SystemExit, ExternalShutdownException):
         pass
     finally:
-        cv2.destroyAllWindows()
-        node.destroy_node()
-        rclpy.shutdown()
+        # Apagado ordenado: ventana, MediaPipe y entidades ROS
+        try:
+            node._release_all()
+        except Exception:
+            pass
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
 
 if __name__ == '__main__':
     main()

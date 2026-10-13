@@ -3,10 +3,16 @@
 memoria_node.py  –  Juego de Memoria tipo Simon Says para YAREN2
 Paquete: yaren_juegos
 
-Fixes aplicados:
-  · SoundManager usa pygame.mixer.music para MP3 (o Sound para WAV si existen)
-  · on_deactivate sin join() bloqueante → segunda activación no falla
-  · on_activate resetea eventos y estado antes de arrancar el thread
+Visual PIXEL-ART (estilo arcade):
+  · Todo se dibuja en un lienzo de baja resolución (200x120) y se escala x4
+    con INTER_NEAREST -> pixeles grandes y nítidos.
+  · Fuente bitmap 5x7 propia.
+  · Sin assets externos: todo es código (numpy + cv2).
+
+Cambios de esta versión:
+  · Márgenes aumentados para evitar que los textos se vean pegados.
+  · Lógica condicional de colores en corazones en el Game Over (Rojo si gana, gris si pierde).
+  · Tamaño de fuente reducido para texto secundario en Game Over.
 """
 
 import rclpy
@@ -21,15 +27,20 @@ import time
 import random
 import os
 
+# ─── Resolución ───────────────────────────────────────────────────────────────
+W, H = 800, 480          # ventana real (los clics usan estas coordenadas)
+S = 4                    # factor de escala pixel
+LW, LH = W // S, H // S  # lienzo lógico 200 x 120
+GROUND_Y = 112
+
 # ─── Paleta BGR ───────────────────────────────────────────────────────────────
 COLORS = {
-    "ROJO":     (50,  50,  220),
-    "AZUL":     (220, 100,  50),
-    "VERDE":    (50,  200,  80),
-    "AMARILLO": (0,   220, 220),
+    "ROJO":     (60,  60,  230),
+    "AZUL":     (230, 130,  40),
+    "VERDE":    (70,  200,  70),
+    "AMARILLO": (30,  210, 250),
 }
 COLOR_NAMES = list(COLORS.keys())
-COLOR_DIM   = {k: tuple(int(c * 0.25) for c in v) for k, v in COLORS.items()}
 
 QUADRANT_CORNERS = {
     "ROJO":     ((0,   0),   (400, 240)),
@@ -38,17 +49,15 @@ QUADRANT_CORNERS = {
     "AMARILLO": ((400, 240), (800, 480)),
 }
 
+# posiciones en el lienzo LÓGICO (200x120)
 BALL_POSITIONS = {
-    "ROJO":     (200, 140),
-    "AZUL":     (600, 140),
-    "VERDE":    (200, 340),
-    "AMARILLO": (600, 340),
+    "ROJO":     (50,  30),
+    "AZUL":     (150, 30),
+    "VERDE":    (50,  77),
+    "AMARILLO": (150, 77),
 }
+BALL_R = 11
 
-W, H = 800, 480
-BALL_RADIUS = 60
-
-# Velocidad por ronda
 SPEED_TABLE = [
     (1,  0.85, 0.30),
     (2,  0.75, 0.25),
@@ -64,23 +73,30 @@ SPEED_TABLE = [
 MAX_ROUNDS    = 10
 INPUT_TIMEOUT = 6.0
 
-# ─── Paleta UI YAREN ──────────────────────────────────────────────────────────
-BG_DARK    = (18, 12, 28)
-BG_PANEL   = (30, 22, 46)
-ACCENT     = (230, 140, 60)
-ACCENT2    = (200, 90,  40)
-TEXT_LIGHT = (240, 235, 255)
-TEXT_DIM   = (160, 145, 190)
-DIVIDER    = (60,  45,  85)
-HEART_COLOR= (90,  70,  220)
-CORRECT_CLR= (90,  210, 80)
-WRONG_CLR  = (70,  70,  220)
+# ─── Paleta UI ────────────────────────────────────────────────────────────────
+BG_DARK   = (40, 22, 14)
+BG_NIGHT  = (62, 38, 28)
+WHITE     = (255, 255, 255)
+GOLD_T    = (90, 215, 255)     # dorado (parte alta de la letra)
+GOLD_B    = (30, 140, 245)     # naranja (parte baja)
+OUT       = (85, 40, 25)       # contorno azul oscuro
+SHADOW    = (55, 25, 12)
+GREEN_T   = (130, 240, 160)
+GREEN_B   = (50, 170, 50)
+RED_T     = (120, 120, 255)
+RED_B     = (40, 40, 200)
+EASY_C    = (110, 235, 130)
+HARD_C    = (50, 185, 250)
+INSANE_C  = (90, 90, 255)
+HEART_RED = (50, 50, 225)
+HEART_GRY = (100, 100, 100)
 
 # ─── Audio ────────────────────────────────────────────────────────────────────
 HOME_DIR   = os.path.expanduser("~")
 BASE_WS    = os.path.join(HOME_DIR, "robotis_ws", "src", "YAREN2")
 AUDIO_BASE = os.path.join(BASE_WS, "yaren_juegos", "sounds")
-# Prioridad: WAV > MP3 (pygame.mixer.Sound solo soporta WAV de forma fiable)
+
+
 def _find_sound(name):
     for ext in ("wav", "mp3"):
         p = os.path.join(AUDIO_BASE, f"{name}.{ext}")
@@ -88,29 +104,25 @@ def _find_sound(name):
             return p
     return None
 
+
 SOUNDS = {
     "acierto":  _find_sound("acierto"),
     "error":    _find_sound("error"),
     "gameover": _find_sound("gameover"),
 }
 
-# =============================================================================
-#  SISTEMA DE SONIDO — pygame con soporte WAV (Sound) y MP3 (music channel)
-# =============================================================================
+
 class _NullSound:
     def play(self, key: str): pass
     def quit(self): pass
 
 
 class SoundManager:
-    """
-    Usa pygame.mixer.Sound para WAV (baja latencia, solapable).
-    Si solo hay MP3, cae a pygame.mixer.music (no solapable pero funciona).
-    """
+    """WAV vía pygame.mixer.Sound (solapable); MP3 vía pygame.mixer.music."""
     def __init__(self):
         self._ok    = False
-        self._cache = {}          # key → pygame.mixer.Sound  (WAV)
-        self._mp3   = {}          # key → path str            (MP3 fallback)
+        self._cache = {}
+        self._mp3   = {}
         self._pygame = None
         try:
             import pygame
@@ -123,40 +135,26 @@ class SoundManager:
             print(f"[SoundManager] No se pudo inicializar pygame.mixer: {e}")
 
     def _load_sounds(self):
+        # Todos los efectos (WAV o MP3) se cargan como Sound, asi nunca usan
+        # pygame.mixer.music, que queda reservado para la musica de fondo.
         for key, path in SOUNDS.items():
             if not path:
                 print(f"[SoundManager] Archivo no encontrado para: {key}")
                 continue
-            if path.lower().endswith(".wav"):
-                try:
-                    self._cache[key] = self._pygame.mixer.Sound(path)
-                    print(f"[SoundManager] WAV cargado: {key}")
-                except Exception as e:
-                    print(f"[SoundManager] Error cargando WAV {key}: {e}")
-            else:
-                # MP3 → guardar ruta para reproducir con music
-                self._mp3[key] = path
-                print(f"[SoundManager] MP3 registrado: {key} → {path}")
+            try:
+                self._cache[key] = self._pygame.mixer.Sound(path)
+            except Exception as e:
+                print(f"[SoundManager] Error cargando {key} ({path}): {e}")
 
     def play(self, key: str):
         if not self._ok:
             return
-        # Preferir WAV (Sound, solapable, baja latencia)
         snd = self._cache.get(key)
         if snd:
             try:
                 snd.play()
-                return
             except Exception:
                 pass
-        # Fallback MP3 vía music channel
-        mp3_path = self._mp3.get(key)
-        if mp3_path:
-            try:
-                self._pygame.mixer.music.load(mp3_path)
-                self._pygame.mixer.music.play()
-            except Exception as e:
-                print(f"[SoundManager] Error reproduciendo MP3 {key}: {e}")
 
     def quit(self):
         if self._ok:
@@ -174,125 +172,282 @@ def _make_sound_manager():
 
 
 # =============================================================================
-#  HELPERS DE DIBUJO
+#  PIXEL ENGINE  (todo en coordenadas del lienzo lógico 200x120)
 # =============================================================================
 
-def _draw_rounded_rect(img, pt1, pt2, color, radius=12, thickness=-1, alpha=1.0):
-    x1, y1 = pt1
-    x2, y2 = pt2
-    if thickness == -1:
-        overlay = img.copy()
-        cv2.rectangle(overlay, (x1 + radius, y1), (x2 - radius, y2), color, -1)
-        cv2.rectangle(overlay, (x1, y1 + radius), (x2, y2 - radius), color, -1)
-        for cx, cy in [(x1+radius, y1+radius), (x2-radius, y1+radius),
-                       (x1+radius, y2-radius), (x2-radius, y2-radius)]:
-            cv2.circle(overlay, (cx, cy), radius, color, -1)
-        if alpha < 1.0:
-            cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-        else:
-            np.copyto(img, overlay)
-    else:
-        cv2.rectangle(img, (x1 + radius, y1), (x2 - radius, y1), color, thickness)
-        cv2.rectangle(img, (x1 + radius, y2), (x2 - radius, y2), color, thickness)
-        cv2.rectangle(img, (x1, y1 + radius), (x1, y2 - radius), color, thickness)
-        cv2.rectangle(img, (x2, y1 + radius), (x2, y2 - radius), color, thickness)
-        cv2.ellipse(img, (x1+radius, y1+radius), (radius, radius), 180, 0, 90, color, thickness)
-        cv2.ellipse(img, (x2-radius, y1+radius), (radius, radius), 270, 0, 90, color, thickness)
-        cv2.ellipse(img, (x1+radius, y2-radius), (radius, radius),  90, 0, 90, color, thickness)
-        cv2.ellipse(img, (x2-radius, y2-radius), (radius, radius),   0, 0, 90, color, thickness)
+# ── Fuente bitmap 5x7 ─────────────────────────────────────────────────────────
+_FONT_SRC = {
+    "A": "01110 10001 10001 11111 10001 10001 10001",
+    "B": "11110 10001 10001 11110 10001 10001 11110",
+    "C": "01110 10001 10000 10000 10000 10001 01110",
+    "D": "11110 10001 10001 10001 10001 10001 11110",
+    "E": "11111 10000 10000 11110 10000 10000 11111",
+    "F": "11111 10000 10000 11110 10000 10000 10000",
+    "G": "01110 10001 10000 10111 10001 10001 01111",
+    "H": "10001 10001 10001 11111 10001 10001 10001",
+    "I": "01110 00100 00100 00100 00100 00100 01110",
+    "J": "00111 00010 00010 00010 00010 10010 01100",
+    "K": "10001 10010 10100 11000 10100 10010 10001",
+    "L": "10000 10000 10000 10000 10000 10000 11111",
+    "M": "10001 11011 10101 10101 10001 10001 10001",
+    "N": "10001 11001 10101 10011 10001 10001 10001",
+    "O": "01110 10001 10001 10001 10001 10001 01110",
+    "P": "11110 10001 10001 11110 10000 10000 10000",
+    "Q": "01110 10001 10001 10001 10101 10010 01101",
+    "R": "11110 10001 10001 11110 10100 10010 10001",
+    "S": "01111 10000 10000 01110 00001 00001 11110",
+    "T": "11111 00100 00100 00100 00100 00100 00100",
+    "U": "10001 10001 10001 10001 10001 10001 01110",
+    "V": "10001 10001 10001 10001 10001 01010 00100",
+    "W": "10001 10001 10001 10101 10101 11011 10001",
+    "X": "10001 10001 01010 00100 01010 10001 10001",
+    "Y": "10001 10001 01010 00100 00100 00100 00100",
+    "Z": "11111 00001 00010 00100 01000 10000 11111",
+    "0": "01110 10001 10011 10101 11001 10001 01110",
+    "1": "00100 01100 00100 00100 00100 00100 01110",
+    "2": "01110 10001 00001 00010 00100 01000 11111",
+    "3": "11110 00001 00001 01110 00001 00001 11110",
+    "4": "00010 00110 01010 10010 11111 00010 00010",
+    "5": "11111 10000 11110 00001 00001 10001 01110",
+    "6": "00110 01000 10000 11110 10001 10001 01110",
+    "7": "11111 00001 00010 00100 01000 01000 01000",
+    "8": "01110 10001 10001 01110 10001 10001 01110",
+    "9": "01110 10001 10001 01111 00001 00010 01100",
+    "!": "00100 00100 00100 00100 00100 00000 00100",
+    "?": "01110 10001 00001 00010 00100 00000 00100",
+    ":": "00000 00100 00000 00000 00000 00100 00000",
+    "-": "00000 00000 00000 11111 00000 00000 00000",
+    ".": "00000 00000 00000 00000 00000 01100 01100",
+    "/": "00001 00001 00010 00100 01000 10000 10000",
+    "|": "00100 00100 00100 00100 00100 00100 00100",
+    " ": "00000 00000 00000 00000 00000 00000 00000",
+}
+_GLYPHS = {k: np.array([[int(c) for c in row] for row in v.split()], np.uint8)
+           for k, v in _FONT_SRC.items()}
 
-def _draw_button(frame, pt1, pt2, label, font_scale=1.0, thickness=2,
-                 bg_color=None, border_color=None, text_color=None,
-                 radius=12, alpha=0.95):
-    if bg_color is None:
-        bg_color = ACCENT2
-    if border_color is None:
-        border_color = ACCENT
-    if text_color is None:
-        text_color = TEXT_LIGHT
 
-    x1, y1 = pt1
-    x2, y2 = pt2
+from functools import lru_cache
 
-    _draw_rounded_rect(frame, pt1, pt2, bg_color, radius=radius,
-                       thickness=-1, alpha=alpha)
-    _draw_rounded_rect(frame, pt1, pt2, border_color, radius=radius,
-                       thickness=2)
+def _mk_glyph(s):
+    return np.array([[int(ch) for ch in r] for r in s.split()], np.uint8)
 
-    font = cv2.FONT_HERSHEY_DUPLEX
-    (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-    tx = (x1 + x2) // 2 - tw // 2
-    ty = (y1 + y2) // 2 + th // 2 - baseline // 2
-    cv2.putText(frame, label, (tx, ty), font, font_scale,
-                text_color, thickness, cv2.LINE_AA)
+_GLYPHS["¿"] = _mk_glyph("00100 00000 00100 00100 01000 10001 01110")
+_GLYPHS[","] = _mk_glyph("00000 00000 00000 00000 00110 00100 01000")
 
-def _draw_glow_circle(frame, center, radius, color, intensity=0.45):
-    overlay = frame.copy()
-    for r_off, a in [(radius + 22, 0.08), (radius + 14, 0.15), (radius + 7, 0.25)]:
-        cv2.circle(overlay, center, r_off, color, -1)
-    cv2.addWeighted(overlay, intensity, frame, 1 - intensity, 0, frame)
-    cv2.circle(frame, center, radius, color, -1)
+_TEXT_Q = {}   # id(frame) -> textos pendientes (se dibujan en _push, a resolucion real)
 
-def _gradient_bg(h, w, top_color, bot_color):
-    frame = np.zeros((h, w, 3), dtype=np.float32)
-    for i in range(h):
-        t = i / h
-        frame[i] = [top_color[c] * (1 - t) + bot_color[c] * t for c in range(3)]
-    return frame.astype(np.uint8)
 
-def _draw_checkmark(frame, center, size, color, thickness=4):
-    cx, cy = center
-    p1 = (cx - int(size * 0.5), cy)
-    p2 = (cx - int(size * 0.12), cy + int(size * 0.45))
-    p3 = (cx + int(size * 0.55), cy - int(size * 0.45))
-    cv2.line(frame, p1, p2, color, thickness, cv2.LINE_AA)
-    cv2.line(frame, p2, p3, color, thickness, cv2.LINE_AA)
+def text_width(text, scale=1):
+    """Ancho REAL (px, ventana 800x480) del texto."""
+    c = scale * S
+    t = max(2, c // 2)
+    return max(0, len(text) * (6 * c + t) - c + t)
 
-def _draw_sequence_slots(frame, sequence_len: int, completed: list,
-                         current_flash=None):
-    if sequence_len == 0:
+
+@lru_cache(maxsize=512)
+def _chunky_mask(text, scale):
+    c = scale * S
+    t = max(2, c // 2)
+    adv = 6 * c + t
+    w = len(text) * adv - c
+    h = 7 * c
+    if w <= 0:
+        return np.zeros((0, 0), bool)
+    base = np.zeros((h + t, w + t), bool)
+    one = np.ones((c, c), np.uint8)
+    for i, ch in enumerate(text.upper()):
+        g = _GLYPHS.get(ch)
+        if g is None:
+            continue
+        x0 = i * adv
+        base[:h, x0:x0 + 5 * c] |= np.kron(g, one).astype(bool)
+    b = base.copy()
+    b[:, t:] |= base[:, :-t]          # trazo mas grueso a la derecha
+    out = b.copy()
+    out[t:, :] |= b[:-t, :]           # y hacia abajo
+    return out
+
+
+def _paint(img, mask, ox, oy, color):
+    h, w = mask.shape
+    ih, iw = img.shape[:2]
+    x0, y0 = max(ox, 0), max(oy, 0)
+    x1, y1 = min(ox + w, iw), min(oy + h, ih)
+    if x1 <= x0 or y1 <= y0:
         return
+    m = mask[y0 - oy:y1 - oy, x0 - ox:x1 - ox]
+    img[y0:y1, x0:x1][m] = np.asarray(color, np.uint8)
 
-    slot_size = min(28, max(14, int(560 / sequence_len) - 6))
-    gap       = 5
-    total_w   = sequence_len * slot_size + (sequence_len - 1) * gap
-    start_x   = W // 2 - total_w // 2
-    row_y     = H - 36
-    radius    = slot_size // 2
 
-    for i in range(sequence_len):
-        cx = start_x + i * (slot_size + gap) + slot_size // 2
-        cy = row_y
+def _draw_text_real(img, text, x, y, scale, top, bot, outline, center):
+    mask = _chunky_mask(text, scale)
+    if mask.size == 0:
+        return
+    h, w = mask.shape
+    c = scale * S
+    e = max(2, c // 2)                 # grosor de la base 3D
+    x *= S
+    y *= S
+    if center:
+        x -= w // 2
+    ext = np.zeros((h + e, w), bool)
+    ext[:h] |= mask
+    ext[e:] |= mask
+    if outline is not None:
+        ow = 2 if scale < 3 else 4
+        grown = cv2.dilate(np.pad(ext, ow).astype(np.uint8),
+                           np.ones((2 * ow + 1, 2 * ow + 1), np.uint8)).astype(bool)
+        _paint(img, grown, x - ow, y - ow, outline)
+    shade = bot if (bot is not None and tuple(bot) != tuple(top)) else _mul(top, 0.55)
+    _paint(img, ext, x, y, shade)      # base naranja / sombra
+    _paint(img, mask, x, y, top)       # cara de la letra
+    if scale >= 3:                     # pixel blanco de brillo (solo titulos grandes)
+        adv = 6 * c + max(2, c // 2)
+        hs = max(3, c // 3)
+        for i, ch in enumerate(text.upper()):
+            g = _GLYPHS.get(ch)
+            if g is None or not g[0].any():
+                continue
+            hx = x + i * adv + int(np.argmax(g[0])) * c + 2
+            cv2.rectangle(img, (hx, y + 2), (hx + hs - 1, y + hs + 1), WHITE, -1)
 
-        if i < len(completed):
-            color = COLORS.get(completed[i], (150, 150, 150))
-            bright = tuple(min(255, int(c * 1.35)) for c in color)
-            cv2.circle(frame, (cx, cy), radius, color, -1)
-            cv2.circle(frame, (cx, cy), radius, bright, 2)
-            _draw_checkmark(frame, (cx, cy), radius, (240, 235, 255), thickness=2)
-        elif i == len(completed):
-            cv2.circle(frame, (cx, cy), radius, (35, 28, 55), -1)
-            cv2.circle(frame, (cx, cy), radius, ACCENT, 2)
-            if current_flash:
-                fc = COLORS.get(current_flash, ACCENT)
-                cv2.circle(frame, (cx, cy), radius - 4,
-                           tuple(int(c * 0.4) for c in fc), -1)
-        else:
-            cv2.circle(frame, (cx, cy), radius, (35, 28, 52), -1)
-            cv2.circle(frame, (cx, cy), radius, DIVIDER, 1)
 
-def _draw_color_dots_row(frame, cx_center, cy, radius=10, spacing=32):
-    colors_list = list(COLORS.values())
-    total = len(colors_list) * (radius * 2 + spacing) - spacing
-    sx = cx_center - total // 2
-    for i, col in enumerate(colors_list):
-        x = sx + i * (radius * 2 + spacing) + radius
-        bright = tuple(min(255, int(c * 1.2)) for c in col)
-        _draw_glow_circle(frame, (x, cy), radius, col, intensity=0.4)
-        cv2.circle(frame, (x, cy), radius, bright, 2)
+def draw_text(img, text, x, y, scale=1, top=WHITE, bot=None, outline=OUT,
+              shadow=True, center=False):
+    """Misma firma de siempre. x, y en coordenadas del lienzo logico."""
+    if not text:
+        return
+    _TEXT_Q.setdefault(id(img), []).append((text, x, y, scale, top, bot, outline, center))
+
+
+def _mul(c, k):
+    return tuple(int(min(255, v * k)) for v in c)
+
+def _lighten(c, a):
+    return tuple(int(min(255, v + a)) for v in c)
+
+# ── Fondo: cielo + nubes + suelo ──────────────────────────────────────────────
+def _build_sky():
+    img = np.zeros((LH, LW, 3), np.uint8)
+    top = np.array((235, 165, 60), np.float32)
+    bot = np.array((250, 215, 135), np.float32)
+    bands = 10
+    for r in range(LH):
+        b = min(bands - 1, int(r / GROUND_Y * bands))
+        t = b / (bands - 1)
+        img[r] = (top * (1 - t) + bot * t).astype(np.uint8)
+    img[GROUND_Y:] = (140, 150, 190)                       # tierra
+    for y in range(GROUND_Y + 3, LH):
+        for x in range(LW):
+            if (x * 7 + y * 13) % 11 == 0:
+                img[y, x] = (95, 105, 150)
+    img[GROUND_Y:GROUND_Y + 1] = (110, 235, 150)           # pasto claro
+    img[GROUND_Y + 1:GROUND_Y + 3] = (55, 175, 70)         # pasto
+    return img
+
+
+_SKY_BASE = _build_sky()
+_CLOUDS = [(20, 16, 1.0, 3.0), (110, 30, 1.4, 2.0),
+           (165, 8, 0.8, 4.0), (60, 52, 0.9, 2.5)]   # x0, y, escala, velocidad
+
+
+def _draw_cloud(img, x, y, s):
+    parts = [(0, 0, 6), (8, -3, 8), (17, 0, 6), (8, 3, 6)]
+    for dy, col in ((1, (235, 215, 190)), (0, (255, 255, 255))):
+        for px, py, pr in parts:
+            cv2.circle(img, (int(x + px * s), int(y + py * s + dy)),
+                       max(2, int(pr * s)), col, -1)
+
+
+def _sky(clouds=True):
+    img = _SKY_BASE.copy()
+    if clouds:
+        t = time.time()
+        for x0, y, s, sp in _CLOUDS:
+            _draw_cloud(img, (x0 + t * sp) % (LW + 60) - 30, y, s)
+    return img
+
+
+def _dark_bg():
+    """Fondo plano oscuro para las pantallas donde importan los colores."""
+    img = np.zeros((LH, LW, 3), np.uint8)
+    img[:] = BG_NIGHT
+    return img
+
+
+# ── Paneles y botones ─────────────────────────────────────────────────────────
+def _pixel_panel(img, x1, y1, x2, y2, fill, border, hi=None, shadow=False):
+    if shadow:
+        _pixel_panel(img, x1, y1 + 2, x2, y2 + 2, (40, 20, 10), (40, 20, 10))
+    cv2.rectangle(img, (x1 + 1, y1), (x2 - 1, y2), border, -1)
+    cv2.rectangle(img, (x1, y1 + 1), (x2, y2 - 1), border, -1)
+    cv2.rectangle(img, (x1 + 2, y1 + 1), (x2 - 2, y2 - 1), fill, -1)
+    cv2.rectangle(img, (x1 + 1, y1 + 2), (x2 - 1, y2 - 2), fill, -1)
+    if hi:
+        cv2.line(img, (x1 + 2, y1 + 1), (x2 - 2, y1 + 1), hi, 1)
+
+
+def _draw_button(img, p1, p2, label, fill, hi, border):
+    (x1, y1), (x2, y2) = p1, p2
+    _pixel_panel(img, x1, y1, x2, y2, fill, border, hi=hi, shadow=True)
+    draw_text(img, label, (x1 + x2) // 2, y1 + (y2 - y1 - 8) // 2,
+              scale=1, center=True)
+
+
+BTN_START = dict(fill=(40, 150, 245), hi=(110, 210, 255), border=(20, 60, 130))
+BTN_BACK  = dict(fill=(130, 95, 60),  hi=(170, 140, 100), border=(70, 40, 25))
+
+# ── Sprites ───────────────────────────────────────────────────────────────────
+_HEART = [
+    ".ooo...ooo.",
+    "orrrooorrro",
+    "orhrrrrrrro",
+    "orhrrrrrrro",
+    "orrrrrrrrro",
+    ".orrrrrrro.",
+    "..orrrrro..",
+    "...orrro...",
+    "....oro....",
+    ".....o.....",
+]
+_HEART_ARR = np.array([list(r) for r in _HEART])
+_HEART_M = {c: (_HEART_ARR == c) for c in "orh"}
+
+
+def _draw_heart(img, x, y, custom_color=None, scale=1):
+    """ Dibuja un corazón en pixel art. 
+        Si custom_color está definido, lo pinta de ese color. 
+        De lo contrario, usa el predeterminado rojo (lleno) o gris oscuro (vacío).
+    """
+    if custom_color is not None:
+        pal = {'o': _mul(custom_color, 0.4), 'r': custom_color, 'h': _lighten(custom_color, 80)}
+    else:
+        pal = {'o': (30, 20, 110), 'r': HEART_RED, 'h': (235, 235, 255)}
+
+    one = np.ones((scale, scale), np.uint8)
+    for c, m in _HEART_M.items():
+        _paint(img, np.kron(m.astype(np.uint8), one).astype(bool), x, y, pal[c])
+
+
+def _draw_ball(img, c, r, color, lit=True, glow=False):
+    if glow:
+        for dr, a in ((6, 0.30), (3, 0.40)):
+            ov = img.copy()
+            cv2.circle(ov, c, r + dr, color, -1)
+            cv2.addWeighted(ov, a, img, 1 - a, 0, img)
+    base = color if lit else _mul(color, 0.35)
+    cx, cy = c
+    cv2.circle(img, c, r + 1, _mul(base, 0.35), -1)
+    cv2.circle(img, c, r, _mul(base, 0.72), -1)
+    cv2.circle(img, (cx - 1, cy - 1), r - 2, base, -1)
+    hl = WHITE if lit else _mul(base, 2.2)
+    hx, hy = cx - r // 2 - 1, cy - r // 2 - 1
+    cv2.rectangle(img, (hx, hy), (hx + 2, hy + 2), hl, -1)
+    cv2.rectangle(img, (hx + 4, hy + 2), (hx + 4, hy + 2), hl, -1)
+
 
 # =============================================================================
-#  ESTADOS
+#  ESTADOS Y BOTONES (coordenadas REALES 800x480 para los clics)
 # =============================================================================
 class State:
     INTRO         = "intro"
@@ -303,12 +458,136 @@ class State:
     FEEDBACK      = "feedback"
     GAME_OVER     = "game_over"
 
-_BTN_W = 200
-_BTN_Y1, _BTN_Y2 = H - 90, H - 32
-_INTRO_BTN_START = ((W // 2 - _BTN_W - 12, _BTN_Y1), (W // 2 - 12, _BTN_Y2))
-_INTRO_BTN_BACK  = ((W // 2 + 12, _BTN_Y1), (W // 2 + _BTN_W + 12, _BTN_Y2))
 
-_GO_BTN = ((W // 2 - 120, H - 110), (W // 2 + 120, H - 42))
+def _real(p1, p2):
+    return ((p1[0] * S, p1[1] * S), (p2[0] * S, p2[1] * S))
+
+
+# Botones en coordenadas del lienzo lógico
+_L_START = ((40, 90), (100, 110))     # EMPEZAR / SIGUIENTE / JUGAR
+_L_BACK  = ((110, 90), (170, 110))    # VOLVER / ATRAS
+_L_RETRY = ((20, 90), (100, 110))     # REINTENTAR (game over)
+_L_EXIT  = ((110, 90), (170, 110))    # SALIR (game over)
+# Botones en coordenadas reales (para los clics)
+_INTRO_BTN_START = _real(*_L_START)
+_INTRO_BTN_BACK  = _real(*_L_BACK)
+_GO_BTN_RETRY    = _real(*_L_RETRY)
+_GO_BTN_EXIT     = _real(*_L_EXIT)
+
+# =============================================================================
+#  MUSICA DE FONDO (pygame.mixer.music) + ICONO DE BOCINA
+# =============================================================================
+MUSIC_FILE = os.path.expanduser('~/robotis_ws/src/YAREN2/yaren_juegos/sounds/SONIC.mp3')
+MUSIC_DEFAULT_VOLUME = 0.5
+
+
+class MusicPlayer:
+    """Musica de fondo en bucle con pygame.mixer.music.
+
+    - Solo maneja la musica: los efectos usan pygame.mixer.Sound (SoundManager).
+    - Mute y volumen afectan unicamente a la musica.
+    - Si falta pygame o el archivo, el juego sigue funcionando sin musica.
+    """
+
+    def __init__(self, path, logger=None, volume=MUSIC_DEFAULT_VOLUME):
+        self.path = path
+        self.logger = logger
+        self.volume = volume
+        self.muted = False
+        self.playing = False
+        self._own_mixer = False      # True si fue este reproductor quien inicio el mixer
+        self._lock = threading.RLock()
+
+    def _warn(self, msg):
+        if self.logger is not None:
+            self.logger.warning(msg)
+
+    def _level(self):
+        return 0.0 if self.muted else self.volume
+
+    def play(self):
+        with self._lock:
+            if self.playing:
+                return
+            if not os.path.isfile(self.path):
+                self._warn(f'Musica no encontrada: {self.path}')
+                return
+            try:
+                os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
+                import pygame
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init()
+                    self._own_mixer = True
+                pygame.mixer.music.load(self.path)
+                pygame.mixer.music.set_volume(self._level())
+                pygame.mixer.music.play(loops=-1, fade_ms=800)
+                self.playing = True
+            except Exception as e:
+                self._warn(f'No se pudo reproducir la musica: {e}')
+
+    def stop(self, fade_ms=0):
+        """Detiene la musica. Con fade_ms baja el volumen poco a poco (en un hilo aparte)."""
+        with self._lock:
+            if not self.playing:
+                return
+            self.playing = False
+
+        def _halt():
+            with self._lock:
+                if self.playing:         # la volvieron a iniciar mientras tanto
+                    return
+                try:
+                    import pygame
+                    if fade_ms > 0:
+                        pygame.mixer.music.fadeout(fade_ms)
+                    else:
+                        pygame.mixer.music.stop()
+                    if self._own_mixer:  # libera el audio solo si lo abrimos nosotros
+                        pygame.mixer.quit()
+                        self._own_mixer = False
+                except Exception:
+                    pass
+
+        if fade_ms > 0:
+            threading.Thread(target=_halt, daemon=True).start()
+        else:
+            _halt()
+
+    def _apply(self):
+        with self._lock:
+            if not self.playing:
+                return
+            try:
+                import pygame
+                pygame.mixer.music.set_volume(self._level())
+            except Exception:
+                pass
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        self._apply()
+
+    def change_volume(self, delta):
+        self.volume = round(max(0.0, min(1.0, self.volume + delta)), 2)
+        if delta > 0:
+            self.muted = False           # subir el volumen quita el mute
+        self._apply()
+
+
+def draw_speaker(img, cx, cy, color, muted, level=1.0):
+    """Bocina con ondas segun el volumen, o con una X si esta muteada."""
+    cone = np.array([(cx - 9, cy - 4), (cx - 4, cy - 4), (cx + 3, cy - 10),
+                     (cx + 3, cy + 10), (cx - 4, cy + 4), (cx - 9, cy + 4)], np.int32)
+    cv2.fillPoly(img, [cone], color, cv2.LINE_AA)
+    if muted:
+        cv2.line(img, (cx + 8, cy - 5), (cx + 16, cy + 5), color, 3, cv2.LINE_AA)
+        cv2.line(img, (cx + 16, cy - 5), (cx + 8, cy + 5), color, 3, cv2.LINE_AA)
+    else:
+        waves = 1 if level < 0.34 else (2 if level < 0.67 else 3)
+        for i in range(waves):
+            r = 7 + 5 * i
+            cv2.ellipse(img, (cx + 3, cy), (r, r), 0, -50, 50, color, 2, cv2.LINE_AA)
+
 
 # =============================================================================
 #  NODO PRINCIPAL
@@ -316,6 +595,11 @@ _GO_BTN = ((W // 2 - 120, H - 110), (W // 2 + 120, H - 42))
 class MemoriaNode(LifecycleNode):
 
     MAX_LIVES = 3
+    AUD_C = (750, 36)
+    AUD_PANEL = (580, 62, 780, 124)
+    AUD_MUTE = (608, 93, 17)
+    AUD_MINUS = (650, 93, 15)
+    AUD_PLUS = (752, 93, 15)
 
     def __init__(self):
         super().__init__('memoria_node')
@@ -324,6 +608,9 @@ class MemoriaNode(LifecycleNode):
         self._lock            = threading.Lock()
         self._game_thread     = None
         self.is_english       = False
+        self._music = MusicPlayer(MUSIC_FILE, self.get_logger())
+        self.audio_open = False
+        self._audio_t = 0.0
 
         self._sound = _NullSound()
 
@@ -348,6 +635,9 @@ class MemoriaNode(LifecycleNode):
 
         self._intro_choice   = None
         self._intro_event    = threading.Event()
+        self._intro_page     = 0        # 0 = título, 1 = cómo jugar, 2 = dificultad
+
+        self._go_choice      = None     # None | "retry" | "exit"
 
         self._mode_pub = None
         self._lang_sub = None
@@ -377,13 +667,12 @@ class MemoriaNode(LifecycleNode):
 
     def on_activate(self, state):
         self.get_logger().info('MemoriaNode: ACTIVO')
-
-        # FIX: resetear TODOS los eventos y estado antes de arrancar el thread
-        # para que la segunda activación empiece limpia
         self._active = True
         self._choice_event.clear()
         self._intro_event.clear()
         self._intro_choice = None
+        self._intro_page   = 0
+        self._go_choice    = None
         self._user_choice  = None
         self._frame        = None
         self._set_state(State.INTRO)
@@ -396,6 +685,7 @@ class MemoriaNode(LifecycleNode):
     def on_deactivate(self, state):
         self.get_logger().info('MemoriaNode: INACTIVO')
         self._active = False
+        self._music.stop()
         self._choice_event.set()
         self._intro_event.set()
         self._game_thread = None
@@ -404,6 +694,7 @@ class MemoriaNode(LifecycleNode):
     def on_cleanup(self, state):
         if self._mode_pub:   self.destroy_publisher(self._mode_pub)
         if self._lang_sub:   self.destroy_subscription(self._lang_sub)
+        self._music.stop()
         self._sound.quit()
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
@@ -412,6 +703,7 @@ class MemoriaNode(LifecycleNode):
         self._active = False
         self._choice_event.set()
         self._intro_event.set()
+        self._music.stop()
         self._sound.quit()
         cv2.destroyAllWindows()
         return TransitionCallbackReturn.SUCCESS
@@ -428,6 +720,10 @@ class MemoriaNode(LifecycleNode):
         with self._lock:
             state = self._state
 
+        if self._handle_audio_click(x, y, state):
+            return
+
+        # Intro (los 3 slides usan los mismos dos botones)
         if state == State.INTRO:
             (sx1, sy1), (sx2, sy2) = _INTRO_BTN_START
             (bx1, by1), (bx2, by2) = _INTRO_BTN_BACK
@@ -439,14 +735,20 @@ class MemoriaNode(LifecycleNode):
                 self._intro_event.set()
             return
 
+        # Game over: REINTENTAR o SALIR
         if state == State.GAME_OVER:
-            (bx1, by1), (bx2, by2) = _GO_BTN
-            if bx1 <= x <= bx2 and by1 <= y <= by2:
+            (rx1, ry1), (rx2, ry2) = _GO_BTN_RETRY
+            (ex1, ey1), (ex2, ey2) = _GO_BTN_EXIT
+            if rx1 <= x <= rx2 and ry1 <= y <= ry2:
+                self._go_choice = "retry"
+            elif ex1 <= x <= ex2 and ey1 <= y <= ey2:
+                self._go_choice = "exit"
                 self._publish_idle()
                 self._active = False
                 self._choice_event.set()
             return
 
+        # Botón X (salir de la partida)
         if x < 60 and y < 60:
             if state not in (State.GAME_OVER, State.INTRO):
                 self._sound.play("error")
@@ -463,50 +765,42 @@ class MemoriaNode(LifecycleNode):
 
     def run_display_main_thread(self):
         win_name = 'YAREN2 - Juego de Memoria'
-        
-        # Importamos subprocess aquí (o puedes ponerlo al inicio del archivo con los demás imports)
-        import subprocess 
-        
+        import subprocess
+
         while rclpy.ok():
-            # Esperar activación
             while not self._active and rclpy.ok():
                 time.sleep(0.05)
-            
+
             if not rclpy.ok():
                 break
-            
-            # Crear ventana
+
             cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(win_name, W, H)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._on_click)
-            
-            # Forzar foco con xdotool después de un pequeño delay para que la ventana exista
+
             def _force_focus():
-                time.sleep(0.5)  # esperar que OpenCV registre la ventana en X11
+                time.sleep(0.5)
                 try:
                     subprocess.run(
                         ["xdotool", "search", "--name", win_name, "windowactivate", "--sync", "windowfocus"],
                         check=False, capture_output=True
                     )
                 except FileNotFoundError:
-                    pass  # xdotool no instalado, no crítico
-                    
+                    pass
+
             threading.Thread(target=_force_focus, daemon=True).start()
-            
-            # Resetear estado del juego
+
             self._reset_game()
             self._set_state(State.INTRO)
             self._choice_event.clear()
             self._intro_event.clear()
-            
-            # ✅ Crear frame dentro del bucle
+
             frame = np.zeros((H, W, 3), dtype=np.uint8)
-            
-            # Bucle del juego (se ejecuta mientras esté activo)
+            self._music.play()
+
             while self._active and rclpy.ok():
-                # ✅ Verificar si la ventana sigue abierta
                 try:
                     if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
                         self.get_logger().info("Ventana cerrada con X. Publicando idle...")
@@ -518,31 +812,108 @@ class MemoriaNode(LifecycleNode):
                     self._publish_idle()
                     self._active = False
                     break
-                
-                # ✅ Aquí va la lógica del juego (tu código existente)
-                # Por ejemplo, obtener el frame actual
+
                 with self._frame_lock:
                     if self._frame is not None:
                         frame = self._frame.copy()
                     else:
-                        frame[:] = BG_DARK  # Fondo por defecto
-                
+                        frame[:] = BG_DARK
+
+                self._draw_audio(frame)
                 cv2.imshow(win_name, frame)
                 key = cv2.waitKey(16) & 0xFF
-                if key == 27:  # ESC
+                if key == 27:
                     self._active = False
                     break
-            
-            # Limpiar cuando se desactiva
+
+            self._music.stop()
             try:
                 cv2.destroyAllWindows()
                 cv2.waitKey(1)
             except Exception:
                 pass
-            
-            # ✅ NO salir - volver al bucle externo para esperar reactivación
-            print("🔄 MemoriaNode desactivado, esperando reactivación...")
+
+            print("MemoriaNode desactivado, esperando reactivacion...")
             time.sleep(0.2)
+
+    # ------------- Audio (musica de fondo) -------------
+    @staticmethod
+    def _in_circle(x, y, c, extra=6):
+        return (x - c[0]) ** 2 + (y - c[1]) ** 2 <= (c[2] + extra) ** 2
+
+    def _handle_audio_click(self, x, y, state):
+        """True si el toque fue del control de audio (entonces el juego lo ignora)."""
+        cx, cy = self.AUD_C
+        if self._in_circle(x, y, (cx, cy, 18), 8):
+            if state != State.SHOW_SEQUENCE:     # no taparle los colores al jugador
+                self.audio_open = not self.audio_open
+                self._audio_t = time.time()
+            return True
+        if not self.audio_open:
+            return False
+        x1, y1, x2, y2 = self.AUD_PANEL
+        if x1 <= x <= x2 and y1 <= y <= y2:
+            self._audio_t = time.time()
+            if self._in_circle(x, y, self.AUD_MUTE):
+                self._music.toggle_mute()
+            elif self._in_circle(x, y, self.AUD_MINUS):
+                self._music.change_volume(-0.1)
+            elif self._in_circle(x, y, self.AUD_PLUS):
+                self._music.change_volume(0.1)
+            return True
+        self.audio_open = False      # toque fuera del panel: se cierra y el toque sigue su curso
+        return False
+
+    def _draw_audio(self, frame):
+        m = self._music
+        if self._state == State.SHOW_SEQUENCE:
+            self.audio_open = False
+        elif self.audio_open and time.time() - self._audio_t > 4.0:
+            self.audio_open = False  # se esconde solo tras 4 s sin tocarlo
+
+        WHITE_ = (255, 255, 255)
+        cx, cy = self.AUD_C
+        col = (150, 160, 165) if m.muted else (225, 80, 25)
+        cv2.circle(frame, (cx, cy + 3), 18, _mul(col, 0.55), -1, cv2.LINE_AA)
+        cv2.circle(frame, (cx, cy), 18, col, -1, cv2.LINE_AA)
+        cv2.circle(frame, (cx, cy), 18, WHITE_, 2, cv2.LINE_AA)
+        draw_speaker(frame, cx - 3, cy, WHITE_, m.muted, m.volume)
+        if not self.audio_open:
+            return
+
+        x1, y1, x2, y2 = self.AUD_PANEL
+        cv2.rectangle(frame, (x1 + 4, y1 + 6), (x2 + 4, y2 + 6), (40, 25, 15), -1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (250, 253, 255), -1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), col, 3)
+
+        mx, my, mr = self.AUD_MUTE
+        mcol = (150, 160, 165) if m.muted else (50, 100, 240)
+        cv2.circle(frame, (mx, my + 2), mr, _mul(mcol, 0.55), -1, cv2.LINE_AA)
+        cv2.circle(frame, (mx, my), mr, mcol, -1, cv2.LINE_AA)
+        draw_speaker(frame, mx - 3, my, WHITE_, m.muted, m.volume)
+
+        for (bx, by, br), plus, ok in ((self.AUD_MINUS, False, m.volume > 0.0),
+                                       (self.AUD_PLUS, True, m.volume < 1.0)):
+            bcol = (150, 52, 112) if ok else (190, 200, 205)
+            cv2.circle(frame, (bx, by + 2), br, _mul(bcol, 0.55), -1, cv2.LINE_AA)
+            cv2.circle(frame, (bx, by), br, bcol, -1, cv2.LINE_AA)
+            cv2.line(frame, (bx - 6, by), (bx + 6, by), WHITE_, 3, cv2.LINE_AA)
+            if plus:
+                cv2.line(frame, (bx, by - 6), (bx, by + 6), WHITE_, 3, cv2.LINE_AA)
+
+        # Barra de volumen entre el "-" y el "+"
+        bar_x = self.AUD_MINUS[0] + 24
+        base_y = self.AUD_MUTE[1] + 8
+        filled = 0 if m.muted else int(round(m.volume * 10))
+        for i in range(10):
+            x = bar_x + i * 5
+            cv2.rectangle(frame, (x, base_y - (6 + i)), (x + 3, base_y),
+                          (85, 185, 60) if i < filled else (190, 200, 205), -1)
+        label = 'MUTE' if m.muted else f'{int(round(m.volume * 100))}%'
+        (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.5, 1)
+        cv2.putText(frame, label, (bar_x + 24 - tw // 2, self.AUD_MUTE[1] + 26),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.5, (125, 105, 95), 1, cv2.LINE_AA)
+
     # ─────────────────────────────────────────────────────────────────────────
     #  GAME LOOP
     # ─────────────────────────────────────────────────────────────────────────
@@ -559,6 +930,17 @@ class MemoriaNode(LifecycleNode):
             self._active = False
             return
 
+        # Partida + reintentos
+        while self._active:
+            self._play_one_game()
+            if self._go_choice == "retry" and self._active:
+                continue
+            break
+
+        if not self._active:
+            self._publish_idle()
+
+    def _play_one_game(self):
         self._reset_game()
         self._set_state(State.COUNTDOWN)
         self._show_countdown()
@@ -602,8 +984,6 @@ class MemoriaNode(LifecycleNode):
                 self._completed_this_round.append(choice)
                 self._flash_color = choice
                 self._flash_until = time.time() + 0.30
-
-                #self._sound.play("acierto")
                 time.sleep(0.15)
 
             if not self._active or self._state == State.GAME_OVER:
@@ -619,128 +999,99 @@ class MemoriaNode(LifecycleNode):
                 self._set_state(State.GAME_OVER)
                 break
 
-        if self._state != State.GAME_OVER and self._round >= MAX_ROUNDS:
+        if self._state != State.GAME_OVER and self._round >= MAX_ROUNDS and self._active:
             self._set_state(State.GAME_OVER)
             self._winner = True
 
         if self._state == State.GAME_OVER:
             self._show_game_over()
 
-        if not self._active:
-            self._publish_idle()
-
     # ─────────────────────────────────────────────────────────────────────────
-    #  PANTALLA INTRO
+    #  PANTALLA INTRO (3 slides)
     # ─────────────────────────────────────────────────────────────────────────
 
     def _show_intro_screen(self):
-        self._intro_choice = None
-        self._intro_event.clear()
+        self._intro_page = 0
+        last_page = 2
+        t0 = time.time()
 
-        anim_t = 0.0
-        while self._active and not self._intro_event.is_set() and rclpy.ok():
-            frame = self._make_intro_frame(anim_t)
-            self._push(frame)
-            time.sleep(0.033)
-            anim_t += 0.033
+        while self._active and rclpy.ok():
+            self._intro_choice = None
+            self._intro_event.clear()
 
-    def _make_intro_frame(self, t: float) -> np.ndarray:
-        frame = _gradient_bg(H, W, BG_DARK, (28, 18, 45))
+            while self._active and not self._intro_event.is_set() and rclpy.ok():
+                self._push(self._make_intro_frame(time.time() - t0, self._intro_page))
+                time.sleep(0.033)
 
-        font_d = cv2.FONT_HERSHEY_DUPLEX
-        font_s = cv2.FONT_HERSHEY_SIMPLEX
+            if not self._active:
+                return
 
-        px1, py1 = 30, 18
-        px2, py2 = W - 30, H - 18
-        _draw_rounded_rect(frame, (px1, py1), (px2, py2), BG_PANEL,
-                           radius=20, alpha=0.97)
-        _draw_rounded_rect(frame, (px1, py1), (px2, py2), DIVIDER,
-                           radius=20, thickness=2)
+            if self._intro_choice == "start":
+                if self._intro_page < last_page:
+                    self._intro_page += 1     # siguiente slide
+                else:
+                    return                    # último slide -> a jugar
+            else:  # "back"
+                if self._intro_page == 0:
+                    return                    # primer slide -> salir al menú
+                self._intro_page -= 1         # slide anterior
 
-        title = "MEMORY GAME" if self.is_english else "JUEGO DE MEMORIA"
-        (tw, th), _ = cv2.getTextSize(title, font_d, 1.55, 3)
-        tx = W // 2 - tw // 2
-        cv2.putText(frame, title, (tx + 2, 66), font_d, 1.55,
-                    (10, 6, 20), 3, cv2.LINE_AA)
-        cv2.putText(frame, title, (tx, 64), font_d, 1.55,
-                    ACCENT, 3, cv2.LINE_AA)
+    def _make_intro_frame(self, t: float, page: int = 0) -> np.ndarray:
+        en = self.is_english
+        frame = _sky()
 
-        cv2.line(frame, (px1 + 40, 84), (px2 - 40, 84), DIVIDER, 1)
+        # ── Slide 0: título ──
+        if page == 0:
+            bob = int(round(1.5 * np.sin(t * 2.5)))
+            l1, l2 = ("MEMORY", "GAME") if en else ("JUEGO DE", "MEMORIA")
+            draw_text(frame, l1, 100, 16 + bob, scale=2, top=GOLD_T, bot=GOLD_B, center=True)
+            draw_text(frame, l2, 100, 38 + bob, scale=2, top=GOLD_T, bot=GOLD_B, center=True)
 
-        _draw_color_dots_row(frame, W // 2, 118, radius=11, spacing=36)
+            active = int(t * 3) % 4
+            for i, col in enumerate(COLORS.values()):
+                _draw_ball(frame, (int(100 + (i - 1.5) * 24), 72), 6, col,
+                           lit=True, glow=(i == active))
 
-        if self.is_english:
-            lines = [
-                ("Memorize the sequence of colored balls", False),
-                ("and repeat it in the same order.", False),
-                ("", False),
-                (f"10 rounds  |  3 lives  |  Speed increases each round", True),
-            ]
-        else:
-            lines = [
-                ("Memoriza la secuencia de colores", False),
-                ("y repitela en el mismo orden.", False),
-                ("", False),
-                (f"10 rondas  |  3 vidas  |  La velocidad aumenta cada ronda", True),
-            ]
+            _draw_button(frame, *_L_START, "START" if en else "EMPEZAR", **BTN_START)
+            _draw_button(frame, *_L_BACK,  "BACK" if en else "VOLVER",   **BTN_BACK)
+            return frame
 
-        y_text = 168
-        for line, highlight in lines:
-            if line == "":
-                y_text += 14
-                continue
-            scale = 0.60
-            (lw, lh), _ = cv2.getTextSize(line, font_s, scale, 1)
-            lx = W // 2 - lw // 2
-            col = ACCENT if highlight else TEXT_DIM
-            thick = 2 if highlight else 1
-            cv2.putText(frame, line, (lx, y_text), font_s, scale,
-                        col, thick, cv2.LINE_AA)
-            y_text += lh + 16
+        # ── Slide 1: cómo jugar ──
+        if page == 1:
+            draw_text(frame, "HOW TO PLAY?" if en else "¿COMO JUGAR?", 100, 8,
+                      scale=2, top=GOLD_T, bot=GOLD_B, center=True)
 
-        diff_y = 278
-        cv2.line(frame, (px1 + 40, diff_y - 14), (px2 - 40, diff_y - 14), DIVIDER, 1)
+            lines = (("MEMORIZE THE COLORS", "AND REPEAT THEM IN ORDER", "10 ROUNDS - 3 LIVES")
+                     if en else
+                     ("MEMORIZA LOS COLORES", "Y REPITELOS EN ORDEN", "10 RONDAS - 3 VIDAS"))
 
-        diffs = [
-            ("1-3", "FACIL"    if not self.is_english else "EASY",   CORRECT_CLR),
-            ("4-6", "DIFICIL"  if not self.is_english else "HARD",   (50, 185, 230)),
-            ("7-10","IMPOSIBLE"if not self.is_english else "INSANE",  WRONG_CLR),
-        ]
-        col_w = (px2 - px1 - 60) // 3
+            draw_text(frame, lines[0], 100, 27, top=WHITE, center=True)
+            draw_text(frame, lines[1], 100, 38, top=WHITE, center=True)
+            draw_text(frame, lines[2], 100, 52, top=GOLD_T, bot=GOLD_B, center=True)
+
+            n, hw, gap = self.MAX_LIVES, 22, 6
+            x0 = 100 - (n * hw + (n - 1) * gap) // 2
+            for i in range(n):
+                _draw_heart(frame, x0 + i * (hw + gap), 64, custom_color=HEART_RED, scale=2)
+
+            _draw_button(frame, *_L_START, "NEXT" if en else "SIGUIENTE", **BTN_START)
+            _draw_button(frame, *_L_BACK,  "BACK" if en else "ATRAS",     **BTN_BACK)
+            return frame
+
+        # ── Slide 2: dificultad ──
+        draw_text(frame, "DIFFICULTY" if en else "DIFICULTAD", 100, 8,
+                  scale=2, top=GOLD_T, bot=GOLD_B, center=True)
+
+        diffs = [("1-3",  "EASY" if en else "FACIL",       EASY_C),
+                 ("4-6",  "HARD" if en else "DIFICIL",     HARD_C),
+                 ("7-10", "INSANE" if en else "IMPOSIBLE", INSANE_C)]
         for i, (rng, lbl, col) in enumerate(diffs):
-            cx = px1 + 30 + col_w * i + col_w // 2
-            (rw, _), _ = cv2.getTextSize(rng, font_d, 0.85, 2)
-            cv2.putText(frame, rng, (cx - rw // 2, diff_y + 14),
-                        font_d, 0.85, col, 2, cv2.LINE_AA)
-            (lw, _), _ = cv2.getTextSize(lbl, font_s, 0.52, 1)
-            cv2.putText(frame, lbl, (cx - lw // 2, diff_y + 34),
-                        font_s, 0.52, tuple(int(c * 0.7) for c in col), 1, cv2.LINE_AA)
-            if i < 2:
-                cv2.line(frame, (px1 + 30 + col_w * (i + 1), diff_y - 6),
-                         (px1 + 30 + col_w * (i + 1), diff_y + 40), DIVIDER, 1)
+            y = 36 + i * 16
+            draw_text(frame, rng, 55, y, top=col)
+            draw_text(frame, lbl, 90, y, top=_mul(col, 0.9))
 
-        btn_y1 = H - 90
-        btn_y2 = H - 32
-        btn_w  = 200
-
-        sx1 = W // 2 - btn_w - 12
-        sx2 = W // 2 - 12
-        bx1 = W // 2 + 12
-        bx2 = W // 2 + btn_w + 12
-
-        start_lbl = "START"  if self.is_english else "EMPEZAR"
-        back_lbl  = "BACK"   if self.is_english else "VOLVER"
-
-        _draw_button(frame, (sx1, btn_y1), (sx2, btn_y2), start_lbl,
-                     font_scale=1.05, thickness=2,
-                     bg_color=ACCENT2, border_color=ACCENT,
-                     text_color=TEXT_LIGHT, radius=14)
-
-        _draw_button(frame, (bx1, btn_y1), (bx2, btn_y2), back_lbl,
-                     font_scale=1.05, thickness=2,
-                     bg_color=(40, 30, 60), border_color=DIVIDER,
-                     text_color=TEXT_DIM, radius=14)
-
+        _draw_button(frame, *_L_START, "PLAY" if en else "JUGAR", **BTN_START)
+        _draw_button(frame, *_L_BACK,  "BACK" if en else "ATRAS", **BTN_BACK)
         return frame
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -759,11 +1110,16 @@ class MemoriaNode(LifecycleNode):
         self._flash_until            = 0.0
         self._game_over_sound_played = False
         self._winner                 = False
+        self._go_choice              = None
         self._choice_event.clear()
 
     def _set_state(self, s):
         with self._lock:
             self._state = s
+        # Musica de fondo: solo en la intro y (despues del sonido) en game over.
+        # Durante cuenta regresiva, secuencia, turno y feedback NO suena.
+        if s not in (State.INTRO, State.GAME_OVER):
+            self._music.stop(fade_ms=500)
 
     def _publish_idle(self):
         if self._mode_pub:
@@ -776,15 +1132,10 @@ class MemoriaNode(LifecycleNode):
         for n in ["3", "2", "1", "GO!" if self.is_english else "YA!"]:
             if not self._active or self._state == State.GAME_OVER:
                 return
-            frame = self._dark_bg()
-            cx, cy = W // 2, H // 2
-            cv2.circle(frame, (cx, cy), 90, DIVIDER, -1)
-            cv2.circle(frame, (cx, cy), 86, BG_PANEL, -1)
-            self._draw_centered(frame, n, scale=4.5, thickness=7,
-                                color=ACCENT, shadow_color=(20, 10, 40))
+            frame = _sky()
+            draw_text(frame, n, 100, 24, scale=6, top=GOLD_T, bot=GOLD_B, center=True)
             sub = "GET READY" if self.is_english else "PREPARATE"
-            self._draw_centered(frame, sub, scale=0.85, thickness=2,
-                                color=TEXT_DIM, y_offset=120)
+            draw_text(frame, sub, 100, 82, scale=2, top=WHITE, center=True)
             self._draw_hud(frame)
             self._push(frame)
             time.sleep(0.8)
@@ -824,131 +1175,101 @@ class MemoriaNode(LifecycleNode):
         return ""
 
     def _show_feedback(self, correct: bool, expected: str):
-        frame = self._dark_bg()
+        en = self.is_english
+        frame = _sky()
         if correct:
-            symbol     = "OK"
-            msg        = "CORRECT!" if self.is_english else "CORRECTO!"
-            main_color = CORRECT_CLR
-            cv2.circle(frame, (W//2, H//2 - 30), 110,
-                       tuple(int(c * 0.18) for c in CORRECT_CLR), -1)
+            symbol, msg = "OK", ("CORRECT!" if en else "CORRECTO!")
+            top, bot = GREEN_T, GREEN_B
         else:
-            symbol     = "ERROR"
-            msg        = f"Was: {expected}" if self.is_english else f"Era: {expected}"
-            main_color = WRONG_CLR
-            cv2.circle(frame, (W//2, H//2 - 30), 110,
-                       tuple(int(c * 0.18) for c in WRONG_CLR), -1)
-        self._draw_centered(frame, symbol, scale=5.5, thickness=8,
-                            color=main_color, shadow_color=(10, 5, 20), y_offset=-55)
-        self._draw_centered(frame, msg, scale=1.5, thickness=2,
-                            color=TEXT_LIGHT, y_offset=65)
+            symbol, msg = "ERROR", (f"WAS: {expected}" if en else f"ERA: {expected}")
+            top, bot = RED_T, RED_B
+        draw_text(frame, symbol, 100, 24, scale=6, top=top, bot=bot, center=True)
+        draw_text(frame, msg, 100, 76, scale=2, top=WHITE, center=True)
         self._draw_hud(frame)
         self._push(frame)
         time.sleep(1.4)
 
+    def _sfx_length(self, key):
+        """Duracion (s) de un efecto de sonido; 0 si no esta cargado."""
+        try:
+            return float(self._sound._cache[key].get_length())
+        except Exception:
+            return 0.0
+
     def _show_game_over(self):
-        while self._active and self._state == State.GAME_OVER and rclpy.ok():
+        en = self.is_english
+        while (self._active and self._state == State.GAME_OVER
+               and self._go_choice is None and rclpy.ok()):
             if not self._game_over_sound_played:
                 self._sound.play("gameover")
                 self._game_over_sound_played = True
+                # Sonic entra cuando termina el sonido de game over
+                self._music_resume_at = time.time() + self._sfx_length("gameover") + 0.4
+            elif getattr(self, '_music_resume_at', 0.0) and time.time() >= self._music_resume_at:
+                self._music_resume_at = 0.0
+                if self._active and self._state == State.GAME_OVER:
+                    self._music.play()
 
-            frame = self._dark_bg()
-            px1, py1 = W//2 - 260, H//2 - 155
-            px2, py2 = W//2 + 260, H//2 + 110
-            _draw_rounded_rect(frame, (px1, py1), (px2, py2), BG_PANEL,
-                               radius=18, alpha=0.92)
+            frame = _sky()
+            is_winner = getattr(self, '_winner', False)
 
-            if getattr(self, '_winner', False):
-                go_txt = "YOU WIN!" if self.is_english else "GANASTE!"
-                go_col = CORRECT_CLR
+            # Lógica de color de los corazones: Rojos si gana, gris si pierde
+            heart_color = HEART_RED if is_winner else HEART_GRY
+
+            n, hw, gap = self.MAX_LIVES, 22, 6
+            x0 = 100 - (n * hw + (n - 1) * gap) // 2
+            for i in range(n):
+                _draw_heart(frame, x0 + i * (hw + gap), 8, custom_color=heart_color, scale=2)
+
+            if is_winner:
+                go_txt = "YOU WIN!" if en else "GANASTE!"
+                top, bot = GREEN_T, GREEN_B
             else:
                 go_txt = "GAME OVER"
-                go_col = WRONG_CLR
-            sc_txt   = (f"Round: {self._round}    Hits: {self._score}"
-                        if self.is_english else
-                        f"Ronda: {self._round}    Aciertos: {self._score}")
-            miss_txt = (f"Misses: {self._misses}"
-                        if self.is_english else
-                        f"Intentos fallidos: {self._misses}")
+                top, bot = GOLD_T, GOLD_B
+            
+            draw_text(frame, go_txt, 100, 36, scale=3, top=top, bot=bot, center=True)
 
-            self._draw_centered(frame, go_txt, scale=2.8, thickness=5,
-                                color=go_col, shadow_color=(10, 5, 20),
-                                y_offset=-95)
+            sc = (f"ROUND: {self._round}   HITS: {self._score}" if en else
+                  f"RONDA: {self._round}   ACIERTOS: {self._score}")
+            ms = (f"MISSES: {self._misses}" if en else
+                  f"INTENTOS FALLIDOS: {self._misses}")
+            
+            # Se aumentó la separación (Y) y se ajustó el tamaño de "Intentos fallidos"
+            draw_text(frame, sc, 100, 62, scale=1, top=WHITE, center=True)
+            draw_text(frame, ms, 100, 75, scale=1, top=(210, 200, 230), center=True) 
 
-            lx1, lx2 = W//2 - 180, W//2 + 180
-            cv2.line(frame, (lx1, H//2 - 25), (lx2, H//2 - 25), (45, 35, 65), 1)
-
-            self._draw_centered(frame, sc_txt,   scale=1.0, thickness=2,
-                                color=TEXT_LIGHT, y_offset=10)
-            self._draw_centered(frame, miss_txt, scale=0.95, thickness=2,
-                                color=TEXT_DIM, y_offset=52)
-
-            v_txt = "BACK" if self.is_english else "VOLVER"
-            (bx1, by1), (bx2, by2) = _GO_BTN
-            _draw_button(frame, (bx1, by1), (bx2, by2), v_txt,
-                         font_scale=1.1, thickness=2,
-                         bg_color=ACCENT2, border_color=ACCENT,
-                         text_color=TEXT_LIGHT, radius=10)
+            _draw_button(frame, *_L_RETRY, "TRY AGAIN" if en else "REINTENTAR", **BTN_START)
+            _draw_button(frame, *_L_EXIT,  "EXIT" if en else "SALIR",           **BTN_BACK)
 
             self._push(frame)
             time.sleep(0.05)
 
     # ─────────────────────────────────────────────────────────────────────────
-    #  RENDER HELPERS
+    #  RENDER (lienzo lógico 200x120)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _dark_bg(self) -> np.ndarray:
-        return _gradient_bg(H, W, BG_DARK, (28, 18, 45))
-
     def _make_ball_frame(self, lit) -> np.ndarray:
-        frame = self._dark_bg()
-        r_txt = f"Round {self._round}" if self.is_english else f"Ronda {self._round}"
-        (rw, rh), _ = cv2.getTextSize(r_txt, cv2.FONT_HERSHEY_DUPLEX, 0.85, 2)
-        rx = W//2 - rw//2
-        _draw_rounded_rect(frame, (rx - 12, 8), (rx + rw + 12, 38), BG_PANEL, radius=10)
-        cv2.putText(frame, r_txt, (rx, 30),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.85, TEXT_DIM, 2, cv2.LINE_AA)
+        """Pantalla de 'observa': fondo plano oscuro, sin nubes ni pasto ni
+        texto extra, para que lo único que llame la atención sean los colores."""
+        en = self.is_english
+        frame = _dark_bg()
 
-        if self._round >= 1:
-            diff_labels = ["","","",
-                           "DIFICIL","DIFICIL","DIFICIL",
-                           "IMPOSIBLE","IMPOSIBLE","IMPOSIBLE","IMPOSIBLE"]
-            diff_colors = [(90,210,80),(90,210,80),(90,210,80),
-                           (50,185,230),(50,185,230),(50,185,230),
-                           (70,70,220),(70,70,220),(70,70,220),(70,70,220)]
+        if self._round >= 4:
             idx = min(self._round - 1, MAX_ROUNDS - 1)
-            dlbl = diff_labels[idx]
-            dcol = diff_colors[idx]
-            if dlbl:
-                (dw, _), _ = cv2.getTextSize(dlbl, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
-                cv2.putText(frame, dlbl, (W - dw - 8, 34),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.58, dcol, 2, cv2.LINE_AA)
-
-        watch = "Watch carefully..." if self.is_english else "Observa con atencion..."
-        (ww, _), _ = cv2.getTextSize(watch, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-        cv2.putText(frame, watch, (W//2 - ww//2, H - 16),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, TEXT_DIM, 1, cv2.LINE_AA)
-
-        for name, center in BALL_POSITIONS.items():
-            if name == lit:
-                color = COLORS[name]
-                _draw_glow_circle(frame, center, BALL_RADIUS, color, intensity=0.5)
-                bright = tuple(min(255, int(c * 1.4)) for c in color)
-                cv2.circle(frame, center, BALL_RADIUS, bright, 3)
-                rx2 = center[0] - BALL_RADIUS//3
-                ry2 = center[1] - BALL_RADIUS//3
-                cv2.circle(frame, (rx2, ry2), BALL_RADIUS//5, (255, 255, 255), -1)
-                cv2.circle(frame, (rx2 + 10, ry2 + 8), BALL_RADIUS//10, (200, 200, 200), -1)
+            if idx >= 6:
+                lbl, col = ("INSANE" if en else "IMPOSIBLE"), INSANE_C
             else:
-                color = COLOR_DIM[name]
-                cv2.circle(frame, center, BALL_RADIUS, color, -1)
-                dim_border = tuple(min(255, int(c * 1.8)) for c in color)
-                cv2.circle(frame, center, BALL_RADIUS, dim_border, 1)
+                lbl, col = ("HARD" if en else "DIFICIL"), HARD_C
+            draw_text(frame, lbl, 100, 5, top=_mul(col, 0.8), outline=None,
+                      shadow=False, center=True)
 
-            (tw, _), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-            label_color = TEXT_LIGHT if name == lit else TEXT_DIM
-            cv2.putText(frame, name,
-                        (center[0] - tw//2, center[1] + BALL_RADIUS + 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, label_color, 2, cv2.LINE_AA)
+        for name, c in BALL_POSITIONS.items():
+            is_lit = (name == lit)
+            _draw_ball(frame, c, BALL_R, COLORS[name], lit=is_lit, glow=is_lit)
+            draw_text(frame, name, c[0], c[1] + BALL_R + 4,
+                      top=WHITE if is_lit else (130, 110, 100),
+                      outline=None, shadow=False, center=True)
 
         self._draw_hud(frame)
         return frame
@@ -958,66 +1279,69 @@ class MemoriaNode(LifecycleNode):
         if completed is None:
             completed = []
 
-        frame = np.zeros((H, W, 3), dtype=np.uint8)
-        frame[:] = BG_DARK
+        frame = np.zeros((LH, LW, 3), np.uint8)
+        frame[:] = BG_NIGHT
 
         for name, ((x1, y1), (x2, y2)) in QUADRANT_CORNERS.items():
-            color      = COLORS[name]
-            quad_color = tuple(int(c * 0.22) for c in color)
-            overlay    = frame.copy()
-            cv2.rectangle(overlay, (x1, y1), (x2 - 1, y2 - 1), quad_color, -1)
-            cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
+            col = COLORS[name]
+            lx1, ly1, lx2, ly2 = x1 // S, y1 // S, x2 // S, y2 // S
+            fill = tuple(int(b * 0.72 + v * 0.28) for b, v in zip(BG_NIGHT, col))
+            cv2.rectangle(frame, (lx1, ly1), (lx2 - 1, ly2 - 1), fill, -1)
+            cv2.rectangle(frame, (lx1 + 2, ly1 + 2), (lx2 - 3, ly2 - 3), _mul(col, 0.5), 1)
 
-            cx_q, cy_q = (x1 + x2) // 2, (y1 + y2) // 2
+            c = BALL_POSITIONS[name]
+            _draw_ball(frame, c, BALL_R, col, lit=True, glow=(name == flash_color))
+            if name == flash_color and name in completed:
+                cx, cy = c
+                cv2.line(frame, (cx - 6, cy), (cx - 2, cy + 4), WHITE, 2)
+                cv2.line(frame, (cx - 2, cy + 4), (cx + 6, cy - 5), WHITE, 2)
+            draw_text(frame, name, c[0], c[1] + BALL_R + 4, top=WHITE, center=True)
 
-            if name == flash_color:
-                _draw_glow_circle(frame, (cx_q, cy_q), 65, color, intensity=0.55)
-                bright = tuple(min(255, int(c * 1.5)) for c in color)
-                cv2.circle(frame, (cx_q, cy_q), 65, bright, 4)
-                if name in completed:
-                    _draw_checkmark(frame, (cx_q, cy_q), 46, (255, 255, 255), thickness=6)
+        cv2.line(frame, (LW // 2, 0), (LW // 2, LH), (20, 12, 10), 2)
+        cv2.line(frame, (0, LH // 2), (LW, LH // 2), (20, 12, 10), 2)
+
+        # Contador de paso
+        instr = f"COLOR {step_idx}/{total_steps}"
+        iw = text_width(instr, 1) // S
+        _pixel_panel(frame, 100 - iw // 2 - 5, 2, 100 + iw // 2 + 5, 15,
+                     (70, 45, 30), (150, 110, 80))
+        draw_text(frame, instr, 100, 5, top=WHITE, outline=None, shadow=False, center=True)
+
+        # Barra de tiempo
+        ratio = remaining / INPUT_TIMEOUT
+        bar_w = int(ratio * LW)
+        bar_c = ((80, 210, 90) if ratio > 0.5 else
+                 (50, 185, 230) if ratio > 0.25 else (70, 70, 220))
+        cv2.rectangle(frame, (0, 100), (LW, 102), (30, 18, 12), -1)
+        if bar_w > 0:
+            cv2.rectangle(frame, (0, 100), (bar_w, 102), bar_c, -1)
+            cv2.line(frame, (0, 100), (bar_w, 100), _mul(bar_c, 1.4), 1)
+
+        # Slots de secuencia
+        _pixel_panel(frame, 20, 105, 180, 119, (50, 30, 22), (140, 100, 80))
+        n = total_steps
+        sz = min(9, max(5, 150 // max(n, 1) - 2))
+        gap = 2
+        sx = 100 - (n * sz + (n - 1) * gap) // 2
+        sy = 112 - sz // 2
+        for i in range(n):
+            x = sx + i * (sz + gap)
+            if i < len(completed):
+                col = COLORS.get(completed[i], (150, 150, 150))
+                cv2.rectangle(frame, (x, sy), (x + sz - 1, sy + sz - 1), col, -1)
+                cv2.rectangle(frame, (x, sy), (x + sz - 1, sy + sz - 1), _mul(col, 1.4), 1)
+                cv2.rectangle(frame, (x + sz // 2, sy + sz // 2),
+                              (x + sz // 2, sy + sz // 2), WHITE, -1)
+            elif i == len(completed):
+                cv2.rectangle(frame, (x, sy), (x + sz - 1, sy + sz - 1), (55, 38, 30), -1)
+                cv2.rectangle(frame, (x, sy), (x + sz - 1, sy + sz - 1), GOLD_B, 1)
+                if flash_color:
+                    fc = _mul(COLORS.get(flash_color, GOLD_B), 0.5)
+                    cv2.rectangle(frame, (x + 2, sy + 2),
+                                  (x + sz - 3, sy + sz - 3), fc, -1)
             else:
-                _draw_glow_circle(frame, (cx_q, cy_q), 55, color, intensity=0.35)
-                bright = tuple(min(255, int(c * 1.3)) for c in color)
-                cv2.circle(frame, (cx_q, cy_q), 55, bright, 3)
-
-            cv2.circle(frame, (cx_q - 17, cy_q - 17), 13, (255, 255, 255), -1)
-            cv2.circle(frame, (cx_q - 6,  cy_q - 6),   6, (200, 200, 200), -1)
-
-            (tw, _), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_DUPLEX, 1.0, 2)
-            cv2.putText(frame, name, (cx_q - tw//2, cy_q + 82),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.0, TEXT_LIGHT, 2, cv2.LINE_AA)
-
-        cv2.line(frame, (W//2, 0), (W//2, H), (8, 6, 14), 5)
-        cv2.line(frame, (0, H//2), (W, H//2), (8, 6, 14), 5)
-
-        instr = f"Color {step_idx}/{total_steps}"
-        (iw, ih), _ = cv2.getTextSize(instr, cv2.FONT_HERSHEY_SIMPLEX, 0.78, 2)
-        ix = W//2 - iw//2
-        _draw_rounded_rect(frame, (ix - 14, 5), (ix + iw + 14, 40),
-                           (35, 28, 55), radius=10, alpha=0.90)
-        _draw_rounded_rect(frame, (ix - 14, 5), (ix + iw + 14, 40),
-                           DIVIDER, radius=10, thickness=1)
-        cv2.putText(frame, instr, (ix, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.78, TEXT_LIGHT, 2, cv2.LINE_AA)
-
-        slot_panel_h = 52
-        _draw_rounded_rect(frame,
-                           (W//2 - 300, H - slot_panel_h - 2),
-                           (W//2 + 300, H - 2),
-                           (25, 18, 42), radius=10, alpha=0.80)
-        _draw_sequence_slots(frame, total_steps, completed, current_flash=flash_color)
-
-        bar_y = H - slot_panel_h - 9
-        bar_w = int((remaining / INPUT_TIMEOUT) * W)
-        t_ratio = remaining / INPUT_TIMEOUT
-        bar_color = ((80, 210, 90)  if t_ratio > 0.5 else
-                     (50, 185, 230) if t_ratio > 0.25 else
-                     (70, 70, 220))
-        cv2.rectangle(frame, (0, bar_y), (bar_w, bar_y + 7), bar_color, -1)
-        if bar_w > 8:
-            cv2.rectangle(frame, (bar_w - 6, bar_y), (bar_w, bar_y + 7),
-                          tuple(min(255, c + 60) for c in bar_color), -1)
+                cv2.rectangle(frame, (x, sy), (x + sz - 1, sy + sz - 1), (45, 30, 24), -1)
+                cv2.rectangle(frame, (x, sy), (x + sz - 1, sy + sz - 1), (95, 70, 55), 1)
 
         self._draw_hud(frame)
         return frame
@@ -1025,50 +1349,28 @@ class MemoriaNode(LifecycleNode):
     def _draw_hud(self, frame: np.ndarray):
         if self._state in (State.GAME_OVER, State.INTRO):
             return
-        _draw_rounded_rect(frame, (4, 4), (54, 54), (38, 28, 58), radius=10)
-        _draw_rounded_rect(frame, (4, 4), (54, 54), DIVIDER, radius=10, thickness=1)
-        cv2.putText(frame, "X", (16, 39),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.1, (130, 100, 200), 2, cv2.LINE_AA)
+        # Botón salir (zona de clic real: x<60, y<60)
+        _pixel_panel(frame, 1, 1, 14, 14, (50, 50, 200), (30, 20, 90), hi=(120, 120, 255))
+        draw_text(frame, "X", 8, 4, top=WHITE, outline=None, shadow=False, center=True)
 
-        _draw_rounded_rect(frame, (62, 6), (240, 52), (38, 28, 58), radius=10)
-        _draw_rounded_rect(frame, (62, 6), (240, 52), DIVIDER, radius=10, thickness=1)
-        vida_lbl = "Lives" if self.is_english else "Vidas"
-        cv2.putText(frame, vida_lbl + ":", (72, 36),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, TEXT_DIM, 1, cv2.LINE_AA)
-        heart_x = 142
+        # Vidas
         for i in range(self.MAX_LIVES):
-            hx = heart_x + i * 32
-            hy = 29
-            color = HEART_COLOR if i < self._lives else (50, 40, 65)
-            cv2.circle(frame, (hx - 5, hy - 4), 7, color, -1)
-            cv2.circle(frame, (hx + 5, hy - 4), 7, color, -1)
-            pts = np.array([[hx - 11, hy - 1], [hx + 11, hy - 1],
-                            [hx, hy + 9]], np.int32)
-            cv2.fillPoly(frame, [pts], color)
+            # custom_color None para que use color predeterminado rojo (o gris si no tiene la vida)
+            _draw_heart(frame, 18 + i * 13, 3, custom_color=HEART_RED if i < self._lives else HEART_GRY)
 
+        # Ronda
         r_txt = f"R{self._round}"
-        (rw, _), _ = cv2.getTextSize(r_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.85, 2)
-        _draw_rounded_rect(frame, (W - rw - 26, 6), (W - 6, 52),
-                           (38, 28, 58), radius=10)
-        _draw_rounded_rect(frame, (W - rw - 26, 6), (W - 6, 52),
-                           DIVIDER, radius=10, thickness=1)
-        cv2.putText(frame, r_txt, (W - rw - 13, 37),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, ACCENT, 2, cv2.LINE_AA)
-
-    def _draw_centered(self, frame, text, scale=2.0, thickness=3,
-                       color=(255, 255, 255), shadow_color=(0, 0, 0),
-                       y_offset=0):
-        font = cv2.FONT_HERSHEY_DUPLEX
-        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
-        x = (W - tw) // 2
-        y = H // 2 + th // 2 + y_offset
-        cv2.putText(frame, text, (x + 3, y + 3), font, scale,
-                    shadow_color, thickness + 3, cv2.LINE_AA)
-        cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+        w = text_width(r_txt, 2) // S
+        draw_text(frame, r_txt, LW - 24 - w, 3, scale=2, top=GOLD_T, bot=GOLD_B)
 
     def _push(self, frame: np.ndarray):
+        up = cv2.resize(frame, (W, H), interpolation=cv2.INTER_NEAREST)
+        for it in _TEXT_Q.pop(id(frame), []):
+            _draw_text_real(up, *it)
+        if len(_TEXT_Q) > 40:
+            _TEXT_Q.clear()
         with self._frame_lock:
-            self._frame = frame
+            self._frame = up
 
 
 # =============================================================================
@@ -1082,14 +1384,17 @@ def main(args=None):
     try:
         node.run_display_main_thread()
     except KeyboardInterrupt:
-        print("Interrupción recibida, cerrando...")
+        print("Interrupcion recibida, cerrando...")
     finally:
         node._active = False
+        node._music.stop()
         node._sound.quit()
         cv2.destroyAllWindows()
-        
+
         print("MemoriaNode en estado INACTIVE, listo para reactivar")
-        
+
         spin_thread.join(timeout=2.0)
+
+
 if __name__ == "__main__":
     main()

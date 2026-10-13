@@ -937,16 +937,22 @@ void YarenGameManager::handle_failed_challenge(const std::string& feedback_text)
     
     total_attempts_++; 
 
-    // En sesión clínica NO hay vidas y el fallo NO cuenta como desafío jugado:
-    // el paciente repite con otra pose hasta lograr 10 aciertos.
+    // En sesión clínica NO hay vidas. Cada desafío cuenta, se acierte o no:
+    // la sesión dura exactamente 10 desafíos.
     // El fallo queda registrado en total_attempts_ para el reporte.
     if (is_session_) {
+        challenges_played_++;
+
+        if (challenges_played_ >= 10) {
+            end_game();   // 10 desafíos jugados: cerrar y enviar el reporte
+            return;
+        }
+
         auto feedback_msg = std::make_unique<std_msgs::msg::String>();
-        feedback_msg->data = is_english_ ? "Don't worry, let's try another pose." : "No te preocupes, intentemos otra pose.";
+        feedback_msg->data = is_english_ ? "Don't worry, let's try the next pose." : "No te preocupes, vamos con la siguiente pose.";
         feedback_publisher_->publish(std::move(feedback_msg));
         std::this_thread::sleep_for(std::chrono::seconds(2));
-        // SIN challenges_played_++: solo cuentan los aciertos
-    } 
+    }
     else {
         lives_--;
         if (lives_ <= 0) {

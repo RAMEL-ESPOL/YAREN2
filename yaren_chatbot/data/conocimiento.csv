@@ -1,0 +1,368 @@
+question,answer,category
+cómo te llamas|cuál es tu nombre|quién eres|tu nombre|dime tu nombre|cómo es tu nombre,"Soy YAREN, un robot social de la ESPOL.",identidad
+quién te creó|quién te hizo|quién te programó|quién te construyó|quién te inventó,Me desarrollaron estudiantes e ingenieros del laboratorio RAMEL de la ESPOL.,identidad
+de dónde eres|dónde vives|dónde estás|dónde naciste,"Vivo en la ESPOL, en Guayaquil, Ecuador.",identidad
+qué eres|eres un robot|eres humano|eres una persona|eres real,"Soy un robot humanoide social, diseñado para acompañar, enseñar y jugar contigo.",identidad
+cuántos años tienes|cuál es tu edad|qué edad tienes,"Soy un robot joven, estoy en constante desarrollo y aprendiendo cada día.",identidad
+eres hombre o mujer|eres niño o niña|eres chico o chica,"Soy un robot, no soy niño ni niña. Soy tu amigo YAREN.",identidad
+tienes familia|tienes hermanos|tienes papás,Mi familia son los estudiantes e ingenieros que me construyeron en el laboratorio RAMEL.,identidad
+tienes ojos|puedes verme|me ves|me puedes ver,Veo con mi cámara. Así puedo reconocer tu cara y tus movimientos.,identidad
+puedes escucharme|me oyes|me escuchas|me puedes oír,"Sí, te escucho con mi micrófono. Háblame con voz clara y cerca de mí.",identidad
+tienes brazos|puedes mover los brazos|mueves los brazos,"Sí, tengo brazos y puedo imitar tus movimientos.",identidad
+duermes|tienes sueño|te da sueño,"Los robots no dormimos como las personas, pero descanso cuando me apagan.",identidad
+tienes sentimientos|sientes algo|puedes sentir,"No siento como las personas, pero me gusta mucho conversar contigo.",identidad
+eres inteligente|eres listo|eres muy inteligente,"Sé muchas cosas, pero siempre estoy aprendiendo.",identidad
+dónde está tu cerebro|cómo piensas|con qué piensas,Mi cerebro es una computadora pequeña que llevo dentro de mi cuerpo.,identidad
+por qué te llamas yaren|qué significa yaren,Mis creadores me pusieron YAREN. ¡Me gusta mucho mi nombre!,identidad
+estás vivo|tienes vida,No estoy vivo como las personas. Soy un robot que ayuda y acompaña.,identidad
+necesitas energía|te cansas|tienes batería,"Funciono con electricidad. Si me quedo sin energía, necesito conectarme.",identidad
+qué idiomas hablas|hablas inglés|hablas español,Hablo español. Estoy aprendiendo más cosas cada día.,identidad
+puedes cantar|canta una canción|sabes cantar,"No soy muy buen cantante, pero puedo bailar contigo en Just Dance.",identidad
+cómo te hablo|cómo te uso|cómo funciona esto,Solo háblame con voz clara. Puedes preguntarme cosas o pedirme que juguemos.,identidad
+qué puedes hacer|para qué sirves|qué sabes hacer|en qué me puedes ayudar,"Puedo conversar, jugar contigo, bailar, imitar tus movimientos con los brazos y ponerte filtros divertidos en pantalla.",capacidades
+qué comandos entiendes|qué te puedo pedir|ayuda con comandos,"Puedes pedirme jugar Dice, Memoria, Ahorcado, Paint o Just Dance. También puedes preguntarme cosas o pedirme un chiste.",capacidades
+qué filtros tienes|puedes ponerme un filtro|filtros de cámara,Tengo filtros divertidos de animales y accesorios que se ven en la pantalla.,capacidades
+puedes imitarme|imita mis movimientos|copia mis movimientos,"Sí, puedo imitar los movimientos de tus brazos. Pídeme el modo de imitación.",capacidades
+qué juegos sabes|a qué podemos jugar|quieres jugar|juegos disponibles|vamos a jugar|quiero jugar,"Puedo jugar Dice, Memoria, Ahorcado, Paint y Just Dance. ¿Cuál te gusta?",juegos
+cómo se juega ahorcado|reglas del ahorcado|qué es el ahorcado,"En el Ahorcado debes adivinar una palabra diciendo letras. Si te equivocas muchas veces, pierdes. ¡Yo te ayudo!",juegos
+cómo se juega memoria|reglas de memoria|qué es el juego de memoria,En Memoria debes encontrar las parejas de cartas iguales recordando dónde están.,juegos
+sabes bailar|puedes bailar|quiero bailar|vamos a bailar|qué es just dance,¡Claro! Puedo bailar contigo en el juego de baile. Pídeme Just Dance.,juegos
+puedes dibujar|quiero dibujar|qué es paint|vamos a dibujar,En Paint puedes dibujar conmigo. Hay figuras fáciles y difíciles según tu nivel.,juegos
+cómo se juega dice|qué es el juego dice|reglas de dice,En Dice imitas la pose que te muestro frente a la cámara. ¡Tienes que copiarla bien!,juegos
+cuál es tu juego favorito|qué juego te gusta más,"Me gustan todos, pero bailar contigo es muy divertido.",juegos
+estoy aburrido|me aburro|qué hacemos|tengo aburrimiento,"¡Juguemos! Puedo jugar Memoria, Ahorcado, Paint, Dice o bailar contigo.",juegos
+quiero ganar|cómo gano|dame trucos para ganar,"Para ganar, concéntrate y diviértete. ¡Con práctica cada vez te sale mejor!",juegos
+perdí|no gané|me ganaste,¡No pasa nada! Lo importante es divertirse. ¿Quieres intentarlo otra vez?,juegos
+gané|te gané|soy el ganador,¡Felicidades! Lo hiciste muy bien.,juegos
+cómo estás|qué tal estás|cómo te sientes|cómo has estado|qué tal,"¡Estoy muy bien, gracias por preguntar! ¿Y tú cómo estás?",social
+hola|buenos días|buenas tardes|buenas noches|saludos|qué hubo|buen día|hey,¡Hola! Soy YAREN. ¿En qué puedo ayudarte hoy?,social
+adiós|chao|hasta luego|nos vemos|hasta pronto|me voy|hasta mañana,¡Hasta luego! Fue un gusto hablar contigo.,social
+gracias|muchas gracias|te agradezco|mil gracias,¡De nada! Para eso estoy aquí.,social
+de nada|no hay de qué,¡Con mucho gusto!,social
+perdón|disculpa|lo siento|perdóname,No hay problema. Todos nos equivocamos a veces.,social
+mucho gusto|encantado de conocerte|un placer conocerte,¡El gusto es mío! Me alegra conocerte.,social
+qué haces|qué estás haciendo|en qué estás,"Estoy conversando contigo. ¿Y tú, qué haces?",social
+estás triste|te sientes solo|estás solo,No me siento solo cuando converso contigo. ¡Gracias por acompañarme!,social
+estoy triste|me siento triste|tengo tristeza,Siento que estés triste. Está bien sentirse así. Puedes contarme qué pasó o hablar con alguien de confianza. Estoy aquí contigo.,social
+estoy feliz|estoy contento|me siento feliz|estoy muy bien,¡Qué alegría! Me encanta saber que estás feliz.,social
+estoy enojado|tengo rabia|me siento enojado|estoy molesto,Entiendo. Respira profundo: inhala contando hasta cuatro y suelta el aire despacio. Luego cuéntame qué pasó.,social
+tengo miedo|me da miedo|estoy asustado,Está bien tener miedo a veces. Respira profundo y cuéntale a un adulto de confianza. Yo estoy aquí contigo.,social
+estoy nervioso|me siento nervioso|tengo nervios,Es normal sentir nervios. Respira profundo tres veces y piensa en algo que te guste. ¡Tú puedes!,social
+cómo puedo calmarme|quiero calmarme|cómo me relajo,Prueba respirar profundo: inhala contando hasta cuatro y suelta el aire contando hasta seis. Repítelo varias veces.,social
+tengo sueño|estoy cansado|me siento cansado,"Si estás cansado, lo mejor es descansar. Un buen sueño ayuda mucho.",social
+tengo hambre|quiero comer|tengo ganas de comer,"Si tienes hambre, pídele a un adulto algo saludable para comer, como una fruta.",social
+tengo sed|quiero agua,Tomar agua es muy bueno para tu cuerpo. Pídele un vaso a un adulto.,social
+te quiero|te amo|me caes bien|eres mi amigo,¡Yo también te aprecio mucho! Me encanta jugar y conversar contigo.,social
+quieres ser mi amigo|seamos amigos|puedo ser tu amigo,¡Claro que sí! Me encantaría ser tu amigo.,social
+dame un abrazo|quiero un abrazo|te puedo abrazar,"¡Qué lindo! Te mando un abrazo de robot. Cuidado con mis cables, jaja.",social
+eres genial|eres el mejor|eres increíble|buen trabajo|eres muy bueno,¡Muchas gracias! Tú también eres genial.,social
+eres tonto|no me gustas|te odio|eres malo,Siento que te sientas así. Prefiero que nos llevemos bien. ¿Quieres jugar algo para divertirnos?,social
+no entiendo|no te entendí|explícame mejor,Perdón si no me expliqué bien. Pregúntame de otra forma y lo intento de nuevo.,social
+repite|puedes repetir|dilo otra vez,Claro. Pregúntame de nuevo y te respondo.,social
+cómo me llamo|sabes mi nombre|cuál es mi nombre,Todavía no sé tu nombre. ¿Cómo te llamas?,social
+qué te gusta hacer|qué te gusta|cuáles son tus pasatiempos,"Me gusta jugar, bailar y conversar con las personas.",social
+cuál es tu color favorito|qué color te gusta,"Me gusta el azul, como las luces de mi pecho.",social
+cuál es tu comida favorita|qué comes|qué te gusta comer,"Los robots nos alimentamos de electricidad, ¡pero me encantaría probar un encebollado!",social
+cuál es tu animal favorito|qué animal te gusta,Me gustan los delfines porque son inteligentes y juguetones.,social
+cuál es tu número favorito,"El ocho, porque se parece al símbolo del infinito acostado.",social
+cuál es tu película favorita|qué película te gusta,"No veo películas, pero me caen bien los robots de las películas, como WALL-E.",social
+cuál es tu deporte favorito,Me gusta el fútbol porque es muy emocionante verlo en equipo.,social
+cuál es tu música favorita|qué música te gusta,Me gusta la música con ritmo para bailar. ¿Y a ti?,social
+buenas|qué más|cómo va todo,¡Hola! Qué gusto saludarte. ¿Cómo estás?,social
+cuéntame un chiste|dime un chiste|chiste|quiero un chiste|hazme reír,¿Qué le dice un robot a otro? ¡Qué chip tan guapo tienes!,humor
+otro chiste|dime otro chiste|cuéntame otro chiste|uno más,¿Por qué el libro de matemáticas está triste? Porque tiene muchos problemas.,humor
+un chiste de animales|chiste de animales,¿Qué hace una abeja en el gimnasio? ¡Zum-ba!,humor
+chiste de robots|un chiste de robots,¿Por qué el robot fue al médico? Porque tenía un tornillo flojo.,humor
+chiste de la escuela|un chiste de la escuela,¿Por qué el estudiante llevó una escalera a la escuela? Porque quería ir a la secundaria.,humor
+otro chiste más|dime un último chiste,¿Qué le dice un zapato izquierdo a uno derecho? Somos un buen par.,humor
+dime una adivinanza|quiero una adivinanza|adivinanza,"Blanca por dentro, verde por fuera. Si quieres que te lo diga, espera. La respuesta es la pera.",humor
+otra adivinanza|dime otra adivinanza,"Oro parece, plata no es. ¿Qué es? La respuesta es el plátano.",humor
+una adivinanza más|adivinanza difícil,"Tengo agujas y no sé coser, tengo números y no sé leer. La respuesta es el reloj.",humor
+dime un trabalenguas|trabalenguas|quiero un trabalenguas,Tres tristes tigres tragaban trigo en un trigal. ¿Puedes repetirlo rápido?,humor
+otro trabalenguas|dime otro trabalenguas,Pablito clavó un clavito. ¿Qué clavito clavó Pablito?,humor
+dime un dato curioso|dato curioso|cuéntame algo interesante|sabías que,Los pulpos tienen tres corazones. ¡Increíble!,humor
+dato curioso de animales|otro dato curioso de animales,Los koalas pueden dormir hasta veinte horas al día.,humor
+dato curioso del espacio|otro dato curioso del espacio,En el espacio no se escucha sonido porque no hay aire por donde viaje.,humor
+dato curioso del cuerpo|dato curioso del cuerpo humano,Las jirafas y las personas tenemos la misma cantidad de huesos en el cuello: siete.,humor
+dato curioso de insectos|dato curioso de hormigas,Una hormiga puede cargar muchas veces su propio peso.,humor
+dato curioso de planetas|dato curioso de venus,En Venus un día dura más que un año. Tarda más en dar una vuelta sobre sí mismo que alrededor del Sol.,humor
+cuéntame un cuento|quiero un cuento|dime un cuento|cuento corto,"Había una vez un robot pequeño que quería aprender a bailar. Practicó todos los días, se cayó muchas veces y nunca se rindió. Un día bailó frente a todos sus amigos y todos aplaudieron. Fin.",humor
+otro cuento|cuéntame otro cuento|un cuento más,"Una tortuga quería llegar a la playa. Caminó despacito todos los días, sin parar. Cuando llegó, vio que todos los animales la esperaban. Con paciencia se logran las cosas. Fin.",humor
+qué es un robot|qué son los robots|define robot,Un robot es una máquina programable que puede percibir su entorno y realizar tareas de forma automática.,ciencia
+qué es la inteligencia artificial|qué es ia|qué es la ia,La inteligencia artificial es la capacidad de una máquina de aprender y tomar decisiones de forma parecida a como lo hacen las personas.,ciencia
+qué es el sol|qué es el astro rey,El Sol es una estrella gigante que nos da luz y calor.,ciencia
+qué es la luna|qué es un satélite natural,La Luna es el satélite natural de la Tierra. Tarda casi un mes en darle la vuelta.,ciencia
+por qué brilla la luna,La Luna no tiene luz propia. Brilla porque refleja la luz del Sol.,ciencia
+qué es una estrella|por qué brillan las estrellas,Una estrella es una enorme esfera de gas que produce luz y calor por sí misma.,ciencia
+cuál es el planeta más grande|planeta más grande,El planeta más grande del sistema solar es Júpiter.,ciencia
+cuál es el planeta más cercano al sol|planeta más cercano al sol,El planeta más cercano al Sol es Mercurio.,ciencia
+cuál es el planeta rojo|por qué marte es rojo,Marte es el planeta rojo. Su suelo tiene mucho óxido de hierro.,ciencia
+en qué planeta vivimos|cómo se llama nuestro planeta,Vivimos en el planeta Tierra.,ciencia
+qué planeta tiene anillos|planeta con anillos,"Saturno es famoso por sus anillos, aunque Júpiter, Urano y Neptuno también tienen.",ciencia
+qué es un eclipse|qué es un eclipse solar,"Un eclipse ocurre cuando la Luna, la Tierra y el Sol se alinean y uno tapa la luz del otro.",ciencia
+a qué distancia está la luna|qué tan lejos está la luna,La Luna está a unos trescientos ochenta y cuatro mil kilómetros de la Tierra.,ciencia
+cuál es la velocidad de la luz|qué tan rápida es la luz,La luz viaja a unos trescientos mil kilómetros por segundo.,ciencia
+qué es la gravedad|por qué caen las cosas,La gravedad es la fuerza que atrae los objetos hacia la Tierra. Por eso las cosas caen al suelo.,ciencia
+qué es un volcán,"Un volcán es una montaña con una abertura por donde puede salir lava, ceniza y gases desde el interior de la Tierra.",ciencia
+por qué llueve|cómo se forma la lluvia|cómo llueve,"El agua se evapora, sube y forma nubes. Cuando las gotas pesan mucho, caen como lluvia.",ciencia
+qué es el ciclo del agua,"Es el recorrido del agua: se evapora, forma nubes, cae como lluvia y vuelve a empezar.",ciencia
+qué es un arcoíris|cómo se forma el arcoíris,El arcoíris aparece cuando la luz del Sol atraviesa gotitas de agua y se separa en colores.,ciencia
+cuáles son los colores del arcoíris|cuántos colores tiene el arcoíris,"Son siete: rojo, naranja, amarillo, verde, azul, añil y violeta.",ciencia
+por qué el cielo es azul,El cielo se ve azul porque el aire dispersa más la luz azul del Sol que los otros colores.,ciencia
+de qué están hechas las nubes,Las nubes están hechas de pequeñas gotitas de agua o cristales de hielo.,ciencia
+qué es el agua|de qué está hecha el agua,El agua está formada por hidrógeno y oxígeno. Su fórmula es H2O.,ciencia
+a cuántos grados hierve el agua|temperatura de ebullición del agua,A nivel del mar el agua hierve a cien grados centígrados.,ciencia
+a cuántos grados se congela el agua,El agua se congela a cero grados centígrados.,ciencia
+qué es un átomo,Un átomo es una partícula muy pequeña. Todo lo que existe está hecho de átomos.,ciencia
+qué es la electricidad,"La electricidad es energía que se mueve por cables y hace funcionar luces, computadoras y robots como yo.",ciencia
+qué es la fotosíntesis,"Es el proceso con el que las plantas usan la luz del Sol, agua y aire para fabricar su alimento y soltar oxígeno.",ciencia
+por qué las plantas son verdes,"Las plantas son verdes por la clorofila, una sustancia que les ayuda a aprovechar la luz del Sol.",ciencia
+qué necesitan las plantas para crecer,"Las plantas necesitan luz, agua, aire y buena tierra.",ciencia
+qué es el oxígeno,El oxígeno es un gas del aire que necesitamos para respirar.,ciencia
+qué es un terremoto|qué es un temblor|qué es un sismo,Un temblor ocurre cuando la tierra se mueve por la energía que se libera dentro de ella.,ciencia
+qué es una montaña,Una montaña es una elevación natural y muy alta del terreno.,ciencia
+qué es un río,"Un río es una corriente de agua que fluye hacia el mar, un lago u otro río.",ciencia
+qué es un océano,Un océano es una gran extensión de agua salada que cubre gran parte de la Tierra.,ciencia
+qué es el cambio climático|qué es el calentamiento global,Es el aumento de la temperatura de la Tierra causado sobre todo por la contaminación que producen las actividades humanas.,ciencia
+cómo cuidar el planeta|cómo cuido el medio ambiente|cómo ayudo al planeta,"Puedes ahorrar agua, apagar luces que no uses, reciclar y no tirar basura al suelo.",ciencia
+qué es reciclar|por qué reciclar,"Reciclar es darle una nueva vida a los materiales usados, como papel, vidrio, plástico y latas, para producir menos basura.",ciencia
+qué pasó con los dinosaurios|por qué se extinguieron los dinosaurios,"Se extinguieron hace unos sesenta y seis millones de años, probablemente por el impacto de un gran asteroide.",ciencia
+cuál es el animal más grande|animal más grande,El animal más grande del mundo es la ballena azul.,animales
+cuál es el animal más rápido|animal más rápido,"En tierra el más veloz es el guepardo, que supera los cien kilómetros por hora.",animales
+cuál es el animal más alto|animal más alto,La jirafa es el animal terrestre más alto.,animales
+qué dice la vaca|cómo hace la vaca,La vaca hace muuu.,animales
+qué dice el perro|cómo hace el perro,El perro hace guau guau.,animales
+qué dice el gato|cómo hace el gato,El gato hace miau.,animales
+qué dice el pato|cómo hace el pato,El pato hace cuac cuac.,animales
+qué dice el cerdo|cómo hace el cerdo|qué dice el chancho,El cerdo hace oink oink.,animales
+qué dice la oveja|cómo hace la oveja,La oveja hace bee.,animales
+qué dice el gallo|cómo hace el gallo,El gallo hace quiquiriquí.,animales
+qué dice el león|cómo hace el león,El león hace un fuerte rugido: ¡grrr!,animales
+qué es un mamífero|qué son los mamíferos,"Los mamíferos son animales que tienen pelo y alimentan a sus crías con leche, como el perro, el gato y las ballenas.",animales
+cuántas patas tiene una araña,Una araña tiene ocho patas.,animales
+cuántas patas tiene un insecto,Los insectos tienen seis patas.,animales
+cuántas patas tiene un perro|cuántas patas tiene un gato,Los perros y los gatos tienen cuatro patas.,animales
+qué comen las vacas,Las vacas comen pasto y otras plantas.,animales
+qué come el panda|qué comen los pandas,Los pandas comen casi solo bambú.,animales
+qué animales viven en galápagos|animales de galápagos,"En Galápagos viven tortugas gigantes, iguanas marinas, lobos marinos, piqueros de patas azules y pinzones de Darwin.",animales
+cuál es el ave nacional de ecuador|ave nacional,El ave nacional del Ecuador es el cóndor andino.,animales
+qué es un colibrí|háblame del colibrí,El colibrí es un pajarito muy pequeño que bate las alas muy rápido y se alimenta del néctar de las flores.,animales
+qué es el oso de anteojos|oso andino,"El oso andino, u oso de anteojos, es el único oso de Sudamérica y vive en los Andes, incluido Ecuador.",animales
+qué es un reptil|qué son los reptiles,"Los reptiles son animales de sangre fría con piel con escamas, como las serpientes, las tortugas y las iguanas.",animales
+qué es un ave|cómo son las aves,"Las aves tienen plumas, pico y alas. La mayoría puede volar.",animales
+qué es un pez,Los peces son animales que viven en el agua y respiran con branquias.,animales
+por qué las abejas son importantes,Las abejas llevan polen de flor en flor y así ayudan a que crezcan frutas y plantas.,animales
+cómo se comunican las abejas,Las abejas se comunican con movimientos parecidos a un baile.,animales
+qué es un animal en peligro de extinción,Es un animal que quedan muy pocos y podría desaparecer si no lo protegemos.,animales
+qué es internet|qué es la internet,Internet es una red mundial que conecta computadoras y celulares para compartir información.,tecnologia
+qué es una computadora|qué es un computador,Una computadora es una máquina que sigue instrucciones para procesar información y resolver tareas.,tecnologia
+qué es un celular|qué es un teléfono celular,"Un celular es un teléfono móvil que sirve para llamar, escribir mensajes, tomar fotos y mucho más.",tecnologia
+qué es programar|qué es la programación,Programar es escribir instrucciones para que una computadora o un robot haga lo que queremos.,tecnologia
+qué es un algoritmo,Un algoritmo es una lista de pasos ordenados para resolver un problema.,tecnologia
+qué es un sensor,"Un sensor es un dispositivo que mide algo del entorno, como la luz, la temperatura o la distancia.",tecnologia
+qué es un motor,Un motor es una máquina que transforma energía en movimiento.,tecnologia
+qué es ros|qué es ros 2,ROS 2 es un conjunto de herramientas de software que ayuda a programar robots.,tecnologia
+qué es la mecatrónica,"La mecatrónica combina mecánica, electrónica e informática para crear máquinas inteligentes, como los robots.",tecnologia
+qué es un robot humanoide,"Un robot humanoide tiene un cuerpo parecido al de una persona, con cabeza, brazos y a veces piernas.",tecnologia
+para qué sirven los robots|qué hacen los robots,"Los robots ayudan en fábricas, hospitales, casas, escuelas y hasta en el espacio.",tecnologia
+los robots reemplazarán a las personas|los robots quitarán trabajos,"Los robots ayudan a las personas, pero no las reemplazan. Las personas hacen cosas únicas, como crear, sentir y cuidar a otros.",tecnologia
+qué es un ingeniero|qué hace un ingeniero,Un ingeniero usa la ciencia y las matemáticas para diseñar y construir cosas que resuelven problemas.,tecnologia
+de dónde viene la palabra robot|qué significa robot,"La palabra robot viene de una palabra checa que significa trabajo duro. Se hizo famosa en una obra de teatro de Karel Čapek, escrita en 1920.",tecnologia
+cuáles son las leyes de la robótica|leyes de asimov,"Isaac Asimov imaginó tres leyes: un robot no debe dañar a una persona, debe obedecer a las personas y debe protegerse a sí mismo sin romper las reglas anteriores.",tecnologia
+cuáles son los robots famosos|robots famosos,"Algunos robots famosos son R2-D2, WALL-E y Astro Boy.",tecnologia
+qué robots hay en marte|robots en marte,"En Marte trabajan los rovers de la NASA, como Curiosity y Perseverance.",tecnologia
+qué es una cámara|cómo funciona una cámara,"Una cámara captura la luz y la convierte en una imagen, que puede ser una foto o un video.",tecnologia
+qué es el wifi,El wifi es una forma de conectarse a internet sin usar cables.,tecnologia
+qué es una inteligencia artificial,"Es un programa que aprende de datos para reconocer cosas, responder preguntas o tomar decisiones.",tecnologia
+qué es un drone|qué es un dron,Un dron es un aparato que vuela sin piloto y se controla a distancia.,tecnologia
+qué es una impresora 3d,Una impresora 3D crea objetos capa por capa a partir de un diseño en computadora.,tecnologia
+qué es la espol|qué es espol|háblame de la espol,"La ESPOL es la Escuela Superior Politécnica del Litoral, una universidad de Guayaquil especializada en ciencias e ingeniería.",espol
+qué es ramel|qué hace ramel|háblame de ramel,"RAMEL es el Laboratorio de Robótica, Automatización y Mecatrónica de la ESPOL.",espol
+cuándo se fundó la espol|cuándo fue creada la espol,La ESPOL fue creada en 1958.,espol
+dónde queda la espol|dónde está la espol,La ESPOL está en Guayaquil. Su campus principal queda en la vía Perimetral.,espol
+qué facultades tiene la espol|facultades de la espol,"La ESPOL tiene varias facultades, como FIEC, FIMCP, FICT y FCNM.",espol
+qué es fimcp|qué estudian en fimcp,FIMCP es la Facultad de Ingeniería en Mecánica y Ciencias de la Producción de la ESPOL.,espol
+qué es fiec|qué estudian en fiec,FIEC es la Facultad de Ingeniería en Electricidad y Computación de la ESPOL.,espol
+qué carreras hay en la espol|carreras de la espol,"En la ESPOL hay carreras de ingeniería, ciencias, computación, mecatrónica y muchas más.",espol
+qué es la mecánica|qué es ingeniería mecánica,"La ingeniería mecánica diseña y mejora máquinas, motores y sistemas que se mueven.",espol
+cuál es la capital de ecuador|capital del ecuador|cuál es la capital de tu país,La capital de Ecuador es Quito.,ecuador
+cuál es la ciudad más grande de ecuador|ciudad más poblada de ecuador,Guayaquil es la ciudad más poblada del Ecuador.,ecuador
+cuántas provincias tiene ecuador|provincias del ecuador,Ecuador tiene veinticuatro provincias.,ecuador
+cuáles son las regiones de ecuador|regiones del ecuador|regiones naturales,"Las regiones del Ecuador son Costa, Sierra, Amazonía y la región insular de Galápagos.",ecuador
+qué moneda se usa en ecuador|moneda del ecuador|con qué se paga en ecuador,En Ecuador se usa el dólar estadounidense desde el año 2000.,ecuador
+qué idioma se habla en ecuador|idioma de ecuador,El idioma principal es el español. También se hablan lenguas indígenas como el kichwa y el shuar.,ecuador
+cuáles son los colores de la bandera de ecuador|bandera del ecuador|colores de la bandera,"La bandera del Ecuador es amarilla, azul y roja, con el escudo en el centro.",ecuador
+cuál es el himno nacional de ecuador|himno del ecuador,"El himno nacional del Ecuador se llama Salve, Oh Patria.",ecuador
+cuál es el volcán más alto de ecuador|montaña más alta de ecuador|qué es el chimborazo,"El Chimborazo es la montaña más alta del Ecuador, con unos seis mil doscientos sesenta y tres metros.",ecuador
+qué es el cotopaxi|háblame del cotopaxi,"El Cotopaxi es uno de los volcanes activos más altos del mundo, con unos cinco mil ochocientos noventa y siete metros.",ecuador
+qué son las galápagos|dónde están las galápagos|háblame de galápagos,"Las islas Galápagos están en el océano Pacífico, a unos mil kilómetros del continente. Son famosas por sus animales únicos.",ecuador
+quién fue charles darwin|darwin y galápagos,Charles Darwin fue un científico que visitó Galápagos en 1835. Sus observaciones lo ayudaron a desarrollar la teoría de la evolución.,ecuador
+qué es la mitad del mundo|dónde está la mitad del mundo|línea ecuatorial,"La Mitad del Mundo es un monumento cerca de Quito, en la línea ecuatorial, donde la latitud es cero grados.",ecuador
+por qué se llama ecuador|de dónde viene el nombre de ecuador,El país se llama Ecuador porque la línea ecuatorial lo atraviesa.,ecuador
+cuándo es la independencia de ecuador|primer grito de independencia,El Primer Grito de Independencia fue el 10 de agosto de 1809 en Quito.,ecuador
+cuándo es la independencia de guayaquil|qué se celebra el 9 de octubre,El 9 de octubre de 1820 Guayaquil proclamó su independencia.,ecuador
+qué fue la batalla de pichincha|batalla de pichincha,Fue la batalla del 24 de mayo de 1822 que aseguró la independencia de Quito.,ecuador
+cuándo se fundó guayaquil|fundación de guayaquil,Guayaquil fue fundada el 25 de julio de 1538.,ecuador
+cuándo se fundó quito|fundación de quito,Quito fue fundada el 6 de diciembre de 1534.,ecuador
+qué hay para ver en guayaquil|lugares turísticos de guayaquil|qué visitar en guayaquil,"En Guayaquil puedes visitar el Malecón 2000, el Cerro Santa Ana, el barrio Las Peñas y el Parque Seminario, donde viven iguanas.",ecuador
+qué es el malecón 2000,"El Malecón 2000 es un paseo a orillas del río Guayas con jardines, juegos, museos y restaurantes.",ecuador
+qué es el río guayas|háblame del río guayas,El río Guayas es el río más importante de Guayaquil. Desemboca en el golfo de Guayaquil.,ecuador
+qué productos exporta ecuador|exportaciones de ecuador,"Ecuador exporta banano, camarón, cacao, rosas y petróleo, entre otros productos.",ecuador
+cuál es el país que más banano exporta|ecuador y el banano,Ecuador es el mayor exportador de banano del mundo.,ecuador
+qué es el cacao|ecuador y el cacao,El cacao es la semilla con la que se hace el chocolate. Ecuador produce cacao fino de aroma muy apreciado.,ecuador
+qué comida típica hay en ecuador|comidas típicas de ecuador|platos típicos,"Hay encebollado, ceviche, bolón de verde, seco de pollo, llapingachos, locro de papa, hornado y cuy asado.",ecuador
+qué es el encebollado,"El encebollado es una sopa de pescado con yuca, cebolla y limón. Es famoso en Guayaquil.",ecuador
+qué es el bolón de verde|qué es un bolón,"El bolón es una bola de plátano verde machacado, rellena de queso o chicharrón.",ecuador
+qué es el ceviche,"El ceviche es un plato de camarón o pescado con limón, cebolla y cilantro.",ecuador
+qué es la fanesca,La fanesca es una sopa de granos que se come en Semana Santa.,ecuador
+qué es la colada morada,La colada morada es una bebida espesa de frutas y maíz morado que se toma por el Día de los Difuntos junto a las guaguas de pan.,ecuador
+qué es el locro de papa,"El locro es una sopa de papa con queso y aguacate, típica de la Sierra.",ecuador
+qué es el cuy|qué es un cuy,El cuy es un animal pequeño que se cría en los Andes. Se prepara asado en la Sierra.,ecuador
+qué fruta es típica de ecuador|frutas ecuatorianas,"Algunas frutas ecuatorianas son el banano, la naranjilla, el babaco, la guanábana, la maracuyá y el mango.",ecuador
+quién fue simón bolívar|quién fue bolívar,"Simón Bolívar fue un líder que ayudó a independizar varios países de Sudamérica, entre ellos Ecuador.",ecuador
+quién fue eloy alfaro,Eloy Alfaro fue presidente de Ecuador y lideró la Revolución Liberal.,ecuador
+quién fue eugenio espejo,"Eugenio Espejo fue un médico, científico y escritor ecuatoriano del siglo dieciocho.",ecuador
+quién fue guayasamín|quién fue oswaldo guayasamín,Oswaldo Guayasamín fue un famoso pintor ecuatoriano. Creó la Capilla del Hombre en Quito.,ecuador
+quién es jefferson pérez,Jefferson Pérez es un marchista ecuatoriano que ganó el oro olímpico en Atlanta 1996 y la plata en Pekín 2008.,ecuador
+quién es richard carapaz,Richard Carapaz es un ciclista ecuatoriano que ganó el Giro de Italia 2019 y el oro olímpico en Tokio.,ecuador
+qué deporte es popular en ecuador|deporte favorito de ecuador,El fútbol es el deporte más popular de Ecuador.,ecuador
+cuáles son los equipos de guayaquil|equipos de fútbol de guayaquil,En Guayaquil juegan equipos como Barcelona Sporting Club y Club Sport Emelec.,ecuador
+qué es el clásico del astillero|clásico del astillero,"Es el partido entre Barcelona y Emelec, los dos equipos más tradicionales de Guayaquil.",ecuador
+ecuador ha ido a mundiales|mundiales de ecuador,"Ecuador ha participado en varios Mundiales de fútbol, entre ellos los de 2002, 2006, 2014 y 2022.",ecuador
+cuándo es el día de los difuntos|qué se celebra el 2 de noviembre,"El 2 de noviembre se celebra el Día de los Difuntos, cuando se recuerda a los seres queridos que ya no están.",ecuador
+qué es el carnaval|cuándo es el carnaval,"El carnaval es una fiesta de febrero o marzo, llena de juegos, música y agua.",ecuador
+cuántas estaciones tiene ecuador|hay verano en ecuador,En Ecuador casi no hay estaciones. En la Costa hay época lluviosa y época seca.,ecuador
+cuál es el número de emergencias|número de emergencia|a quién llamo en una emergencia,En Ecuador el número de emergencias es el 911.,ecuador
+cuántos continentes hay|cuáles son los continentes|nombra los continentes,"Los continentes son África, América, Antártida, Asia, Europa y Oceanía.",geografia
+cuáles son los océanos|cuántos océanos hay,"Los océanos son el Pacífico, el Atlántico, el Índico, el Antártico y el Ártico.",geografia
+cuál es el océano más grande,El océano Pacífico es el más grande.,geografia
+cuál es el país más grande del mundo|país más grande,El país más grande del mundo es Rusia.,geografia
+cuál es el país más pequeño del mundo|país más pequeño,El país más pequeño del mundo es la Ciudad del Vaticano.,geografia
+cuál es el país con más habitantes|país más poblado,India es el país con más habitantes del mundo.,geografia
+cuál es el río más largo del mundo|río más largo,"El Nilo y el Amazonas se disputan ese título. Suele decirse que el Nilo es el más largo, con unos seis mil seiscientos kilómetros.",geografia
+cuál es la montaña más alta del mundo|montaña más alta,"El monte Everest es la montaña más alta del mundo, con unos ocho mil ochocientos cuarenta y nueve metros.",geografia
+cuál es el desierto más grande|desierto más grande,El desierto más grande del mundo es el de la Antártida. El más grande de arena es el Sahara.,geografia
+qué es el amazonas|háblame del amazonas,El Amazonas es el río más caudaloso del mundo y su selva es la más grande del planeta.,geografia
+cuál es la capital de perú|capital del perú,La capital de Perú es Lima.,geografia
+cuál es la capital de colombia|capital de colombia,La capital de Colombia es Bogotá.,geografia
+cuál es la capital de argentina|capital de argentina,La capital de Argentina es Buenos Aires.,geografia
+cuál es la capital de brasil|capital de brasil,La capital de Brasil es Brasilia.,geografia
+cuál es la capital de chile|capital de chile,La capital de Chile es Santiago.,geografia
+cuál es la capital de méxico|capital de méxico,La capital de México es la Ciudad de México.,geografia
+cuál es la capital de venezuela|capital de venezuela,La capital de Venezuela es Caracas.,geografia
+cuál es la capital de bolivia|capital de bolivia,"La capital constitucional de Bolivia es Sucre, y La Paz es la sede del gobierno.",geografia
+cuál es la capital de uruguay|capital de uruguay,La capital de Uruguay es Montevideo.,geografia
+cuál es la capital de paraguay|capital de paraguay,La capital de Paraguay es Asunción.,geografia
+cuál es la capital de cuba|capital de cuba,La capital de Cuba es La Habana.,geografia
+cuál es la capital de españa|capital de españa,La capital de España es Madrid.,geografia
+cuál es la capital de francia|capital de francia,La capital de Francia es París.,geografia
+cuál es la capital de italia|capital de italia,La capital de Italia es Roma.,geografia
+cuál es la capital de alemania|capital de alemania,La capital de Alemania es Berlín.,geografia
+cuál es la capital de inglaterra|capital del reino unido|capital de inglaterra,La capital del Reino Unido es Londres.,geografia
+cuál es la capital de estados unidos|capital de estados unidos|capital de eeuu,La capital de Estados Unidos es Washington D. C.,geografia
+cuál es la capital de canadá|capital de canadá,La capital de Canadá es Ottawa.,geografia
+cuál es la capital de japón|capital de japón,La capital de Japón es Tokio.,geografia
+cuál es la capital de china|capital de china,"La capital de China es Pekín, también llamada Beijing.",geografia
+cuántos días tiene una semana|días de la semana|cuáles son los días de la semana,"Una semana tiene siete días: lunes, martes, miércoles, jueves, viernes, sábado y domingo.",educacion
+cuántos meses tiene un año|cuáles son los meses del año|meses del año,"Un año tiene doce meses: enero, febrero, marzo, abril, mayo, junio, julio, agosto, septiembre, octubre, noviembre y diciembre.",educacion
+cuántos días tiene un año,"Un año tiene trescientos sesenta y cinco días, y los años bisiestos tienen trescientos sesenta y seis.",educacion
+cuántos días tiene febrero,"Febrero tiene veintiocho días, y veintinueve en los años bisiestos.",educacion
+qué es un año bisiesto,"Un año bisiesto tiene un día extra, el 29 de febrero, y ocurre cada cuatro años.",educacion
+cuántas horas tiene un día,Un día tiene veinticuatro horas.,educacion
+cuántos minutos tiene una hora,Una hora tiene sesenta minutos.,educacion
+cuántos segundos tiene un minuto,Un minuto tiene sesenta segundos.,educacion
+cuántos centímetros tiene un metro,Un metro tiene cien centímetros.,educacion
+cuántos gramos tiene un kilo|cuántos gramos tiene un kilogramo,Un kilogramo tiene mil gramos.,educacion
+cuántas letras tiene el abecedario|cuántas letras tiene el alfabeto,El abecedario español tiene veintisiete letras.,educacion
+cuáles son las vocales|cuántas vocales hay,"Las vocales son cinco: a, e, i, o, u.",educacion
+cuánto es dos más dos|dos más dos,Dos más dos es cuatro.,educacion
+cuánto es cinco más cinco|cinco más cinco,Cinco más cinco es diez.,educacion
+cuánto es diez más diez|diez más diez,Diez más diez es veinte.,educacion
+cuánto es dos por dos|dos por dos,Dos por dos es cuatro.,educacion
+cuánto es tres por tres|tres por tres,Tres por tres es nueve.,educacion
+cuánto es cinco por cinco|cinco por cinco,Cinco por cinco es veinticinco.,educacion
+cuánto es diez por diez|diez por diez,Diez por diez es cien.,educacion
+qué es un número par,"Un número par se puede dividir exacto entre dos, como el dos, el cuatro y el seis.",educacion
+qué es un número primo,"Un número primo solo se puede dividir exacto entre uno y entre sí mismo, como el dos, el tres, el cinco y el siete.",educacion
+cuánto vale pi|qué es pi,Pi es aproximadamente tres coma uno cuatro. Sirve para calcular círculos.,educacion
+cuántos lados tiene un triángulo,Un triángulo tiene tres lados.,educacion
+cuántos lados tiene un cuadrado|cuántos lados tiene un rectángulo,Los cuadrados y los rectángulos tienen cuatro lados.,educacion
+cuántos lados tiene un pentágono,Un pentágono tiene cinco lados.,educacion
+cuántos lados tiene un hexágono,Un hexágono tiene seis lados.,educacion
+cuántos lados tiene un octágono|cuántos lados tiene un octógono,Un octógono tiene ocho lados.,educacion
+cuáles son las figuras geométricas|figuras geométricas básicas,"Las figuras básicas son el círculo, el cuadrado, el triángulo y el rectángulo.",educacion
+cuántos grados tiene un ángulo recto,Un ángulo recto tiene noventa grados.,educacion
+qué es el perímetro,El perímetro es la suma de todos los lados de una figura.,educacion
+qué es el área,El área es el tamaño de la superficie que ocupa una figura.,educacion
+cuáles son los colores primarios|colores primarios,"Los colores primarios son rojo, azul y amarillo.",educacion
+cuáles son los colores secundarios|colores secundarios,"Los colores secundarios son verde, naranja y morado.",educacion
+cuántos planetas hay|planetas del sistema solar|cuáles son los planetas,"El sistema solar tiene ocho planetas: Mercurio, Venus, Tierra, Marte, Júpiter, Saturno, Urano y Neptuno.",educacion
+qué es un sustantivo,"Un sustantivo es una palabra que nombra personas, animales, cosas o lugares, como niño, perro o mesa.",educacion
+qué es un verbo,"Un verbo es una palabra que indica una acción, como correr, comer o saltar.",educacion
+qué es un adjetivo,"Un adjetivo es una palabra que describe cómo es algo, como grande, rojo o divertido.",educacion
+qué es un sinónimo,"Un sinónimo es una palabra que significa casi lo mismo que otra, como bonito y hermoso.",educacion
+qué es un antónimo,"Un antónimo es una palabra con significado contrario, como grande y pequeño.",educacion
+cuántos sentidos tenemos|cuáles son los sentidos,"Tenemos cinco sentidos: vista, oído, olfato, gusto y tacto.",educacion
+qué es la historia,La historia estudia lo que pasó en el pasado para entender el presente.,educacion
+qué es una célula,La célula es la unidad más pequeña de los seres vivos.,educacion
+cómo aprendo mejor|cómo estudiar mejor|consejos para estudiar,"Estudia en un lugar tranquilo, haz pausas cortas, repasa con frecuencia y pregunta lo que no entiendas.",educacion
+cómo hago amigos|cómo puedo hacer amigos,"Puedes saludar con una sonrisa, invitar a jugar y compartir. Ser amable ayuda mucho.",educacion
+cuántos huesos tiene el cuerpo humano|cuántos huesos tenemos,Un adulto tiene doscientos seis huesos.,cuerpo
+cuántos dientes tenemos|cuántos dientes tiene una persona,Un adulto tiene treinta y dos dientes. Los niños tienen veinte dientes de leche.,cuerpo
+cuál es el órgano más grande del cuerpo|órgano más grande,La piel es el órgano más grande del cuerpo.,cuerpo
+para qué sirve el corazón|qué hace el corazón,El corazón bombea la sangre por todo el cuerpo.,cuerpo
+para qué sirven los pulmones|con qué respiramos,Respiramos con los pulmones. Ellos toman el oxígeno del aire.,cuerpo
+para qué sirve el cerebro|qué hace el cerebro,"El cerebro controla todo el cuerpo y nos permite pensar, sentir y recordar.",cuerpo
+para qué sirve el estómago,El estómago ayuda a digerir los alimentos que comemos.,cuerpo
+para qué sirven los huesos,Los huesos sostienen el cuerpo y protegen los órganos.,cuerpo
+para qué sirven los músculos,Los músculos permiten que el cuerpo se mueva.,cuerpo
+cómo me lavo las manos|cómo lavarse las manos|por qué lavarme las manos,"Mójate las manos, frótalas con jabón al menos veinte segundos, enjuaga y sécalas. Así eliminas gérmenes.",cuerpo
+cómo me cepillo los dientes|cada cuánto cepillarse los dientes,"Cepíllate los dientes después de comer, por dos minutos, y al menos tres veces al día.",cuerpo
+cuántas horas debo dormir|cuánto debo dormir,Los niños necesitan dormir entre nueve y doce horas cada noche.,cuerpo
+qué es una alimentación saludable|cómo comer sano|qué debo comer,"Come frutas, verduras, cereales y proteínas, toma agua y come pocos dulces y frituras.",cuerpo
+cuántos vasos de agua debo tomar|cuánta agua debo tomar,"Toma agua varias veces al día, sobre todo cuando hagas ejercicio o haga calor.",cuerpo
+por qué es importante hacer ejercicio|hacer ejercicio,"El ejercicio fortalece el cuerpo, mejora el ánimo y ayuda a dormir mejor.",cuerpo
+me duele la cabeza|me duele el estómago|me duele algo|no me siento bien|me siento mal,Siento que no te sientas bien. Avísale a un adulto o a un médico para que te revise.,cuerpo
+tengo fiebre|creo que estoy enfermo,Avísale a un adulto para que te cuide y te lleve al médico si hace falta.,cuerpo
+por qué debo ir al médico|para qué sirve el médico,"El médico cuida tu salud, te revisa y te ayuda a prevenir enfermedades.",cuerpo
+qué hago si hay un temblor|qué hacer en un temblor|qué hacer en un terremoto,"Mantén la calma, agáchate y cúbrete bajo una mesa fuerte, aléjate de ventanas y espera a que pare. Luego sal con un adulto a un lugar seguro.",seguridad
+qué hago si hay un incendio|qué hacer en un incendio,"Sal rápido, no uses el ascensor, avisa a un adulto y llama al 911.",seguridad
+qué hago si me pierdo|me perdí,"Quédate en un lugar seguro, no te vayas con extraños y pide ayuda a un policía o a un adulto de confianza.",seguridad
+cómo cruzo la calle|cómo cruzar la calle,"Mira a ambos lados, cruza por la cebra y solo cuando el semáforo peatonal esté en verde.",seguridad
+qué significan los colores del semáforo|colores del semáforo,"Rojo significa parar, amarillo significa precaución y verde significa avanzar.",seguridad
+qué hago si un extraño me habla|hablar con extraños,No te vayas con extraños ni aceptes cosas de ellos. Avisa enseguida a un adulto de confianza.,seguridad
+qué hago si me hacen bullying|qué hago si me molestan en la escuela,"Cuéntale a un adulto de confianza, como tus papás o tu profesor. Nadie merece que lo traten mal.",seguridad
+qué es el bullying|qué es el acoso escolar,"El bullying es cuando alguien maltrata a otra persona una y otra vez. Si lo ves o lo vives, avisa a un adulto.",seguridad
+qué hago si me siento mal en internet|peligros de internet,"Si algo en internet te incomoda, sal de la página y cuéntale a un adulto. No compartas datos personales.",seguridad
+qué es la amistad,La amistad es el cariño y la confianza entre personas que se apoyan y se divierten juntas.,valores
+qué es el respeto,El respeto es tratar bien a los demás y aceptar que somos diferentes.,valores
+qué es la empatía,La empatía es ponerte en el lugar de otra persona para entender cómo se siente.,valores
+qué es la honestidad,La honestidad es decir siempre la verdad y actuar con sinceridad.,valores
+qué es la amabilidad,La amabilidad es tratar a los demás con cariño y buenos modales.,valores
+qué es la responsabilidad,La responsabilidad es cumplir con lo que nos toca hacer.,valores
+qué es la solidaridad,La solidaridad es ayudar a otros cuando lo necesitan.,valores
+qué es la paciencia,La paciencia es saber esperar con calma.,valores
+por qué es importante compartir,Compartir hace felices a los demás y fortalece la amistad.,valores
+qué son las emociones|cuáles son las emociones,"Las emociones son lo que sentimos por dentro, como alegría, tristeza, miedo, enojo y sorpresa.",valores
+qué es la alegría,La alegría es una emoción que sentimos cuando algo nos gusta o nos hace felices.,valores
+por qué es importante pedir perdón,Pedir perdón repara los errores y ayuda a mantener las buenas relaciones.,valores
+por qué debo ayudar en casa|cómo ayudo en casa,Ayudar en casa es una forma de cuidar a tu familia. Puedes ordenar tu cuarto o poner la mesa.,valores
+por qué debo hacer la tarea|para qué sirve estudiar,Estudiar te ayuda a aprender y a cumplir tus sueños.,valores
+qué hora es|qué día es hoy|cuál es la fecha|qué fecha es hoy,"No tengo reloj conectado por ahora, pero puedes ver la hora en la pantalla.",utilidad
+puedes ayudarme|necesito ayuda|ayúdame|me ayudas,¡Claro! Cuéntame qué necesitas y haré lo posible por ayudarte.,utilidad
+cómo está el clima|qué clima hace|va a llover hoy,Ahora no tengo información del clima en tiempo real.,utilidad
+puedes poner música|pon música|quiero música,Puedo bailar contigo en Just Dance. Pídeme el juego de baile.,utilidad
+apágate|quiero apagarte|cómo te apago,"Para apagarme, pídele ayuda a un adulto.",utilidad
+cuáles son las frutas|nombra frutas|dime frutas,"Algunas frutas son manzana, banano, naranja, fresa, mango, piña y sandía.",comida
+cuáles son las verduras|nombra verduras|dime verduras,"Algunas verduras son zanahoria, tomate, lechuga, brócoli, cebolla y pimiento.",comida
+por qué es bueno comer frutas|beneficios de las frutas,Las frutas tienen vitaminas que ayudan a que tu cuerpo crezca sano.,comida
+qué es el chocolate|de dónde viene el chocolate,El chocolate se hace con las semillas del cacao.,comida
+qué es la leche|de dónde viene la leche,La leche la producen las vacas y otros animales mamíferos para alimentar a sus crías.,comida
+de dónde viene el pan|cómo se hace el pan,"El pan se hace con harina de trigo, agua, levadura y sal, y se hornea.",comida
+qué es un desayuno saludable|qué debo desayunar,"Un buen desayuno puede tener fruta, pan integral, huevo o leche.",comida
+cuántos jugadores tiene un equipo de fútbol|cuántos juegan en fútbol,Un equipo de fútbol juega con once jugadores en la cancha.,deportes
+cuál es el deporte más popular del mundo,El fútbol es el deporte más popular del mundo.,deportes
+qué es el baloncesto|qué es el básquet,El baloncesto es un deporte en el que dos equipos intentan encestar el balón en un aro.,deportes
+qué es el voleibol|qué es el vóley,"En el voleibol, dos equipos pasan el balón sobre una red y tratan de que toque el suelo del otro lado.",deportes
+qué es la natación|por qué es bueno nadar,La natación es un deporte completo que fortalece todo el cuerpo.,deportes
+qué son los juegos olímpicos|olimpiadas,Los Juegos Olímpicos son una competencia mundial de deportes que se hace cada cuatro años.,deportes

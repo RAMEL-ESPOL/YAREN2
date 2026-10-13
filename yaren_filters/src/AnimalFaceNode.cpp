@@ -4,6 +4,10 @@
 #include <opencv2/imgproc.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <thread>
+#include <cmath>
+#include <sstream>
+#include <atomic>
+#include <algorithm>
 #include <chrono>
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include <cstdlib>
@@ -119,7 +123,7 @@ static void overlay_rgba(cv::Mat& bg, const cv::Mat& fg, int ox, int oy) {
     o8.copyTo(bc);
 }
 
-static cv::Rect card_rect(int idx) {
+[[maybe_unused]] static cv::Rect card_rect(int idx) {
     int col = idx % COLS, row = idx / COLS;
     int total_w = COLS * CARD_W + (COLS - 1) * CARD_PAD;
     int x0 = (WIN_W - total_w) / 2 + col * (CARD_W + CARD_PAD);
@@ -156,75 +160,152 @@ static std::vector<cv::Mat> load_previews() {
     return previews;
 }
 
-static void draw_card(cv::Mat& canvas, int idx, bool selected,
-                      const std::vector<cv::Mat>& previews, const Texts& txt) {
-    const FilterOption& f = FILTERS[idx];
-    const std::string& label = txt.animal_labels[idx];
-    cv::Rect r = card_rect(idx);
-    cv::Scalar bg_col = selected ? cv::Scalar(55,55,65) : cv::Scalar(28,28,35);
-    cv::rectangle(canvas, r, bg_col, cv::FILLED);
-    if (selected)
-        cv::rectangle(canvas, cv::Rect(r.x+2,r.y+2,r.width-4,r.height-4),
-                      f.border_color * 0.3, cv::FILLED);
-    cv::rectangle(canvas, r, f.border_color, selected ? 4 : 1);
-    cv::Rect img_area(r.x+10, r.y+10, CARD_W-20, CARD_H-75);
-    cv::rectangle(canvas, img_area, cv::Scalar(18,18,22), cv::FILLED);
-    if (!previews[idx].empty()) {
-        int px = img_area.x + (img_area.width  - previews[idx].cols) / 2;
-        int py = img_area.y + (img_area.height - previews[idx].rows) / 2;
-        overlay_rgba(canvas, previews[idx], px, py);
+// ══════════════════════════════════════════════════════════════
+//  Utilidades visuales
+// ══════════════════════════════════════════════════════════════
+static double clampd(double v, double a, double b) { return std::max(a, std::min(b, v)); }
+static double out_cubic_d(double x) { x = clampd(x, 0, 1); return 1.0 - std::pow(1.0 - x, 3); }
+static double out_back_d(double x) {
+    x = clampd(x, 0, 1);
+    const double c1 = 1.70158, c3 = c1 + 1.0;
+    return 1.0 + c3 * std::pow(x - 1.0, 3) + c1 * std::pow(x - 1.0, 2);
+}
+static double now_sec() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static std::vector<cv::Mat> load_raw_animals() {
+    std::vector<cv::Mat> out(FILTERS.size());
+    try {
+        std::string pkg = ament_index_cpp::get_package_share_directory("yaren_filters");
+        for (size_t i = 0; i < FILTERS.size(); ++i) {
+            std::string path = pkg + "/imgs/animals_mask/" + FILTERS[i].id
+                             + "/" + FILTERS[i].id + "_open_open.png";
+            cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
+            if (img.empty()) continue;
+            if (img.channels() == 3) cv::cvtColor(img, img, cv::COLOR_BGR2BGRA);
+            out[i] = crop_transparent(img);
+        }
+    } catch (...) {}
+    return out;
+}
+
+static void draw_animal(cv::Mat& canvas, const cv::Mat& img, const cv::Scalar& col,
+                        int cx, int cy, int h, double alpha)
+{
+    if (alpha <= 0.02 || h < 8) return;
+    cv::Mat rs;
+    int w;
+    if (img.empty()) {
+        w = h;
+        rs = cv::Mat(h, w, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+        cv::circle(rs, cv::Point(w / 2, h / 2), h / 2 - 2,
+                   cv::Scalar(col[0], col[1], col[2], 255), cv::FILLED, cv::LINE_AA);
+    } else {
+        double sc = std::min((double)h / img.rows, (double)(h * 1.3) / img.cols);
+        w = std::max(1, (int)(img.cols * sc));
+        h = std::max(1, (int)(img.rows * sc));
+        cv::resize(img, rs, cv::Size(w, h), 0, 0, cv::INTER_AREA);
     }
-    int base = 0;
-    cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.9, 2, &base);
-    cv::Scalar tc = selected ? cv::Scalar(255,255,255) : cv::Scalar(160,160,170);
-    cv::putText(canvas, label, {r.x+(CARD_W-ts.width)/2, r.y+CARD_H-18},
-                cv::FONT_HERSHEY_SIMPLEX, 0.9, tc, 2, cv::LINE_AA);
-    if (selected) {
-        int ux = r.x+(CARD_W-ts.width)/2, uy = r.y+CARD_H-10;
-        cv::line(canvas, {ux,uy}, {ux+ts.width,uy}, f.border_color, 2);
+    int ox = cx - w / 2, oy = cy - h / 2;
+    cv::Rect clip = cv::Rect(ox, oy, w, h) & cv::Rect(0, 0, canvas.cols, canvas.rows);
+    if (clip.area() <= 0) return;
+    if (alpha >= 0.99) { overlay_rgba(canvas, rs, ox, oy); return; }
+    cv::Mat roi = canvas(clip);
+    cv::Mat tmp = roi.clone();
+    overlay_rgba(tmp, rs, ox - clip.x, oy - clip.y);
+    cv::addWeighted(tmp, alpha, roi, 1.0 - alpha, 0, roi);
+}
+
+static void draw_paw(cv::Mat& f, cv::Point c, int r, const cv::Scalar& col)
+{
+    cv::ellipse(f, cv::Point(c.x, c.y + r / 3), cv::Size(r, (int)(r * 0.8)), 0, 0, 360,
+                col, cv::FILLED, cv::LINE_AA);
+    const double tx[4] = {-1.3, -0.45, 0.45, 1.3};
+    const double ty[4] = {-0.4, -1.1, -1.1, -0.4};
+    for (int k = 0; k < 4; ++k)
+        cv::circle(f, cv::Point(c.x + (int)(tx[k] * r), c.y + (int)(ty[k] * r)),
+                   std::max(1, (int)(r * 0.38)), col, cv::FILLED, cv::LINE_AA);
+}
+
+static void pixel_box(cv::Mat& f, const cv::Rect& r, int cut, const cv::Scalar& col)
+{
+    std::vector<cv::Point> p = {
+        {r.x + cut, r.y}, {r.x + r.width - cut, r.y},
+        {r.x + r.width - cut, r.y + cut}, {r.x + r.width, r.y + cut},
+        {r.x + r.width, r.y + r.height - cut}, {r.x + r.width - cut, r.y + r.height - cut},
+        {r.x + r.width - cut, r.y + r.height}, {r.x + cut, r.y + r.height},
+        {r.x + cut, r.y + r.height - cut}, {r.x, r.y + r.height - cut},
+        {r.x, r.y + cut}, {r.x + cut, r.y + cut}};
+    cv::fillPoly(f, p, col);
+}
+
+static void pixel_arrow(cv::Mat& f, cv::Point c, int dir, const cv::Scalar& col, double sc)
+{
+    auto P = [&](double x, double y) {
+        return cv::Point(c.x + (int)(dir * x * sc), c.y + (int)(y * sc));
+    };
+    std::vector<cv::Point> p = {
+        P(-24, -8), P(2, -8), P(2, -20), P(10, -20), P(10, -12), P(18, -12), P(18, -4), P(26, -4),
+        P(26, 4), P(18, 4), P(18, 12), P(10, 12), P(10, 20), P(2, 20), P(2, 8), P(-24, 8)};
+    cv::fillPoly(f, p, col);
+}
+
+static void draw_sky(cv::Mat& f, double t)
+{
+    for (int y = 0; y < f.rows; ++y) {
+        double k = (double)y / (f.rows - 1);
+        f.row(y).setTo(cv::Scalar(225, 150, 10) * (1.0 - k) + cv::Scalar(255, 215, 140) * k);
+    }
+    struct C { double x, y, s, v; };
+    static const C cl[4] = {{60, 60, 6, 6}, {330, 115, 5, 4}, {560, 40, 7, 5}, {700, 150, 5, 7}};
+    const cv::Scalar white(255, 255, 255);
+    for (const auto& c : cl) {
+        int x = (int)std::fmod(c.x + t * c.v, f.cols + 160.0) - 80;
+        int s = (int)c.s, y = (int)c.y;
+        cv::rectangle(f, cv::Rect(x + 2 * s, y, 3 * s, s), white, cv::FILLED);
+        cv::rectangle(f, cv::Rect(x + s, y + s, 7 * s, s), white, cv::FILLED);
+        cv::rectangle(f, cv::Rect(x, y + 2 * s, 9 * s, 2 * s), white, cv::FILLED);
     }
 }
 
-static void draw_menu(cv::Mat& canvas, int sel,
-                      const std::vector<cv::Mat>& previews, const Texts& txt) {
-    canvas.setTo(cv::Scalar(12,12,18));
-    cv::rectangle(canvas, {0,0,WIN_W,75}, cv::Scalar(20,20,30), cv::FILLED);
-    int base = 0;
-    cv::Size ts = cv::getTextSize(txt.menu_title, cv::FONT_HERSHEY_SIMPLEX,1.05,2,&base);
-    cv::putText(canvas, txt.menu_title, {(WIN_W-ts.width)/2,55},
-                cv::FONT_HERSHEY_SIMPLEX, 1.05, {220,220,230}, 2, cv::LINE_AA);
-    cv::line(canvas, {40,72}, {WIN_W-40,72}, {50,50,65}, 2);
-    cv::Scalar ac(100,100,110);
-    std::vector<cv::Point> l={{BTN_PREV.x+30,BTN_PREV.y},{BTN_PREV.x+10,BTN_PREV.y+25},{BTN_PREV.x+30,BTN_PREV.y+50}};
-    std::vector<cv::Point> r={{BTN_NEXT.x+10,BTN_NEXT.y},{BTN_NEXT.x+30,BTN_NEXT.y+25},{BTN_NEXT.x+10,BTN_NEXT.y+50}};
-    cv::polylines(canvas, l, false, ac, 3, cv::LINE_AA);
-    cv::polylines(canvas, r, false, ac, 3, cv::LINE_AA);
-    for (int i = 0; i < (int)FILTERS.size(); ++i)
-        draw_card(canvas, i, i==sel, previews, txt);
-    bool has_sel = (sel >= 0);
-    cv::Scalar bbg = has_sel ? cv::Scalar(0,160,0) : cv::Scalar(45,45,55);
-    cv::Scalar bft = has_sel ? cv::Scalar(255,255,255) : cv::Scalar(90,90,100);
-    cv::rectangle(canvas, cv::Rect(BTN_APPLY.x+3,BTN_APPLY.y+3,BTN_APPLY.width,BTN_APPLY.height), {0,0,0}, cv::FILLED);
-    cv::rectangle(canvas, BTN_APPLY, bbg, cv::FILLED);
-    cv::Size bs = cv::getTextSize(txt.btn_apply, cv::FONT_HERSHEY_SIMPLEX, 0.85, 2, &base);
-    cv::putText(canvas, txt.btn_apply,
-                {BTN_APPLY.x+(BTN_APPLY.width-bs.width)/2, BTN_APPLY.y+(BTN_APPLY.height+bs.height)/2-2},
-                cv::FONT_HERSHEY_SIMPLEX, 0.85, bft, 2, cv::LINE_AA);
-    cv::rectangle(canvas, BTN_CLOSE, cv::Scalar(180,30,30), cv::FILLED);
-    int m=12;
-    cv::line(canvas,{BTN_CLOSE.x+m,BTN_CLOSE.y+m},{BTN_CLOSE.x+BTN_CLOSE.width-m,BTN_CLOSE.y+BTN_CLOSE.height-m},{255,255,255},3,cv::LINE_AA);
-    cv::line(canvas,{BTN_CLOSE.x+BTN_CLOSE.width-m,BTN_CLOSE.y+m},{BTN_CLOSE.x+m,BTN_CLOSE.y+BTN_CLOSE.height-m},{255,255,255},3,cv::LINE_AA);
+// ══════════════════════════════════════════════════════════════
+//  Selector de animal (estilo selector de personajes)
+// ══════════════════════════════════════════════════════════════
+struct MenuState {
+    int selected = 0;
+    bool apply_hit = false;
+    bool close_hit = false;
+    double slide = 0.0;
+    cv::Point mouse{-1, -1};
+};
+
+static const cv::Rect ARW_L(236, 342, 70, 60);
+static const cv::Rect ARW_R(494, 342, 70, 60);
+static const cv::Rect BTN_START(250, 410, 300, 62);
+
+static void menu_go(MenuState* s, int dir)
+{
+    int n = (int)FILTERS.size();
+    s->selected = ((s->selected + dir) % n + n) % n;
+    s->slide = dir;
 }
 
-struct MenuState { int selected=-1; bool apply_hit=false; bool close_hit=false; };
-
-static void on_menu_mouse(int event, int x, int y, int, void* ud) {
+static void on_menu_mouse(int event, int x, int y, int, void* ud)
+{
     auto* s = reinterpret_cast<MenuState*>(ud);
+    s->mouse = cv::Point(x, y);
     if (event != cv::EVENT_LBUTTONDOWN) return;
-    if (BTN_CLOSE.contains({x,y})) { s->close_hit = true; return; }
-    for (int i = 0; i < (int)FILTERS.size(); ++i)
-        if (card_rect(i).contains({x,y})) { s->selected = i; return; }
-    if (BTN_APPLY.contains({x,y}) && s->selected >= 0) s->apply_hit = true;
+    cv::Point p(x, y);
+    if (BTN_CLOSE.contains(p)) { s->close_hit = true; return; }
+    if (BTN_START.contains(p)) { s->apply_hit = true; return; }
+    if (ARW_L.contains(p)) { menu_go(s, -1); return; }
+    if (ARW_R.contains(p)) { menu_go(s, +1); return; }
+    if (y > 70 && y < 335) {
+        if (x < 270) menu_go(s, -1);
+        else if (x > 530) menu_go(s, +1);
+        else s->apply_hit = true;
+    }
 }
 
 static void on_cam_mouse(int event, int, int, int, void* ud) {
@@ -232,10 +313,90 @@ static void on_cam_mouse(int event, int, int, int, void* ud) {
         *reinterpret_cast<std::atomic<bool>*>(ud) = true;
 }
 
+static void draw_menu(cv::Mat& canvas, MenuState& ms, const std::vector<cv::Mat>& raws,
+                      const Texts& txt)
+{
+    const double t = now_sec();
+    const int n = (int)FILTERS.size();
+    const bool eng = (txt.btn_apply == "Apply");
+    draw_sky(canvas, t);
+
+    ms.slide *= 0.80;
+    if (std::fabs(ms.slide) < 0.01) ms.slide = 0.0;
+
+    const int SP = 250;
+    std::vector<std::pair<double, int>> order;
+    for (int rel = -2; rel <= 2; ++rel) order.push_back({std::fabs(rel + ms.slide), rel});
+    std::sort(order.begin(), order.end(),
+              [](const std::pair<double, int>& a, const std::pair<double, int>& b) { return a.first > b.first; });
+
+    for (const auto& o : order) {
+        int rel = o.second;
+        double pos = rel + ms.slide, d = std::fabs(pos);
+        if (d > 1.7) continue;
+        int idx = (((ms.selected + rel) % n) + n) % n;
+        double tt = clampd(1.0 - d, 0.0, 1.0);
+        int h = (int)(125 + 125 * tt);
+        int cx = 400 + (int)(pos * SP);
+        int cy = (int)(225 - 40 * tt);
+        double alpha = (0.55 + 0.45 * tt) * clampd((1.7 - d) / 0.7, 0.0, 1.0);
+        if (alpha > 0.3)
+            cv::ellipse(canvas, cv::Point(cx, cy + h / 2 + 6), cv::Size((int)(h * 0.4), 8), 0, 0, 360,
+                        cv::Scalar(185, 120, 20), cv::FILLED, cv::LINE_AA);
+        int cyb = cy + (int)(5.0 * std::sin(t * 3.0) * tt);
+        draw_animal(canvas, raws[idx], FILTERS[idx].border_color, cx, cyb, h, alpha);
+    }
+
+    // huellita sobre el animal central
+    draw_paw(canvas, cv::Point(400, 38 + (int)(4 * std::sin(t * 3.0))), 11, cv::Scalar(40, 30, 30));
+
+    // nombre y flechas
+    std::string name = txt.animal_labels[ms.selected];
+    for (auto& ch : name) ch = (char)std::toupper((unsigned char)ch);
+    int base = 0;
+    cv::Size ts = cv::getTextSize(name, cv::FONT_HERSHEY_DUPLEX, 1.1, 2, &base);
+    cv::Point org(400 - ts.width / 2, 384);
+    cv::putText(canvas, name, org, cv::FONT_HERSHEY_DUPLEX, 1.1, cv::Scalar(255, 255, 255), 6, cv::LINE_AA);
+    cv::putText(canvas, name, org, cv::FONT_HERSHEY_DUPLEX, 1.1, cv::Scalar(60, 30, 20), 2, cv::LINE_AA);
+
+    cv::Point cl(ARW_L.x + ARW_L.width / 2, ARW_L.y + ARW_L.height / 2);
+    cv::Point cr(ARW_R.x + ARW_R.width / 2, ARW_R.y + ARW_R.height / 2);
+    bool hl = ARW_L.contains(ms.mouse), hr = ARW_R.contains(ms.mouse);
+    pixel_arrow(canvas, cv::Point(cl.x + 3, cl.y + 3), -1, cv::Scalar(150, 90, 5), 1.2);
+    pixel_arrow(canvas, cl, -1, hl ? cv::Scalar(120, 70, 235) : cv::Scalar(30, 20, 20), 1.2);
+    pixel_arrow(canvas, cv::Point(cr.x + 3, cr.y + 3), +1, cv::Scalar(150, 90, 5), 1.2);
+    pixel_arrow(canvas, cr, +1, hr ? cv::Scalar(120, 70, 235) : cv::Scalar(30, 20, 20), 1.2);
+
+    // boton START
+    bool hs = BTN_START.contains(ms.mouse);
+    cv::Rect r = BTN_START;
+    r.y += (int)(2.0 * std::sin(t * 4.0));
+    cv::Scalar border(70, 30, 90), pink = hs ? cv::Scalar(150, 110, 250) : cv::Scalar(120, 70, 235);
+    pixel_box(canvas, cv::Rect(r.x - 5 + 4, r.y - 5 + 6, r.width + 10, r.height + 10), 9, cv::Scalar(150, 90, 5));
+    pixel_box(canvas, cv::Rect(r.x - 5, r.y - 5, r.width + 10, r.height + 10), 9, border);
+    pixel_box(canvas, r, 6, pink);
+    cv::rectangle(canvas, cv::Rect(r.x + 12, r.y + 8, 30, 6), cv::Scalar(255, 255, 255), cv::FILLED);
+    cv::rectangle(canvas, cv::Rect(r.x + 12, r.y + 8, 6, 22), cv::Scalar(255, 255, 255), cv::FILLED);
+    std::string sl = eng ? "START" : "INICIAR";
+    cv::Size bs = cv::getTextSize(sl, cv::FONT_HERSHEY_DUPLEX, 1.5, 3, &base);
+    cv::putText(canvas, sl, cv::Point(r.x + (r.width - bs.width) / 2, r.y + (r.height + bs.height) / 2),
+                cv::FONT_HERSHEY_DUPLEX, 1.5, border, 3, cv::LINE_AA);
+
+    // cerrar
+    cv::rectangle(canvas, BTN_CLOSE, cv::Scalar(180, 30, 30), cv::FILLED);
+    int m = 12;
+    cv::line(canvas, {BTN_CLOSE.x + m, BTN_CLOSE.y + m},
+             {BTN_CLOSE.x + BTN_CLOSE.width - m, BTN_CLOSE.y + BTN_CLOSE.height - m}, {255, 255, 255}, 3, cv::LINE_AA);
+    cv::line(canvas, {BTN_CLOSE.x + BTN_CLOSE.width - m, BTN_CLOSE.y + m},
+             {BTN_CLOSE.x + m, BTN_CLOSE.y + BTN_CLOSE.height - m}, {255, 255, 255}, 3, cv::LINE_AA);
+}
+
 static std::string show_menu(const std::vector<cv::Mat>& previews, const Texts& txt) {
+    (void)previews;
+    std::vector<cv::Mat> raws = load_raw_animals();
     cv::namedWindow(MENU_WIN, cv::WINDOW_NORMAL);
     cv::setWindowProperty(MENU_WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-    std::thread([&]() {
+    std::thread([]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         std::string cmd = std::string("xdotool search --sync --name '")
                         + MENU_WIN
@@ -246,9 +407,9 @@ static std::string show_menu(const std::vector<cv::Mat>& previews, const Texts& 
     cv::setMouseCallback(MENU_WIN, on_menu_mouse, &ms);
     cv::Mat canvas(WIN_H, WIN_W, CV_8UC3);
     while (!ms.apply_hit && !ms.close_hit) {
-        draw_menu(canvas, ms.selected, previews, txt);
+        draw_menu(canvas, ms, raws, txt);
         cv::imshow(MENU_WIN, canvas);
-        cv::waitKey(16);
+        if (cv::waitKey(16) == 27) ms.close_hit = true;
     }
     cv::destroyWindow(MENU_WIN);
     if (ms.close_hit || ms.selected < 0) return "";
@@ -499,116 +660,171 @@ void AnimalFaceNode::play_sound(bool turn_on)
         _exit(1);  // Solo llega aquí si execl falla
     }
 }
-// ── Intro screen (nueva función) ─────────────────────────────────────────────
+static void anim_pill(cv::Mat& f, const cv::Rect& r, const cv::Scalar& col)
+{
+    int rad = r.height / 2;
+    cv::rectangle(f, cv::Rect(r.x + rad, r.y, r.width - 2 * rad, r.height), col, cv::FILLED, cv::LINE_AA);
+    cv::circle(f, cv::Point(r.x + rad, r.y + rad), rad, col, cv::FILLED, cv::LINE_AA);
+    cv::circle(f, cv::Point(r.x + r.width - rad, r.y + rad), rad, col, cv::FILLED, cv::LINE_AA);
+}
+
+static void shadow_txt(cv::Mat& f, const std::string& s, cv::Point o, int font, double sc,
+                       const cv::Scalar& col, int th)
+{
+    cv::putText(f, s, cv::Point(o.x + 2, o.y + 2), font, sc, cv::Scalar(10, 8, 20), th + 2, cv::LINE_AA);
+    cv::putText(f, s, o, font, sc, col, th, cv::LINE_AA);
+}
+
 static bool show_intro_screen(bool is_english)
 {
     const int W = 800, H = 480;
     const char* WIN = "Animal Filter Intro";
-    bool clicked = false, closed = false;
-
-    struct State { bool* clicked; cv::Rect btn; };
-    cv::Rect btn_rect(300, 370, 200, 52);
-    State st{ &clicked, btn_rect };
+    struct State { bool clicked = false; bool hover = false; cv::Rect btn; } st;
+    st.btn = cv::Rect(50, 334, 390, 70);
+    bool closed = false;
 
     cv::namedWindow(WIN, cv::WINDOW_NORMAL);
     cv::setWindowProperty(WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
     cv::setWindowProperty(WIN, cv::WND_PROP_TOPMOST, 1);
     cv::setMouseCallback(WIN, [](int event, int x, int y, int, void* ud) {
         auto* s = reinterpret_cast<State*>(ud);
-        if (event == cv::EVENT_LBUTTONDOWN && s->btn.contains({x, y}))
-            *s->clicked = true;
+        bool in = s->btn.contains(cv::Point(x, y));
+        if (event == cv::EVENT_MOUSEMOVE) s->hover = in;
+        else if (event == cv::EVENT_LBUTTONDOWN && in) s->clicked = true;
     }, &st);
 
-    std::string title  = is_english ? "Animal Filters"
-                                    : "Filtros de Animales";
-    std::string desc   = is_english
-        ? "Choose an animal and overlay its mask on your face. Open your mouth to activate the virtual background and animal sound."
-        : "Elige un animal y superpon su mascara sobre tu rostro. Abre la boca para activar el fondo virtual y el sonido del animal.";
+    std::vector<cv::Mat> raws = load_raw_animals();
+    const cv::Scalar WHITE(255, 255, 255);
+    const int FD = cv::FONT_HERSHEY_DUPLEX, FS = cv::FONT_HERSHEY_SIMPLEX;
+
+    std::string t1 = is_english ? "Animal" : "Filtros de";
+    std::string t2 = is_english ? "Filters" : "Animales";
+    std::string desc = is_english
+        ? "Pick an animal and wear its mask. Open your mouth to turn on the virtual background and sound."
+        : "Elige un animal y ponte su mascara. Abre la boca para activar el fondo virtual y el sonido.";
     std::string btn_lbl = is_english ? "Start" : "Comenzar";
-    std::vector<std::string> tags = is_english
-        ? std::vector<std::string>{"Bear / Cat / Monkey", "Virtual background", "Sound on open mouth"}
-        : std::vector<std::string>{"Oso / Gato / Mono",  "Fondo virtual",      "Sonido al abrir boca"};
 
-    cv::Scalar ACCENT(60, 180, 40);
-    cv::Scalar BG(13, 26, 13), PANEL(22, 46, 30);
-
-    while (!clicked && !closed) {
-        cv::Mat frame(H, W, CV_8UC3, BG);
-        cv::rectangle(frame, {100, 50}, {700, 440}, PANEL, -1);
-        cv::rectangle(frame, {100, 50}, {700, 440}, ACCENT, 1);
-
-        // Carita de oso
-        int cx = W / 2, cy = 130;
-
-        // Cabeza principal
-        cv::circle(frame, {cx, cy}, 38, ACCENT, 2);
-
-        // Orejas
-        cv::circle(frame, {cx - 30, cy - 32}, 12, ACCENT, 2);   // oreja izquierda
-        cv::circle(frame, {cx + 30, cy - 32}, 12, ACCENT, 2);   // oreja derecha
-
-        // Relleno orejas interior
-        cv::circle(frame, {cx - 30, cy - 32}, 6, ACCENT, -1);
-        cv::circle(frame, {cx + 30, cy - 32}, 6, ACCENT, -1);
-
-        // Ojos
-        cv::circle(frame, {cx - 12, cy - 8}, 4, ACCENT, -1);
-        cv::circle(frame, {cx + 12, cy - 8}, 4, ACCENT, -1);
-
-        // Hocico
-        cv::ellipse(frame, {cx, cy + 10}, {12, 8}, 0, 0, 360, ACCENT, 2);
-
-        // Nariz
-        cv::circle(frame, {cx, cy + 6}, 3, ACCENT, -1);
-
-        // Sonrisa
-        cv::ellipse(frame, {cx, cy + 14}, {7, 5}, 0, 10, 170, ACCENT, 2);
-        // título
-        int base = 0;
-        cv::Size ts = cv::getTextSize(title, cv::FONT_HERSHEY_DUPLEX, 1.2, 2, &base);
-        cv::putText(frame, title, {(W - ts.width)/2, 205},
-                    cv::FONT_HERSHEY_DUPLEX, 1.2, cv::Scalar(240, 235, 255), 2, cv::LINE_AA);
-
-        // descripción (word-wrap simple)
+    int base = 0;
+    std::vector<std::string> lines;
+    {
         std::istringstream iss(desc);
         std::string word, line;
-        std::vector<std::string> lines;
         while (iss >> word) {
             std::string test = line.empty() ? word : line + " " + word;
-            cv::Size sz = cv::getTextSize(test, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
-            if (sz.width > 500 && !line.empty()) { lines.push_back(line); line = word; }
-            else line = test;
+            if (cv::getTextSize(test, FS, 0.5, 1, &base).width > 380 && !line.empty()) {
+                lines.push_back(line); line = word;
+            } else line = test;
         }
         if (!line.empty()) lines.push_back(line);
-        int y_d = 245;
-        for (auto& ln : lines) {
-            cv::Size lsz = cv::getTextSize(ln, cv::FONT_HERSHEY_SIMPLEX, 0.56, 1, &base);
-            cv::putText(frame, ln, {(W - lsz.width)/2, y_d},
-                        cv::FONT_HERSHEY_SIMPLEX, 0.56, cv::Scalar(160, 190, 150), 1, cv::LINE_AA);
-            y_d += 24;
+    }
+
+    auto tone = [&](int i) -> cv::Scalar {
+        cv::Scalar c = FILTERS[i].border_color, o;
+        for (int k = 0; k < 3; ++k) o[k] = std::min(175.0, c[k] * 0.6 + 50.0);
+        return o;
+    };
+    cv::Scalar cur = tone(0);
+    const double t0 = now_sec();
+    const double CYCLE = 2.4;
+
+    while (!st.clicked && !closed) {
+        double t = now_sec() - t0;
+        int idx = ((int)(t / CYCLE)) % (int)FILTERS.size();
+        double local = std::fmod(t, CYCLE) / CYCLE;
+        cur = cur + (tone(idx) - cur) * 0.07;
+
+        cv::Mat frame(H, W, CV_8UC3);
+        cv::Scalar top = cur * 0.72, bot;
+        for (int k = 0; k < 3; ++k) bot[k] = std::min(185.0, cur[k] * 0.95 + 8.0);
+        for (int y = 0; y < H; ++y) {
+            double k = (double)y / (H - 1);
+            frame.row(y).setTo(top * (1.0 - k) + bot * k);
         }
 
-        // tags
-        int tx = 130;
-        for (auto& tag : tags) {
-            cv::Size tgsz = cv::getTextSize(tag, cv::FONT_HERSHEY_SIMPLEX, 0.48, 1, &base);
-            int pad = 12;
-            cv::rectangle(frame, {tx - pad, 318}, {tx + tgsz.width + pad, 342},
-                          cv::Scalar(20, 50, 20), -1);
-            cv::rectangle(frame, {tx - pad, 318}, {tx + tgsz.width + pad, 342},
-                          cv::Scalar(40, 100, 40), 1);
-            cv::putText(frame, tag, {tx, 335},
-                        cv::FONT_HERSHEY_SIMPLEX, 0.48, cv::Scalar(150, 190, 140), 1, cv::LINE_AA);
-            tx += tgsz.width + pad * 2 + 14;
+        // aro y halo
+        {
+            cv::Mat ov = frame.clone();
+            cv::circle(ov, cv::Point(630, 255), 175, WHITE, 16, cv::LINE_AA);
+            cv::circle(ov, cv::Point(630, 255), 140, WHITE, -1, cv::LINE_AA);
+            cv::addWeighted(ov, 0.10, frame, 0.90, 0, frame);
+        }
+        // burbujas
+        {
+            cv::Mat ov = frame.clone();
+            for (int i = 0; i < 14; ++i) {
+                int bx = (int)std::fmod(i * 61 + 30 * std::sin(t * 0.6 + i) + W * 2.0, (double)W);
+                int by = (int)(H - std::fmod(i * 53 + t * (14 + (i % 4) * 6), H + 40.0) + 20);
+                cv::circle(ov, cv::Point(bx, by), 4 + (i % 4) * 3, WHITE, -1, cv::LINE_AA);
+            }
+            cv::addWeighted(ov, 0.16, frame, 0.84, 0, frame);
         }
 
-        // botón
-        cv::rectangle(frame, btn_rect, cv::Scalar(20, 100, 40), -1);
-        cv::rectangle(frame, btn_rect, ACCENT, 2);
-        cv::Size bsz = cv::getTextSize(btn_lbl, cv::FONT_HERSHEY_DUPLEX, 0.9, 2, &base);
-        cv::putText(frame, btn_lbl,
-                    {btn_rect.x + (btn_rect.width - bsz.width)/2, btn_rect.y + 34},
-                    cv::FONT_HERSHEY_DUPLEX, 0.9, cv::Scalar(240, 255, 240), 2, cv::LINE_AA);
+        // logo
+        {
+            cv::Size ls = cv::getTextSize("YAREN", FD, 1.1, 2, &base);
+            shadow_txt(frame, "YAREN", cv::Point((W - ls.width) / 2, 58), FD, 1.1, WHITE, 2);
+        }
+
+        // animal grande (derecha)
+        {
+            double pop = out_back_d(local / 0.22);
+            double bob = 9.0 * std::sin(t * 2.2);
+            int h = (int)(250 * std::max(0.05, pop));
+            int sw = (int)(95 * std::max(0.3, pop));
+            cv::Mat ov = frame.clone();
+            cv::ellipse(ov, cv::Point(630, 418), cv::Size(sw, 12), 0, 0, 360, cv::Scalar(0, 0, 0), -1, cv::LINE_AA);
+            cv::addWeighted(ov, 0.25, frame, 0.75, 0, frame);
+            draw_animal(frame, raws[idx], FILTERS[idx].border_color, 630, 250 + (int)bob, h, 1.0);
+        }
+
+        // columna izquierda
+        cv::Mat baseFrame = frame.clone();
+        double a_in = out_cubic_d(t / 0.9);
+        int dx = (int)(-60 * (1.0 - a_in));
+
+        shadow_txt(frame, t1, cv::Point(50 + dx, 140), FD, 1.15, WHITE, 2);
+        shadow_txt(frame, t2, cv::Point(50 + dx, 184), FD, 1.15, WHITE, 2);
+
+        cv::Scalar darkc = cur * 0.45;
+        for (int i = 0; i < 3; ++i) {
+            cv::Point c(68 + i * 46 + dx, 226);
+            cv::circle(frame, c, 17, WHITE, -1, cv::LINE_AA);
+            cv::circle(frame, c, 14, darkc, -1, cv::LINE_AA);
+            if (i == 0) {
+                draw_paw(frame, cv::Point(c.x, c.y + 1), 5, WHITE);
+            } else if (i == 1) {
+                cv::circle(frame, cv::Point(c.x - 4, c.y - 2), 1, WHITE, -1, cv::LINE_AA);
+                cv::circle(frame, cv::Point(c.x + 4, c.y - 2), 1, WHITE, -1, cv::LINE_AA);
+                cv::ellipse(frame, cv::Point(c.x, c.y + 1), cv::Size(6, 5), 0, 10, 170, WHITE, 1, cv::LINE_AA);
+            } else {
+                std::vector<cv::Point> sp = {{c.x - 7, c.y - 3}, {c.x - 3, c.y - 3}, {c.x + 2, c.y - 8},
+                                             {c.x + 2, c.y + 8}, {c.x - 3, c.y + 3}, {c.x - 7, c.y + 3}};
+                cv::fillPoly(frame, sp, WHITE, cv::LINE_AA);
+                cv::ellipse(frame, cv::Point(c.x + 3, c.y), cv::Size(5, 5), 0, -50, 50, WHITE, 1, cv::LINE_AA);
+            }
+        }
+
+        int y_d = 276;
+        for (const auto& ln : lines) {
+            shadow_txt(frame, ln, cv::Point(50 + dx, y_d), FS, 0.5, WHITE, 1);
+            y_d += 21;
+        }
+
+        // boton grande con flecha
+        cv::Rect b = st.btn;
+        cv::Scalar bcol = cur * (st.hover ? 0.34 : 0.22);
+        anim_pill(frame, cv::Rect(b.x + dx, b.y + 3, b.width, b.height), cv::Scalar(0, 0, 0));
+        if (st.hover) anim_pill(frame, cv::Rect(b.x + dx - 2, b.y - 2, b.width + 4, b.height + 4), WHITE);
+        anim_pill(frame, cv::Rect(b.x + dx, b.y, b.width, b.height), bcol);
+        cv::Size bsz = cv::getTextSize(btn_lbl, FD, 1.0, 2, &base);
+        int tx = b.x + dx + (b.width - bsz.width) / 2 + 28;
+        int ty = b.y + (b.height + bsz.height) / 2;
+        cv::putText(frame, btn_lbl, cv::Point(tx, ty), FD, 1.0, WHITE, 2, cv::LINE_AA);
+        int ax = tx - 56 + (int)(5 * std::sin(t * 6.0));
+        int ay = b.y + b.height / 2;
+        cv::arrowedLine(frame, cv::Point(ax, ay), cv::Point(ax + 34, ay), WHITE, 4, cv::LINE_AA, 0, 0.5);
+
+        if (a_in < 1.0) cv::addWeighted(frame, a_in, baseFrame, 1.0 - a_in, 0, frame);
 
         cv::imshow(WIN, frame);
         int key = cv::waitKey(16);
@@ -618,7 +834,7 @@ static bool show_intro_screen(bool is_english)
         } catch (...) { closed = true; }
     }
     cv::destroyWindow(WIN);
-    return clicked && !closed;
+    return st.clicked && !closed;
 }
 void AnimalFaceNode::run_ui()
 {

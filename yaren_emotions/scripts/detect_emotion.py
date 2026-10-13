@@ -71,92 +71,235 @@ UI_MODE_ID = "yaren_emotions"
 # =============================================================================
 #  INTRO SCREEN
 # =============================================================================
+def _blit_alpha(frame, img, cx, cy, size):
+    if img is None:
+        return
+    h0, w0 = img.shape[:2]
+    k = size / float(max(h0, w0))
+    nw, nh = max(1, int(w0 * k)), max(1, int(h0 * k))
+    rs = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+    x0, y0 = int(cx - nw / 2), int(cy - nh / 2)
+    fx1, fy1 = max(0, x0), max(0, y0)
+    fx2, fy2 = min(frame.shape[1], x0 + nw), min(frame.shape[0], y0 + nh)
+    if fx1 >= fx2 or fy1 >= fy2:
+        return
+    crop = rs[fy1 - y0:fy2 - y0, fx1 - x0:fx2 - x0]
+    roi = frame[fy1:fy2, fx1:fx2]
+    if crop.shape[2] == 4:
+        a = crop[:, :, 3:4].astype(np.float32) / 255.0
+        roi[:] = (crop[:, :, :3] * a + roi * (1.0 - a)).astype(np.uint8)
+    else:
+        roi[:] = crop
+
+
+def _round_rect(frame, x, y, w, h, col, thick=-1):
+    r = h // 2
+    if thick < 0:
+        cv2.rectangle(frame, (x + r, y), (x + w - r, y + h), col, -1, cv2.LINE_AA)
+        cv2.circle(frame, (x + r, y + r), r, col, -1, cv2.LINE_AA)
+        cv2.circle(frame, (x + w - r, y + r), r, col, -1, cv2.LINE_AA)
+    else:
+        cv2.line(frame, (x + r, y), (x + w - r, y), col, thick, cv2.LINE_AA)
+        cv2.line(frame, (x + r, y + h), (x + w - r, y + h), col, thick, cv2.LINE_AA)
+        cv2.ellipse(frame, (x + r, y + r), (r, r), 0, 90, 270, col, thick, cv2.LINE_AA)
+        cv2.ellipse(frame, (x + w - r, y + r), (r, r), 0, -90, 90, col, thick, cv2.LINE_AA)
+
+
 def show_intro_screen(win_name: str, is_english: bool) -> bool:
     W, H = 800, 480
     clicked = [False]
     closed  = [False]
-    BTN = (300, 370, 200, 52)
+    hover   = [False]
+    BTN = (50, 334, 390, 70)
 
     def on_mouse(event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            bx, by, bw, bh = BTN
-            if bx <= x <= bx + bw and by <= y <= by + bh:
-                clicked[0] = True
+        bx, by, bw, bh = BTN
+        inside = bx <= x <= bx + bw and by <= y <= by + bh
+        if event == cv2.EVENT_MOUSEMOVE:
+            hover[0] = inside
+        elif event == cv2.EVENT_LBUTTONDOWN and inside:
+            clicked[0] = True
 
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
     cv2.setMouseCallback(win_name, on_mouse)
 
-    ACCENT = (180, 80, 220)
     font_d = cv2.FONT_HERSHEY_DUPLEX
     font_s = cv2.FONT_HERSHEY_SIMPLEX
+    WHITE = (255, 255, 255)
 
-    title = "Emotion Detector" if is_english else "Detector de Emociones"
-    desc  = ("Analyzes your facial expression in real time and shows the detected emotion with visual effects and background music."
-             if is_english else
-             "Analiza tu expresion facial en tiempo real y muestra la emocion detectada con efectos visuales y musica de fondo.")
-    tags  = (["Real-time AI", "Auto music", "Emoji rain"]
-             if is_english else
-             ["IA en tiempo real", "Musica automatica", "Lluvia de emojis"])
-    btn_lbl = "Start" if is_english else "Comenzar"
+    # --- textos ---
+    if is_english:
+        title1, title2 = "Emotion", "Detector"
+        desc = ("Analyzes your facial expression in real time and shows the detected "
+                "emotion with visual effects and background music. Smile, get surprised "
+                "or make a funny face and watch Yaren react.")
+        tags = ["Real-time AI", "Auto music", "Emoji rain"]
+        btn_lbl = "Start"
+    else:
+        title1, title2 = "Detector de", "Emociones"
+        desc = ("Analiza tu expresion facial en tiempo real y muestra la emocion "
+                "detectada con efectos visuales y musica de fondo. Sonrie, sorprendete "
+                "o haz una cara divertida y mira como reacciona Yaren.")
+        tags = ["IA en tiempo real", "Musica automatica", "Lluvia de emojis"]
+        btn_lbl = "Comenzar"
 
+    if is_english:
+        desc = ("Analyzes your facial expression in real time and shows "
+                "the detected emotion with effects and music.")
+    else:
+        desc = ("Analiza tu expresion facial en tiempo real y muestra "
+                "la emocion detectada con efectos y musica.")
+
+    # --- emojis y colores por emocion ---
+    EMO = [("feliz.png", "Happy"), ("sorpresa.png", "Surprise"), ("triste.png", "Sad"),
+           ("enojado.png", "Angry"), ("miedo.png", "Fear"), ("neutral.png", "Neutral")]
+    imgs = []
+    try:
+        edir = os.path.join(get_package_share_directory('yaren_emotions'), 'emojis')
+        for f, key in EMO:
+            im = cv2.imread(os.path.join(edir, f), cv2.IMREAD_UNCHANGED)
+            imgs.append((im, key))
+    except Exception:
+        imgs = [(None, key) for _, key in EMO]
+
+    def tone(key):
+        c = np.array(EMOTION_COLORS.get(key, (150, 150, 150)), dtype=np.float32)
+        return np.minimum(c * 0.60 + np.array([50, 50, 50], dtype=np.float32), 175.0)
+
+    cur = tone(imgs[0][1])
+
+    # --- wrap de la descripcion ---
+    lines, line = [], ""
+    for w in desc.split():
+        test = (line + " " + w).strip()
+        if cv2.getTextSize(test, font_s, 0.5, 1)[0][0] > 380:
+            lines.append(line); line = w
+        else:
+            line = test
+    if line:
+        lines.append(line)
+
+    def out_cubic(x):
+        x = max(0.0, min(1.0, x))
+        return 1.0 - (1.0 - x) ** 3
+
+    def out_back(x):
+        x = max(0.0, min(1.0, x))
+        c1 = 1.70158; c3 = c1 + 1.0
+        return 1.0 + c3 * (x - 1.0) ** 3 + c1 * (x - 1.0) ** 2
+
+    def shadow_text(img, txt, org, font, sc, col, th):
+        cv2.putText(img, txt, (org[0] + 2, org[1] + 2), font, sc, (10, 8, 20), th + 2, cv2.LINE_AA)
+        cv2.putText(img, txt, org, font, sc, col, th, cv2.LINE_AA)
+
+    # gradiente vertical reutilizable
+    ramp = np.linspace(0.0, 1.0, H, dtype=np.float32).reshape(H, 1, 1)
+
+    t0 = time.time()
+    CYCLE = 2.4
     while not clicked[0] and not closed[0]:
-        frame = np.zeros((H, W, 3), dtype=np.uint8)
-        frame[:] = (18, 12, 28)
-        cv2.rectangle(frame, (100, 50), (700, 440), (30, 22, 46), -1)
-        cv2.rectangle(frame, (100, 50), (700, 440), ACCENT, 1)
+        t = time.time() - t0
+        idx = int(t / CYCLE) % len(imgs)
+        local = (t % CYCLE) / CYCLE
+        img_e, key = imgs[idx]
+        cur = cur + (tone(key) - cur) * 0.07
 
-        cx, cy = W // 2, 130
+        # ---- fondo: degradado + curva clara abajo ----
+        top = cur * 0.72
+        bot = np.minimum(cur * 0.95 + 8.0, 185.0)
+        grad = top.reshape(1, 1, 3) * (1.0 - ramp) + bot.reshape(1, 1, 3) * ramp
+        frame = np.repeat(grad, W, axis=1).astype(np.uint8)
 
-        # Círculo exterior
-        cv2.circle(frame, (cx, cy), 38, ACCENT, 2)
+        ov = frame.copy()
+        cv2.ellipse(ov, (400, 640), (640, 240), 0, 0, 360, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.addWeighted(ov, 0.0, frame, 1.0, 0, frame)
 
-        # Ojos
-        cv2.circle(frame, (cx - 11, cy - 10), 3, ACCENT, -1)
-        cv2.circle(frame, (cx + 11, cy - 10), 3, ACCENT, -1)
+        # aro y halo detras del emoji
+        ov = frame.copy()
+        cv2.circle(ov, (640, 265), 175, (255, 255, 255), 16, cv2.LINE_AA)
+        cv2.circle(ov, (640, 265), 140, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.addWeighted(ov, 0.10, frame, 0.90, 0, frame)
 
-        # Sonrisa más grande
-        cv2.ellipse(frame, (cx, cy + 4), (18, 13), 0, 10, 170, ACCENT, 2)
+        # burbujas flotando
+        ov = frame.copy()
+        for i in range(14):
+            bx = int((i * 61 + 30 * math.sin(t * 0.6 + i)) % W)
+            by = int(H - ((i * 53 + t * (14 + (i % 4) * 6)) % (H + 40)) + 20)
+            cv2.circle(ov, (bx, by), 4 + (i % 4) * 3, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.addWeighted(ov, 0.16, frame, 0.84, 0, frame)
 
-        (tw, _), _ = cv2.getTextSize(title, font_d, 1.2, 2)
-        cv2.putText(frame, title, ((W - tw) // 2, 210), font_d, 1.2, (240, 235, 255), 2, cv2.LINE_AA)
+        # ---- logo ----
+        (lw, _), _ = cv2.getTextSize("YAREN", font_d, 1.1, 2)
+        shadow_text(frame, "YAREN", ((W - lw) // 2, 58), font_d, 1.1, WHITE, 2)
 
-        words = desc.split()
-        line, lines = "", []
-        for w in words:
-            test = (line + " " + w).strip()
-            (tw2, _), _ = cv2.getTextSize(test, font_s, 0.58, 1)
-            if tw2 > 500:
-                lines.append(line); line = w
+        # ---- emoji grande (derecha) ----
+        pop = out_back(local / 0.22)
+        bob = 9 * math.sin(t * 2.2)
+        size = 270 * max(0.05, pop)
+        sh_w = int(95 * max(0.3, pop) * (1.0 - 0.1 * math.sin(t * 2.2)))
+        ov = frame.copy()
+        cv2.ellipse(ov, (640, 418), (sh_w, 12), 0, 0, 360, (0, 0, 0), -1, cv2.LINE_AA)
+        cv2.addWeighted(ov, 0.25, frame, 0.75, 0, frame)
+        if img_e is not None:
+            _blit_alpha(frame, img_e, 640, 265 + bob, size)
+        else:
+            r = int(size / 2)
+            cv2.circle(frame, (640, int(265 + bob)), r, (60, 210, 255), -1, cv2.LINE_AA)
+
+        # ---- columna izquierda con entrada deslizante ----
+        base = frame.copy()
+        a_in = out_cubic(t / 0.9)
+        dx = int(-60 * (1.0 - a_in))
+
+        shadow_text(frame, title1, (50 + dx, 140), font_d, 1.15, WHITE, 2)
+        shadow_text(frame, title2, (50 + dx, 184), font_d, 1.15, WHITE, 2)
+
+        # insignias circulares
+        darkc = tuple(int(v) for v in np.clip(cur * 0.45, 0, 255))
+        for i in range(3):
+            cx, cy = 68 + i * 46 + dx, 226
+            cv2.circle(frame, (cx, cy), 17, WHITE, -1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), 14, darkc, -1, cv2.LINE_AA)
+            if i == 0:
+                cv2.putText(frame, "AI", (cx - 9, cy + 5), font_s, 0.45, WHITE, 1, cv2.LINE_AA)
+            elif i == 1:
+                cv2.circle(frame, (cx - 3, cy + 5), 3, WHITE, -1, cv2.LINE_AA)
+                cv2.line(frame, (cx, cy + 5), (cx, cy - 6), WHITE, 2, cv2.LINE_AA)
+                cv2.line(frame, (cx, cy - 6), (cx + 5, cy - 3), WHITE, 2, cv2.LINE_AA)
             else:
-                line = test
-        if line: lines.append(line)
-        y_d = 248
+                cv2.circle(frame, (cx - 4, cy - 2), 1, WHITE, -1, cv2.LINE_AA)
+                cv2.circle(frame, (cx + 4, cy - 2), 1, WHITE, -1, cv2.LINE_AA)
+                cv2.ellipse(frame, (cx, cy + 1), (6, 5), 0, 10, 170, WHITE, 1, cv2.LINE_AA)
+
+        # descripcion
+        y_d = 276
         for ln in lines:
-            (lw, _), _ = cv2.getTextSize(ln, font_s, 0.58, 1)
-            cv2.putText(frame, ln, ((W - lw) // 2, y_d), font_s, 0.58, (160, 150, 190), 1, cv2.LINE_AA)
-            y_d += 24
+            shadow_text(frame, ln, (50 + dx, y_d), font_s, 0.5, WHITE, 1)
+            y_d += 21
 
-        tx = W // 2 - sum(cv2.getTextSize(t, font_s, 0.5, 1)[0][0] + 30 for t in tags) // 2
-        for tag in tags:
-            (tgw, _), _ = cv2.getTextSize(tag, font_s, 0.5, 1)
-            pad = 14
-            cv2.rectangle(frame, (tx - pad, 318), (tx + tgw + pad, 342), (40, 30, 60), -1)
-            cv2.rectangle(frame, (tx - pad, 318), (tx + tgw + pad, 342), (80, 60, 100), 1)
-            cv2.putText(frame, tag, (tx, 335), font_s, 0.5, (160, 150, 190), 1, cv2.LINE_AA)
-            tx += tgw + pad * 2 + 12
-
+        # boton oscuro
         bx, by, bw, bh = BTN
-        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (100, 40, 160), -1)
-        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), ACCENT, 2)
-        (blw, _), _ = cv2.getTextSize(btn_lbl, font_d, 0.9, 2)
-        cv2.putText(frame, btn_lbl, (bx + (bw - blw) // 2, by + 34),
-                    font_d, 0.9, (240, 235, 255), 2, cv2.LINE_AA)
+        bcol = tuple(int(v) for v in np.clip(cur * (0.34 if hover[0] else 0.22), 0, 255))
+        _round_rect(frame, bx + dx, by + 3, bw, bh, (0, 0, 0))
+        _round_rect(frame, bx + dx, by, bw, bh, bcol)
+        if hover[0]:
+            _round_rect(frame, bx + dx, by, bw, bh, WHITE, 2)
+        (blw, bth), _ = cv2.getTextSize(btn_lbl, font_d, 1.0, 2)
+        tx = bx + dx + (bw - blw) // 2 + 28
+        ty = by + (bh + bth) // 2
+        cv2.putText(frame, btn_lbl, (tx, ty), font_d, 1.0, WHITE, 2, cv2.LINE_AA)
+        ax = tx - 56 + int(5 * math.sin(t * 6.0))
+        ay = by + bh // 2
+        cv2.arrowedLine(frame, (ax, ay), (ax + 34, ay), WHITE, 4, cv2.LINE_AA, tipLength=0.5)
+
+        if a_in < 1.0:
+            cv2.addWeighted(frame, a_in, base, 1.0 - a_in, 0, frame)
 
         cv2.imshow(win_name, frame)
-        key = cv2.waitKey(16) & 0xFF
-        if key == 27:
+        key_p = cv2.waitKey(16) & 0xFF
+        if key_p == 27:
             closed[0] = True
         try:
             if cv2.getWindowProperty(win_name, cv2.WND_PROP_AUTOSIZE) == -1:
@@ -277,7 +420,7 @@ class ImageParticle:
         self.vx_amp = random.uniform(0.3, 1.2)
         self.phase  = random.uniform(0, 2 * math.pi)
         self.freq   = random.uniform(0.04, 0.10)
-        target_size = random.randint(35, 45)
+        target_size = random.randint(70, 95)
         self.img    = cv2.resize(self.base_img, (target_size, target_size),
                                  interpolation=cv2.INTER_AREA)
         self.t = 0.0
@@ -312,7 +455,7 @@ class ImageParticle:
 # =============================================================================
 class EmotionDetectionNode(LifecycleNode):
 
-    PARTICLE_COUNT = 40
+    PARTICLE_COUNT = 30
     INFER_EVERY_UI       = 3   # con interfaz (modo EMOCIONES)
     INFER_EVERY_HEADLESS = 6   # segundo plano (modo sesion): menos carga de CPU
 
@@ -663,10 +806,6 @@ class EmotionDetectionNode(LifecycleNode):
                     preds_array = np.array(preds[0])
                     preds_array[4] *= 4.0
                     emotion_list = EMOTIONS_EN if self.is_english else EMOTIONS_ES
-                    probs_str = " | ".join(
-                        f"{emotion_list[i]}:{preds_array[i]:.2f}"
-                        for i in range(len(emotion_list)))
-                    self.get_logger().info(f'Probs: {probs_str}')
                     idx = int(np.argmax(preds_array))
                     with self._lock:
                         self._result_label = emotion_list[idx]

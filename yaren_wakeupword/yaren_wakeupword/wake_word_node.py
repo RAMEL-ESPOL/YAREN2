@@ -22,7 +22,6 @@ import time
 from std_msgs.msg import Bool, String
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
 # Wake words por idioma
@@ -146,18 +145,9 @@ class YarenWakeWordNode(Node):
             self.get_logger().info("🛑 Menú activo. Cerrando stream.")
             self._close_stream()
 
-    def idle_callback(self, msg: Bool):
-        self.is_face_idle = msg.data
-        if self.is_face_idle:
-            self.get_logger().info("✅ Pantalla libre. Escuchando wake word...")
-            self.recognizer = KaldiRecognizer(self.model, 16000)
-            self._open_stream()
-        else:
-            self.get_logger().info("🛑 Menú activo. Cerrando stream.")
-            self._close_stream()
 
     def audio_loop_callback(self):
-        if not self.is_face_idle or self.mic_owner not in ("none", "wake_word"):           
+        if not self.is_face_idle or self.mic_owner not in ("none", "wake_word"):
             return
 
         if self.stream is None:
@@ -170,42 +160,37 @@ class YarenWakeWordNode(Node):
             if not data:
                 return
 
-            if self.recognizer.AcceptWaveform(data):
-                result = json.loads(self.recognizer.Result())
-                text   = result.get("text", "").lower().strip()
-                if not text:
-                    return
+            # Los resultados parciales se descartan: solo importa el texto final
+            if not self.recognizer.AcceptWaveform(data):
+                return
 
-                self.get_logger().info(f"🎤 Transcripción: '{text}'")
+            result = json.loads(self.recognizer.Result())
+            text   = result.get("text", "").lower().strip()
+            if not text:
+                return
 
-                matched_es = max((w for w in WAKE_WORDS_ES if w in text), key=len, default=None)
-                matched_en = max((w for w in WAKE_WORDS_EN if w in text), key=len, default=None)
+            matched_es = max((w for w in WAKE_WORDS_ES if w in text), key=len, default=None)
+            matched_en = max((w for w in WAKE_WORDS_EN if w in text), key=len, default=None)
 
-                if matched_es or matched_en:
-                    is_english = matched_en is not None and matched_es is None
-                    matched    = matched_en if is_english else matched_es
+            if matched_es or matched_en:
+                is_english = matched_en is not None and matched_es is None
+                matched    = matched_en if is_english else matched_es
 
-                    self.get_logger().info(f"✨ Wake word: '{matched}' → {'EN' if is_english else 'ES'}")
+                self.get_logger().info(f"✨ Wake word: '{matched}' → {'EN' if is_english else 'ES'}")
 
-                    lang_msg      = Bool()
-                    lang_msg.data = is_english
-                    self.lang_pub.publish(lang_msg)
-                    time.sleep(0.05)
+                lang_msg      = Bool()
+                lang_msg.data = is_english
+                self.lang_pub.publish(lang_msg)
+                time.sleep(0.05)
 
-                    wake_msg      = Bool()
-                    wake_msg.data = True
-                    self.wake_pub.publish(wake_msg)
+                wake_msg      = Bool()
+                wake_msg.data = True
+                self.wake_pub.publish(wake_msg)
 
-                    self.is_face_idle = False
-                    self._mic_test_active = Falses
+                self.is_face_idle = False
+                self._mic_test_active = False
 
-            else:
-                partial      = json.loads(self.recognizer.PartialResult())
-                partial_text = partial.get("partial", "").strip()
-                if partial_text:
-                    self.get_logger().info(f"🔄 Parcial: '{partial_text}'")
-
-        except Exception:   
+        except Exception:
             pass
 
     def destroy_node(self):

@@ -1,0 +1,1153 @@
+{
+ "nodes": {
+  "inicio": {},
+  "saludo": {
+   "say": [
+    "¡Hola! Soy YAREN. ¿Cómo te llamas?",
+    "¡Hola! Me llamo YAREN y soy un robot. ¿Y tú, cómo te llamas?"
+   ],
+   "parse": "name",
+   "slot": "nombre",
+   "next": "gustos",
+   "skip": "gustos",
+   "reask": [
+    "¿Cómo te llamas?",
+    "¿Me dices tu nombre?"
+   ],
+   "confirm_say": [
+    "¿Te llamas {label}?",
+    "¿Dijiste que te llamas {label}?"
+   ],
+   "reply": [
+    "¡Mucho gusto, {nombre}!",
+    "¡Qué lindo nombre, {nombre}!",
+    "¡Encantado de conocerte, {nombre}!"
+   ]
+  },
+  "gustos": {
+   "say": [
+    "¿Cómo te va? ¿Qué te gusta hacer?",
+    "¿Cómo estás, {nombre}? Cuéntame, ¿qué te gusta hacer?"
+   ],
+   "parse": "options",
+   "options_from": "gustos2",
+   "options": {
+    "bien": {
+     "kw": [
+      "bien",
+      "feliz",
+      "contento",
+      "contenta",
+      "genial",
+      "excelente",
+      "super",
+      "chevere",
+      "bacan",
+      "alegre",
+      "tranquilo",
+      "tranquila"
+     ],
+     "reply": [
+      "¡Qué bueno, {nombre}!",
+      "¡Me alegra mucho!"
+     ],
+     "next": "gustos2"
+    },
+    "regular": {
+     "kw": [
+      "mas o menos",
+      "regular",
+      "asi asi",
+      "normal"
+     ],
+     "reply": [
+      "Entiendo. ¡Espero animarte un poquito con nuestra charla!"
+     ],
+     "next": "gustos2"
+    },
+    "mal": {
+     "kw": [
+      "mal",
+      "triste",
+      "cansado",
+      "cansada",
+      "aburrido",
+      "aburrida",
+      "enojado",
+      "enojada",
+      "molesto",
+      "molesta",
+      "fatal"
+     ],
+     "reply": [
+      "Lamento escuchar eso, {nombre}. Espero animarte un poquito con nuestra charla."
+     ],
+     "next": "gustos2"
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué interesante!"
+   ],
+   "next": "gustos2",
+   "skip": "gustos2"
+  },
+  "gustos2": {
+   "say": [
+    "¿Y qué te gusta hacer?",
+    "Cuéntame, ¿qué te gusta hacer en tu tiempo libre?"
+   ],
+   "parse": "options",
+   "options": {
+    "futbol": {
+     "kw": [
+      "futbol",
+      "balon",
+      "indor",
+      "futbolista"
+     ],
+     "reply": [
+      "¡Qué increíble! El fútbol es muy emocionante.",
+      "¡Genial! A mucha gente le encanta el fútbol."
+     ],
+     "next": "futbol_1",
+     "topic": "futbol",
+     "topic_name": "fútbol"
+    },
+    "baile": {
+     "kw": [
+      "baile",
+      "bailar",
+      "danza",
+      "bailo"
+     ],
+     "reply": [
+      "¡Qué divertido! Bailar es genial."
+     ],
+     "next": "baile_1",
+     "topic": "baile",
+     "topic_name": "baile"
+    },
+    "dibujo": {
+     "kw": [
+      "dibujar",
+      "dibujo",
+      "pintar",
+      "pintura",
+      "arte",
+      "colorear"
+     ],
+     "reply": [
+      "¡Qué lindo! Dibujar es muy creativo."
+     ],
+     "next": "dibujo_1",
+     "topic": "dibujo",
+     "topic_name": "dibujo"
+    },
+    "videojuegos": {
+     "kw": [
+      "videojuego",
+      "consola",
+      "minecraft",
+      "roblox",
+      "fortnite",
+      "free fire",
+      "nintendo",
+      "xbox",
+      "playstation",
+      "gamer"
+     ],
+     "reply": [
+      "¡Qué divertido! Los videojuegos son muy entretenidos."
+     ],
+     "next": "vj_1",
+     "topic": "videojuegos",
+     "topic_name": "videojuegos"
+    },
+    "musica": {
+     "kw": [
+      "musica",
+      "cantar",
+      "guitarra",
+      "piano",
+      "instrumento",
+      "canciones"
+     ],
+     "reply": [
+      "¡Qué bonito! La música alegra el día."
+     ],
+     "next": "m_1",
+     "topic": "musica",
+     "topic_name": "música"
+    },
+    "animales": {
+     "kw": [
+      "animales",
+      "mascota",
+      "perro",
+      "gato",
+      "caballo"
+     ],
+     "reply": [
+      "¡Qué lindo! Los animales son geniales."
+     ],
+     "next": "a_1",
+     "topic": "animales",
+     "topic_name": "animales"
+    },
+    "comida": {
+     "kw": [
+      "cocinar",
+      "comida",
+      "comer",
+      "cocina"
+     ],
+     "reply": [
+      "¡Qué rico! La comida es lo mejor."
+     ],
+     "next": "c_1",
+     "topic": "comida",
+     "topic_name": "comida"
+    },
+    "lectura": {
+     "kw": [
+      "leer",
+      "lectura",
+      "libros",
+      "cuentos",
+      "comics"
+     ],
+     "reply": [
+      "¡Qué bien! Leer te lleva a mundos nuevos."
+     ],
+     "next": "l_1",
+     "topic": "lectura",
+     "topic_name": "lectura"
+    },
+    "tecnologia": {
+     "kw": [
+      "robots",
+      "robot",
+      "computadora",
+      "programar",
+      "tecnologia",
+      "inventar"
+     ],
+     "reply": [
+      "¡Qué genial! A mí también me encantan los robots, obvio."
+     ],
+     "next": "t_1",
+     "topic": "tecnologia",
+     "topic_name": "robots y tecnología"
+    },
+    "deportes": {
+     "kw": [
+      "deporte",
+      "nadar",
+      "natacion",
+      "basquet",
+      "baloncesto",
+      "voley",
+      "correr",
+      "bicicleta",
+      "ciclismo",
+      "tenis",
+      "patinar",
+      "karate",
+      "atletismo",
+      "gimnasia"
+     ],
+     "reply": [
+      "¡Qué bien! El deporte es muy sano."
+     ],
+     "next": "d_1",
+     "topic": "deportes",
+     "topic_name": "deporte"
+    },
+    "escuela": {
+     "kw": [
+      "estudiar",
+      "escuela",
+      "colegio",
+      "clases",
+      "tareas",
+      "matematicas"
+     ],
+     "reply": [
+      "¡Qué bien! Aprender es muy divertido."
+     ],
+     "next": "e_1",
+     "topic": "escuela",
+     "topic_name": "escuela"
+    },
+    "juegos": {
+     "kw": [
+      "jugar",
+      "juego",
+      "juegos"
+     ],
+     "reply": [
+      "¡Jugar es lo mejor!"
+     ],
+     "next": "j_1",
+     "topic": "juegos",
+     "topic_name": "juegos",
+     "generic": true
+    }
+   },
+   "skip": "cierre",
+   "next": "otro"
+  },
+  "otro": {
+   "say": [
+    "Me encantó hablar de {tema}, {nombre}. ¿Qué otra cosa te gusta hacer?",
+    "¡Qué buena charla sobre {tema}! ¿Y qué otra cosa te gusta hacer, {nombre}?"
+   ],
+   "parse": "options",
+   "options_from": "gustos2",
+   "exclude_visited": true,
+   "options": {
+    "nada": {
+     "kw": [
+      "nada",
+      "ninguna",
+      "ninguno",
+      "no",
+      "eso es todo",
+      "ya no",
+      "nada mas"
+     ],
+     "reply": [
+      "¡Está bien!"
+     ],
+     "next": "cierre"
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué interesante!"
+   ],
+   "next": "cierre",
+   "skip": "cierre"
+  },
+  "cierre": {
+   "say": [
+    "Fue un gusto charlar contigo, {nombre}. ¿Quieres jugar algo conmigo?"
+   ],
+   "parse": "yesno",
+   "skip": "libre",
+   "options": {
+    "si": {
+     "reply": [
+      "¡Genial! Puedo jugar Dice, Memoria, Ahorcado, Paint o Just Dance. Dime cuál quieres."
+     ],
+     "next": "libre"
+    },
+    "no": {
+     "reply": [
+      "Está bien, {nombre}. Aquí estaré si quieres charlar más. ¡Hasta pronto!"
+     ],
+     "next": "libre"
+    }
+   }
+  },
+  "libre": {},
+  "futbol_1": {
+   "say": [
+    "¿De qué juegas? ¿Delantero, mediocampista o defensa?",
+    "¿En qué posición juegas? ¿Delantero, mediocampista, defensa o arquero?"
+   ],
+   "parse": "options",
+   "slot": "posicion",
+   "next": "futbol_2",
+   "skip": "futbol_2",
+   "options": {
+    "delantero": {
+     "kw": [
+      "delantero",
+      "atacante",
+      "punta",
+      "nueve",
+      "goleador"
+     ],
+     "reply": [
+      "¡Oh, qué increíble! Los delanteros son los que hacen los goles.",
+      "¡Qué bien! Meter goles es lo más emocionante."
+     ]
+    },
+    "extremo": {
+     "kw": [
+      "extremo",
+      "puntero",
+      "banda",
+      "ala",
+      "wing",
+      "desborde"
+     ],
+     "reply": [
+      "¡Oh, qué increíble! Los extremos son rápidos y desbordan por las bandas.",
+      "¡Qué bien! Los extremos le dan mucha velocidad al equipo."
+     ]
+    },
+    "medio": {
+     "kw": [
+      "mediocampista",
+      "medio",
+      "volante",
+      "centrocampista",
+      "enganche",
+      "creativo"
+     ],
+     "reply": [
+      "¡Qué increíble! Los mediocampistas mueven todo el equipo."
+     ],
+     "label": "mediocampista"
+    },
+    "defensa": {
+     "kw": [
+      "defensa",
+      "defensor",
+      "central",
+      "lateral",
+      "zaguero",
+      "libero"
+     ],
+     "reply": [
+      "¡Qué bien! Los defensas son clave para cuidar el arco."
+     ]
+    },
+    "arquero": {
+     "kw": [
+      "arquero",
+      "portero",
+      "guardameta",
+      "arco",
+      "golero"
+     ],
+     "reply": [
+      "¡Qué valiente! Los arqueros salvan al equipo."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué interesante! Esa posición también es muy importante."
+   ]
+  },
+  "futbol_2": {
+   "say": [
+    "¿Y a qué equipo le vas?",
+    "¿Y de qué equipo eres hincha?"
+   ],
+   "parse": "options",
+   "slot": "equipo",
+   "titlecase": true,
+   "next": "futbol_3",
+   "skip": "futbol_3",
+   "options": {
+    "barcelona": {
+     "kw": [
+      "barcelona",
+      "bsc",
+      "torero"
+     ],
+     "reply": [
+      "¡Barcelona! Qué buen equipo, tiene muchísimos hinchas."
+     ]
+    },
+    "emelec": {
+     "kw": [
+      "emelec",
+      "electrico",
+      "bombillo"
+     ],
+     "reply": [
+      "¡Emelec! Qué linda rivalidad con Barcelona en el Clásico del Astillero."
+     ]
+    },
+    "ldu": {
+     "kw": [
+      "ldu",
+      "liga de quito",
+      "albo"
+     ],
+     "reply": [
+      "¡Liga de Quito! Un equipo con mucha historia."
+     ]
+    },
+    "idv": {
+     "kw": [
+      "independiente del valle",
+      "idv",
+      "del valle"
+     ],
+     "reply": [
+      "¡Independiente del Valle! Su cantera forma muy buenos jugadores."
+     ]
+    },
+    "tri": {
+     "kw": [
+      "seleccion",
+      "la tri",
+      "tri"
+     ],
+     "reply": [
+      "¡La Tri! A la selección le vamos todos."
+     ]
+    },
+    "madrid": {
+     "kw": [
+      "real madrid",
+      "madrid",
+      "merengue"
+     ],
+     "reply": [
+      "¡Real Madrid! Un equipo con mucha historia."
+     ]
+    },
+    "ninguno": {
+     "kw": [
+      "ninguno",
+      "ninguna",
+      "no le voy",
+      "ninguno de ninguno"
+     ],
+     "reply": [
+      "¡Está bien! Lo importante es disfrutar el juego."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡{valor}! Qué buen equipo.",
+    "¡{valor}! Seguro tiene muchos hinchas."
+   ]
+  },
+  "futbol_3": {
+   "say": [
+    "¿Y quién es tu jugador favorito?",
+    "¿Cuál es tu jugador favorito?"
+   ],
+   "parse": "free",
+   "slot": "jugador",
+   "titlecase": true,
+   "next": "futbol_4",
+   "reply": [
+    "¡{valor}! Es una gran elección.",
+    "¡{valor}! Muy buen jugador."
+   ],
+   "reply_none": [
+    "¡Está bien! No hace falta tener uno."
+   ]
+  },
+  "futbol_4": {
+   "say": [
+    "¿Juegas con tus amigos o en una escuela de fútbol?"
+   ],
+   "parse": "options",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "amigos": {
+     "kw": [
+      "amigos",
+      "barrio",
+      "calle",
+      "recreo",
+      "companeros",
+      "primos"
+     ],
+     "reply": [
+      "¡Qué bonito jugar con amigos! Así se divierten más."
+     ]
+    },
+    "escuela": {
+     "kw": [
+      "escuela",
+      "academia",
+      "club",
+      "entreno",
+      "entrenamiento",
+      "torneo"
+     ],
+     "reply": [
+      "¡Qué bien! Entrenar en equipo ayuda mucho a mejorar."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien! Lo importante es divertirse."
+   ]
+  },
+  "baile_1": {
+   "say": [
+    "¿Qué tipo de música te gusta bailar?"
+   ],
+   "parse": "free",
+   "slot": "genero",
+   "next": "baile_2",
+   "reply": [
+    "¡{valor}! Qué buen ritmo.",
+    "¡Me gusta {valor}! Se baila muy bien."
+   ],
+   "reply_none": [
+    "¡Está bien! Se puede bailar con cualquier música."
+   ]
+  },
+  "baile_2": {
+   "say": [
+    "¿Sabías que yo también sé bailar? ¿Quieres bailar conmigo en Just Dance?"
+   ],
+   "parse": "yesno",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "si": {
+     "reply": [
+      "¡Genial! Cuando quieras, dime que quieres bailar y empezamos."
+     ]
+    },
+    "no": {
+     "reply": [
+      "No hay problema, será en otra ocasión."
+     ]
+    }
+   }
+  },
+  "dibujo_1": {
+   "say": [
+    "¿Y qué te gusta dibujar?"
+   ],
+   "parse": "free",
+   "slot": "dibujo",
+   "next": "dibujo_2",
+   "reply": [
+    "¡{valor}! Me encantaría verlo.",
+    "¡{valor}! Debe quedar muy bonito."
+   ],
+   "reply_none": [
+    "¡Está bien! Dibujar es libre, puedes dibujar lo que quieras."
+   ]
+  },
+  "dibujo_2": {
+   "say": [
+    "¿Quieres dibujar conmigo en Paint?"
+   ],
+   "parse": "yesno",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "si": {
+     "reply": [
+      "¡Genial! Cuando quieras, pídeme el juego de Paint."
+     ]
+    },
+    "no": {
+     "reply": [
+      "Está bien, será otro día."
+     ]
+    }
+   }
+  },
+  "vj_1": {
+   "say": [
+    "¿Y cuál es tu videojuego favorito?"
+   ],
+   "parse": "free",
+   "slot": "videojuego",
+   "titlecase": true,
+   "next": "vj_2",
+   "reply": [
+    "¡{valor}! Suena muy divertido.",
+    "¡{valor}! Debe ser genial."
+   ],
+   "reply_none": [
+    "¡Está bien! A veces es difícil elegir uno."
+   ]
+  },
+  "vj_2": {
+   "say": [
+    "¿Juegas en consola, en celular o en computadora?"
+   ],
+   "parse": "options",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "consola": {
+     "kw": [
+      "consola",
+      "play",
+      "playstation",
+      "xbox",
+      "nintendo",
+      "switch"
+     ],
+     "reply": [
+      "¡Qué bien! Las consolas tienen juegos geniales."
+     ]
+    },
+    "celular": {
+     "kw": [
+      "celular",
+      "telefono",
+      "movil",
+      "tablet"
+     ],
+     "reply": [
+      "¡Qué práctico! Puedes jugar en cualquier lado."
+     ]
+    },
+    "pc": {
+     "kw": [
+      "computadora",
+      "compu",
+      "pc",
+      "laptop"
+     ],
+     "reply": [
+      "¡Genial! En computadora hay juegos increíbles."
+     ],
+     "label": "computadora"
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien! Lo importante es divertirse."
+   ]
+  },
+  "m_1": {
+   "say": [
+    "¿Qué tipo de música te gusta escuchar?"
+   ],
+   "parse": "free",
+   "slot": "musica",
+   "next": "m_2",
+   "reply": [
+    "¡{valor}! Muy buena música.",
+    "¡{valor}! Buen gusto."
+   ],
+   "reply_none": [
+    "¡Está bien! Hay música para todos los gustos."
+   ]
+  },
+  "m_2": {
+   "say": [
+    "¿Tocas algún instrumento o te gusta cantar?"
+   ],
+   "parse": "options",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "instrumento": {
+     "kw": [
+      "guitarra",
+      "piano",
+      "flauta",
+      "bateria",
+      "violin",
+      "instrumento",
+      "tambor",
+      "teclado",
+      "ukelele",
+      "trompeta",
+      "tocar"
+     ],
+     "reply": [
+      "¡Qué talento! Tocar un instrumento es difícil y muy bonito."
+     ]
+    },
+    "canto": {
+     "kw": [
+      "cantar",
+      "canto",
+      "cantante"
+     ],
+     "reply": [
+      "¡Qué lindo! Cantar alegra a todos."
+     ]
+    },
+    "nada": {
+     "kw": [
+      "no",
+      "nada",
+      "ninguno",
+      "ninguna"
+     ],
+     "reply": [
+      "¡Está bien! Escuchar música también es genial."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien!"
+   ]
+  },
+  "a_1": {
+   "say": [
+    "¿Tienes alguna mascota?"
+   ],
+   "parse": "yesno",
+   "skip": "otro",
+   "options": {
+    "si": {
+     "reply": [
+      "¡Qué lindo!"
+     ],
+     "next": "a_2"
+    },
+    "no": {
+     "reply": [
+      "Entiendo."
+     ],
+     "next": "a_3"
+    }
+   }
+  },
+  "a_2": {
+   "say": [
+    "¿Cómo se llama?"
+   ],
+   "parse": "free",
+   "slot": "mascota",
+   "titlecase": true,
+   "next": "otro",
+   "reply": [
+    "¡{valor}! Qué lindo nombre.",
+    "¡{valor}! Seguro es muy cariñoso."
+   ],
+   "reply_none": [
+    "¡Está bien!"
+   ]
+  },
+  "a_3": {
+   "say": [
+    "¿Y qué animal te gustaría tener?"
+   ],
+   "parse": "free",
+   "slot": "animal_deseado",
+   "next": "otro",
+   "reply": [
+    "¡{valor}! Sería genial.",
+    "¡{valor}! Qué buena elección."
+   ],
+   "reply_none": [
+    "¡Está bien! Algún día tal vez."
+   ]
+  },
+  "c_1": {
+   "say": [
+    "¿Cuál es tu comida favorita?"
+   ],
+   "parse": "free",
+   "slot": "comida",
+   "next": "c_2",
+   "reply": [
+    "¡{valor}! Qué rico. Yo solo como electricidad, jaja.",
+    "¡{valor}! Se me haría agua la boca, si tuviera boca."
+   ],
+   "reply_none": [
+    "¡Está bien! A veces es difícil elegir una sola."
+   ]
+  },
+  "c_2": {
+   "say": [
+    "¿Y sabes cocinar o alguien te cocina en casa?"
+   ],
+   "parse": "options",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "ayuda": {
+     "kw": [
+      "mama",
+      "papa",
+      "abuela",
+      "abuelo",
+      "ayuda",
+      "ayudan",
+      "familia",
+      "hermano",
+      "hermana",
+      "tia",
+      "tio"
+     ],
+     "reply": [
+      "¡Qué suerte! La comida casera es la mejor."
+     ]
+    },
+    "solo": {
+     "kw": [
+      "yo",
+      "solo",
+      "sola",
+      "cocino",
+      "se cocinar"
+     ],
+     "reply": [
+      "¡Qué genial! Saber cocinar es muy útil."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien!"
+   ]
+  },
+  "l_1": {
+   "say": [
+    "¿Qué te gusta leer: cuentos, cómics o libros de aventuras?"
+   ],
+   "parse": "options",
+   "next": "l_2",
+   "skip": "l_2",
+   "options": {
+    "cuentos": {
+     "kw": [
+      "cuentos",
+      "cuento"
+     ],
+     "reply": [
+      "¡Los cuentos son geniales!"
+     ]
+    },
+    "comics": {
+     "kw": [
+      "comics",
+      "comic",
+      "historietas",
+      "manga"
+     ],
+     "reply": [
+      "¡Los cómics son muy divertidos!"
+     ]
+    },
+    "aventuras": {
+     "kw": [
+      "aventuras",
+      "aventura",
+      "novelas",
+      "misterio"
+     ],
+     "reply": [
+      "¡Las aventuras son emocionantes!"
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien! Leer es muy bueno."
+   ]
+  },
+  "l_2": {
+   "say": [
+    "¿Cuál es tu libro favorito?"
+   ],
+   "parse": "free",
+   "slot": "libro",
+   "titlecase": true,
+   "next": "otro",
+   "reply": [
+    "¡{valor}! Suena muy bien.",
+    "¡{valor}! Me gustaría conocerlo."
+   ],
+   "reply_none": [
+    "¡Está bien! Ya encontrarás uno que te encante."
+   ]
+  },
+  "t_1": {
+   "say": [
+    "¿Qué te gustaría que hiciera un robot por ti?"
+   ],
+   "parse": "free",
+   "next": "t_2",
+   "reply": [
+    "¡Qué buena idea! Me gustaría poder ayudarte con eso.",
+    "¡Interesante! Los robots podemos ayudar en muchas cosas."
+   ],
+   "reply_none": [
+    "¡Está bien! A veces solo hace falta un amigo robot."
+   ]
+  },
+  "t_2": {
+   "say": [
+    "¿Te gustaría construir robots cuando seas grande?"
+   ],
+   "parse": "yesno",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "si": {
+     "reply": [
+      "¡Genial! Estudiando mucho puedes lograrlo. En la ESPOL hay ingenieros que hacen robots como yo."
+     ]
+    },
+    "no": {
+     "reply": [
+      "Está bien, hay muchas cosas bonitas por hacer en la vida."
+     ]
+    }
+   }
+  },
+  "d_1": {
+   "say": [
+    "¿Con qué frecuencia lo practicas: todos los días, algunos días o de vez en cuando?"
+   ],
+   "parse": "options",
+   "next": "d_2",
+   "skip": "d_2",
+   "options": {
+    "diario": {
+     "kw": [
+      "todos los dias",
+      "diario",
+      "siempre",
+      "cada dia"
+     ],
+     "reply": [
+      "¡Qué disciplina! Así se mejora mucho."
+     ]
+    },
+    "algunos": {
+     "kw": [
+      "algunos dias",
+      "varios dias",
+      "dos veces",
+      "tres veces",
+      "fines de semana"
+     ],
+     "reply": [
+      "¡Muy bien! Esa constancia ayuda."
+     ]
+    },
+    "poco": {
+     "kw": [
+      "de vez en cuando",
+      "a veces",
+      "poco",
+      "casi nunca"
+     ],
+     "reply": [
+      "¡Está bien! Lo importante es moverse."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien!"
+   ]
+  },
+  "d_2": {
+   "say": [
+    "¿Y prefieres practicarlo solo o en equipo?"
+   ],
+   "parse": "options",
+   "next": "otro",
+   "skip": "otro",
+   "options": {
+    "equipo": {
+     "kw": [
+      "equipo",
+      "amigos",
+      "grupo",
+      "companeros"
+     ],
+     "reply": [
+      "¡El trabajo en equipo es lo mejor!"
+     ]
+    },
+    "solo": {
+     "kw": [
+      "solo",
+      "sola",
+      "individual"
+     ],
+     "reply": [
+      "¡Genial! Practicar solo ayuda a concentrarse."
+     ]
+    }
+   },
+   "allow_free": true,
+   "reply_free": [
+    "¡Qué bien!"
+   ]
+  },
+  "e_1": {
+   "say": [
+    "¿En qué grado estás?"
+   ],
+   "parse": "free",
+   "slot": "grado",
+   "next": "e_2",
+   "reply": [
+    "¡Qué bien! Ya vas aprendiendo muchas cosas.",
+    "¡Genial! Cada año se aprende algo nuevo."
+   ],
+   "reply_none": [
+    "¡Está bien!"
+   ]
+  },
+  "e_2": {
+   "say": [
+    "¿Y cuál es tu materia favorita?"
+   ],
+   "parse": "free",
+   "slot": "materia",
+   "next": "otro",
+   "reply": [
+    "¡{valor}! Es una materia muy interesante.",
+    "¡{valor}! Qué buena elección."
+   ],
+   "reply_none": [
+    "¡Está bien! A veces cuesta elegir."
+   ]
+  },
+  "j_1": {
+   "say": [
+    "¿Y a qué te gusta jugar?"
+   ],
+   "parse": "free",
+   "slot": "juego",
+   "next": "otro",
+   "reply": [
+    "¡{valor}! Suena muy divertido.",
+    "¡{valor}! Qué buen juego."
+   ],
+   "reply_none": [
+    "¡Está bien! Jugar de cualquier forma es divertido."
+   ]
+  }
+ },
+ "retry": [
+  "No te entendí bien.",
+  "Perdón, no te escuché bien.",
+  "Mmm, no estoy seguro de haber entendido."
+ ],
+ "skipmsg": [
+  "No importa, sigamos.",
+  "Está bien, cambiemos de tema."
+ ],
+ "farewell": [
+  "¡Hasta luego, {nombre}! Fue un gusto charlar contigo.",
+  "¡Chao, {nombre}! Vuelve pronto."
+ ],
+ "again": [
+  "¡Hola de nuevo, {nombre}!",
+  "¡Qué bueno verte otra vez, {nombre}!"
+ ],
+ "confirm": [
+  "¿Dijiste {label}?",
+  "¿Me dijiste {label}?",
+  "A ver si te entendí: ¿{label}?"
+ ],
+ "confirm_no": [
+  "Ay, perdón, me equivoqué.",
+  "Uy, no te escuché bien."
+ ],
+ "repeat": [
+  "Claro, te lo repito.",
+  "Con gusto, otra vez.",
+  "Perdón. Te lo digo de nuevo."
+ ]
+}
