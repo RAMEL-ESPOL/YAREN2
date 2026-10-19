@@ -836,6 +836,7 @@ class PaintNode(LifecycleNode):
             threading.Thread(target=self._force_focus, args=(win,), daemon=True).start()
 
             last_pub = 0.0
+            shown_at = time.time()
             while self._active and rclpy.ok():
                 for c in self._pop_cmds():
                     self._run_command(c)
@@ -846,14 +847,6 @@ class PaintNode(LifecycleNode):
                         self._exit_to_idle()
                     else:
                         self._go_menu()
-                try:
-                    if cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
-                        self.get_logger().info("Ventana cerrada. Publicando idle...")
-                        self._exit_to_idle()
-                        break
-                except Exception:
-                    self._exit_to_idle()
-                    break
                 now = time.time()
                 if now - last_pub > 0.5:
                     self._publish_state()

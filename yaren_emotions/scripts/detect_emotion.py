@@ -757,11 +757,15 @@ class EmotionDetectionNode(LifecycleNode):
         vis = cv2.resize(vis, (800, 480))
         if self._active and self._ui_active and rclpy.ok():
             try:
+                _now = time.time()
+                if _now - getattr(self, '_last_imshow', 0.0) > 1.0:
+                    self._shown_at = _now
+                self._last_imshow = _now
                 cv2.imshow(self.window_name, vis)
                 cv2.waitKey(1)
                 
                 # --- NUEVO: Detectar si cerraron la ventana con la X ---
-                if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                if (time.time() - self._shown_at) > 2.0 and cv2.getWindowProperty(self.window_name, cv2.WND_PROP_AUTOSIZE) == -1.0:
                     self.get_logger().info('Ventana cerrada con la X. Notificando a C++...')
                     self._publish_idle()
                     self._stop_ui()

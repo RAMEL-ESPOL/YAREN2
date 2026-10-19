@@ -3168,10 +3168,15 @@ public:
         std::string ws_dir = std::filesystem::current_path().string();
         {
             const std::string introDir = ws_dir + "/src/YAREN2/yaren_radio/videos/";
-            introVideo.open(introDir + "intro_yaren.mp4");
+            introPath_ = introDir + "intro_yaren.mp4";
+            introVideo.open(introPath_);
             if (introVideo.isOpened()) {
                 introFps = introVideo.get(cv::CAP_PROP_FPS);
                 if (introFps < 1.0 || introFps > 120.0) introFps = 30.0;
+                {
+                    double nf = introVideo.get(cv::CAP_PROP_FRAME_COUNT);
+                    introDur_ = (nf > 0) ? nf / introFps : 0.0;
+                }
                 introIdx = -1;
                 introStart = std::chrono::steady_clock::now();
                 const std::string wav = introDir + "intro_yaren.wav";
@@ -5934,21 +5939,38 @@ private:
         if (!introVideo.isOpened()) return false;
         const int W = frame.cols, H = frame.rows;
         const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - introStart).count();
+        // Unos 3 s antes del final, abrir el siguiente video en un hilo aparte
+        if (introDur_ > 0.0 && el > introDur_ - 3.0 &&
+            !introNextReady_.load() && !introNextLoading_.exchange(true)) {
+            std::thread([this]() {
+                introNext_.open(introPath_);
+                introNextReady_ = introNext_.isOpened();
+                introNextLoading_ = false;
+            }).detach();
+        }
+
         const long target = (long)(el * introFps);
         bool advanced = false;
         int guard = 0;
         while (introIdx < target && guard++ < 8) {
             if (!introVideo.grab()) {
-                // se acabo el video: loop (reinicia tambien el audio)
-                introVideo.set(cv::CAP_PROP_POS_FRAMES, 0);
+                // Fin: cambiar al video ya abierto (sin seek, sin espera)
+                if (introNextReady_.load()) {
+                    introVideo.release();
+                    introVideo = std::move(introNext_);
+                    introNext_ = cv::VideoCapture();
+                    introNextReady_ = false;
+                } else {
+                    introVideo.release();
+                    introVideo.open(introPath_);
+                }
                 introStart = std::chrono::steady_clock::now();
-                {
+                introIdx = -1;
+                std::thread([this]() {
                     std::lock_guard<std::mutex> lk(audioMutex_);
                     if (introMusic) Mix_PlayMusic(introMusic, -1);
-                }
-                if (!introVideo.grab()) { introIdx = -1; break; }
-                introIdx = 0; advanced = true;
-                break;
+                }).detach();
+                break;   // este ciclo se queda con el ultimo introFrame
             }
             ++introIdx; advanced = true;
         }
@@ -7139,6 +7161,11 @@ private:
     long   introIdx { -1 };
     float  introBarShown_ { 0.f };
     std::chrono::steady_clock::time_point introStart;
+    std::string       introPath_;
+    cv::VideoCapture  introNext_;
+    std::atomic<bool> introNextReady_{false};
+    std::atomic<bool> introNextLoading_{false};
+    double            introDur_{0.0};
     // Lip sync
     cv::Mat mouthSprites_[9];          // 0-8 PNG de boca
     std::atomic<int>  currentVisemeIdx_  { 0 };

@@ -1839,6 +1839,7 @@ class DanceGameNode(LifecycleNode):
         self._mode_pub = None
         self._lang_sub = None
         self._cam_sub = None
+        self._game_active_pub = None
         self._bridge = CvBridge()
         self._pose_camera = None
         self.game = None
@@ -1849,6 +1850,7 @@ class DanceGameNode(LifecycleNode):
         try:
             qos_tl = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
             self._mode_pub = self.create_publisher(String, "/yaren_mode", 10)
+            self._game_active_pub = self.create_publisher(Bool, '/yaren/game_active', 10)
             self._lang_sub = self.create_subscription(
                 Bool, "/yaren/is_english", self._cb_lang, qos_tl)
             return TransitionCallbackReturn.SUCCESS
@@ -1859,6 +1861,7 @@ class DanceGameNode(LifecycleNode):
     def on_activate(self, state):
         self.get_logger().info('DanceGameNode: ACTIVO')
         self._active = True
+        self._set_game_active(True)
 
         self._cam_sub = self.create_subscription(
             Image, '/csi_camera/image_raw', self._image_callback, 10)
@@ -1869,6 +1872,7 @@ class DanceGameNode(LifecycleNode):
     def on_deactivate(self, state):
         self.get_logger().info('DanceGameNode: INACTIVO')
         self._active = False
+        self._set_game_active(False)
 
         if self._pose_camera is not None:
             try:
@@ -1893,6 +1897,9 @@ class DanceGameNode(LifecycleNode):
         if self._mode_pub:
             self.destroy_publisher(self._mode_pub)
             self._mode_pub = None
+        if self._game_active_pub:
+            self.destroy_publisher(self._game_active_pub)
+            self._game_active_pub = None
         if self._lang_sub:
             self.destroy_subscription(self._lang_sub)
             self._lang_sub = None
@@ -1927,6 +1934,13 @@ class DanceGameNode(LifecycleNode):
             self.game.process_mouse(x, y, True)
         elif event == cv2.EVENT_MOUSEMOVE:
             self.game.process_mouse(x, y, False)
+
+    def _set_game_active(self, value: bool):
+        if self._game_active_pub:
+            try:
+                self._game_active_pub.publish(Bool(data=value))
+            except Exception:
+                pass
 
     def publish_idle(self):
         if self._mode_pub:
@@ -1975,17 +1989,9 @@ class DanceGameNode(LifecycleNode):
                              is_english=self.is_english)
             self.game = game
             last = time.time()
+            shown_at = time.time()
 
             while rclpy.ok() and self._active:
-                try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
-                        self.publish_idle()
-                        self._active = False
-                        break
-                except Exception:
-                    self.publish_idle()
-                    self._active = False
-                    break
 
                 now = time.time()
                 dt = min(now - last, 0.05)

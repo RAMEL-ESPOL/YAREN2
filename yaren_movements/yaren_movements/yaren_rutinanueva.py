@@ -1006,6 +1006,7 @@ def run_ui(node: PoseRecorderNode) -> bool:
     cv2.setWindowProperty(WINDOW, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     cv2.setMouseCallback(WINDOW, _on_mouse, node)
 
+    shown_at = time.time()
     while True:
         state      = node.get_state()
         steps      = node.get_steps()
@@ -1069,13 +1070,6 @@ def run_ui(node: PoseRecorderNode) -> bool:
         key = cv2.waitKey(16)
 
         # --- NUEVO: Detectar si cerraron la ventana con la X ---
-        try:
-            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-                node.set_state(State.FINISHED)
-                break
-        except Exception:
-            node.set_state(State.FINISHED)
-            break
 
         if state == State.FINISHED:
             break

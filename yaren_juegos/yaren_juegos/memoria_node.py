@@ -641,6 +641,8 @@ class MemoriaNode(LifecycleNode):
 
         self._mode_pub = None
         self._lang_sub = None
+        self._game_active_pub = None
+        self._shown_at = 0.0
 
     # ─────────────────────────────────────────────────────────────────────────
     #  LIFECYCLE
@@ -650,6 +652,7 @@ class MemoriaNode(LifecycleNode):
         self.get_logger().info('MemoriaNode: configurando...')
         try:
             self._mode_pub = self.create_publisher(String, '/yaren_mode', 1)
+            self._game_active_pub = self.create_publisher(Bool, '/yaren/game_active', 10)
             qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
             self._lang_sub = self.create_subscription(
                 Bool, '/yaren/is_english', self._lang_cb, qos)
@@ -668,6 +671,7 @@ class MemoriaNode(LifecycleNode):
     def on_activate(self, state):
         self.get_logger().info('MemoriaNode: ACTIVO')
         self._active = True
+        self._set_game_active(True)
         self._choice_event.clear()
         self._intro_event.clear()
         self._intro_choice = None
@@ -685,6 +689,7 @@ class MemoriaNode(LifecycleNode):
     def on_deactivate(self, state):
         self.get_logger().info('MemoriaNode: INACTIVO')
         self._active = False
+        self._set_game_active(False)
         self._music.stop()
         self._choice_event.set()
         self._intro_event.set()
@@ -693,6 +698,7 @@ class MemoriaNode(LifecycleNode):
 
     def on_cleanup(self, state):
         if self._mode_pub:   self.destroy_publisher(self._mode_pub)
+        if self._game_active_pub: self.destroy_publisher(self._game_active_pub)
         if self._lang_sub:   self.destroy_subscription(self._lang_sub)
         self._music.stop()
         self._sound.quit()
@@ -715,6 +721,8 @@ class MemoriaNode(LifecycleNode):
 
     def _on_click(self, event, x, y, flags, param):
         if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        if time.time() - self._shown_at < 0.8:
             return
 
         with self._lock:
@@ -798,20 +806,10 @@ class MemoriaNode(LifecycleNode):
             self._intro_event.clear()
 
             frame = np.zeros((H, W, 3), dtype=np.uint8)
+            self._shown_at = time.time()
             self._music.play()
 
             while self._active and rclpy.ok():
-                try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
-                        self.get_logger().info("Ventana cerrada con X. Publicando idle...")
-                        self._publish_idle()
-                        self._active = False
-                        break
-                except Exception:
-                    self.get_logger().info("Ventana destruida. Publicando idle...")
-                    self._publish_idle()
-                    self._active = False
-                    break
 
                 with self._frame_lock:
                     if self._frame is not None:
@@ -1120,6 +1118,13 @@ class MemoriaNode(LifecycleNode):
         # Durante cuenta regresiva, secuencia, turno y feedback NO suena.
         if s not in (State.INTRO, State.GAME_OVER):
             self._music.stop(fade_ms=500)
+
+    def _set_game_active(self, value: bool):
+        if self._game_active_pub:
+            try:
+                self._game_active_pub.publish(Bool(data=value))
+            except Exception:
+                pass
 
     def _publish_idle(self):
         if self._mode_pub:

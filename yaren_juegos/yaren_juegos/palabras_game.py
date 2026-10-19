@@ -1758,16 +1758,10 @@ class PalabrasNode(LifecycleNode):
             with self._lock:
                 self._reset_game_state()
             frame = np.zeros((H, W, 3), dtype=np.uint8)
+            shown_at = time.time()
             self._music.play()
 
             while self._active and rclpy.ok():
-                try:
-                    if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
-                        self._exit_to_menu()
-                        break
-                except Exception:
-                    self._exit_to_menu()
-                    break
 
                 with self._lock:
                     self._render(frame)

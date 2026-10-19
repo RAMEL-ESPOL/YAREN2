@@ -5046,26 +5046,37 @@ private:
     // Pinta el fondo de cada item con un color que contraste con su icono
     // y que no se repita con el vecino.
     void recolorForContrast(const std::vector<MenuItem*>& items) {
-        static const int PH[7] = {0, 12, 27, 60, 85, 108, 160};
-        int use[7] = {0, 0, 0, 0, 0, 0, 0};
+        struct PC { cv::Scalar c; double h; };
+        // BGR apagados. h = tono estilo OpenCV (0..180) para medir contraste con el icono
+        static const PC PAL[8] = {
+            { cv::Scalar( 86, 140,  76),  60.0 },   // verde
+            { cv::Scalar( 70, 184, 222),  25.0 },   // amarillo
+            { cv::Scalar( 60, 130, 225),  12.0 },   // naranja
+            { cv::Scalar( 70,  70, 200),   0.0 },   // rojo
+            { cv::Scalar(190, 110,  65), 110.0 },   // azul
+            { cv::Scalar(215, 180, 100),  95.0 },   // celeste
+            { cv::Scalar( 65,  95, 140),  10.0 },   // cafe
+            { cv::Scalar(170,  90, 130), 140.0 }    // morado
+        };
+        int use[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         int prev = -1, prev2 = -1;
         for (MenuItem* m : items) {
             double ih = iconHue(m->iconKey);
-            if (ih < 0) { prev2 = prev; prev = -1; continue; }
-            int best = -1; double bestScore = -1e9;
-            for (int k = 0; k < 7; ++k) {
-                double d = std::fabs(ih - PH[k]);
-                d = std::min(d, 180.0 - d);
-                if (d < 40.0) continue;
-                double sc = d - 8.0 * use[k] - ((k == prev) ? 100.0 : 0.0) - ((k == prev2) ? 30.0 : 0.0);
+            int best = 0; double bestScore = -1e9;
+            for (int k = 0; k < 8; ++k) {
+                double sc = 0.0;
+                if (ih >= 0) {
+                    double d = std::fabs(ih - PAL[k].h);
+                    d = std::min(d, 180.0 - d);
+                    sc = std::min(d, 60.0);
+                }
+                sc -= 8.0 * use[k];
+                if (k == prev)  sc -= 100.0;
+                if (k == prev2) sc -= 30.0;
                 if (sc > bestScore) { bestScore = sc; best = k; }
             }
-            if (best < 0) { prev2 = prev; prev = -1; continue; }
             use[best]++; prev2 = prev; prev = best;
-            cv::Mat px(1, 1, CV_8UC3, cv::Scalar(PH[best], 215, 245));
-            cv::Mat out; cv::cvtColor(px, out, cv::COLOR_HSV2BGR);
-            cv::Vec3b o = out.at<cv::Vec3b>(0, 0);
-            m->color = cv::Scalar(o[0], o[1], o[2]);
+            m->color = PAL[best].c;
         }
     }
 
@@ -5125,19 +5136,8 @@ private:
 
     // ===== Helpers de color infantil =====
     static cv::Scalar kidBright(const cv::Scalar& c) {
-        cv::Mat px(1, 1, CV_8UC3, cv::Scalar(cv::saturate_cast<uchar>(c[0]),
-                                             cv::saturate_cast<uchar>(c[1]),
-                                             cv::saturate_cast<uchar>(c[2])));
-        cv::Mat hsv;
-        cv::cvtColor(px, hsv, cv::COLOR_BGR2HSV);
-        cv::Vec3b& h = hsv.at<cv::Vec3b>(0, 0);
-        if (h[1] > 40) {
-            h[1] = (uchar)std::max<int>(h[1], 170);
-            h[2] = 250;
-        }
-        cv::cvtColor(hsv, px, cv::COLOR_HSV2BGR);
-        cv::Vec3b o = px.at<cv::Vec3b>(0, 0);
-        return cv::Scalar(o[0], o[1], o[2]);
+        // Colores neutrales: ya no se satura ni se aumenta el brillo
+        return c;
     }
 
     static cv::Scalar kidMix(const cv::Scalar& a, const cv::Scalar& b, double k) {

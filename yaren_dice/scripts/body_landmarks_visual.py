@@ -142,11 +142,15 @@ class BodyPointsDetectorNode(LifecycleNode):
                     cv2.circle(vis, (cx, cy), 5, (0, 255, 0), -1, cv2.LINE_AA)
 
             try:
+                _now = time.time()
+                if _now - getattr(self, '_last_imshow', 0.0) > 1.0:
+                    self._shown_at = _now
+                self._last_imshow = _now
                 cv2.imshow(WIN, vis)
                 cv2.waitKey(1)
                 
                 # --- NUEVO: Detectar cierre con la X ---
-                if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+                if (time.time() - self._shown_at) > 2.0 and cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
                     self.get_logger().info('Ventana cerrada con la X. Notificando a C++...')
                     msg = String()
                     msg.data = 'idle'

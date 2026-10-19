@@ -829,9 +829,6 @@ static bool show_intro_screen(bool is_english)
         cv::imshow(WIN, frame);
         int key = cv::waitKey(16);
         if (key == 27) closed = true;
-        try {
-            if (cv::getWindowProperty(WIN, cv::WND_PROP_AUTOSIZE) == -1) closed = true;
-        } catch (...) { closed = true; }
     }
     cv::destroyWindow(WIN);
     return st.clicked && !closed;
