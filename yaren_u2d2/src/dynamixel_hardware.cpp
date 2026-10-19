@@ -65,7 +65,8 @@ public:
       position_.push_back(0.0);
       velocity_.push_back(0.0);
       effort_.push_back(0.0);
-      position_commands_.push_back(0.0);
+      const bool is_home_joint = (joint.name == "joint_8" || joint.name == "joint_12");
+      position_commands_.push_back(is_home_joint ? 0.5 : 0.0);   // posicion inicial
     }
 
     portHandler_->openPort();

@@ -3,6 +3,8 @@
 #include <std_msgs/msg/string.hpp>
 #include <lifecycle_msgs/srv/change_state.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
+#include <future>
 #include <lifecycle_msgs/srv/get_state.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -25,6 +27,8 @@
 #include <SDL2/SDL_mixer.h>
 #include <unordered_map>
 #include <queue>
+#include <deque>
+#include <condition_variable>
 
 namespace fs = std::filesystem;
 
@@ -1116,7 +1120,7 @@ public:
         };
         if (SDL_Init(SDL_INIT_AUDIO) < 0) {
             RCLCPP_ERROR(logger_, "No se pudo inicializar SDL: %s", SDL_GetError());
-        } else if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        } else if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096) < 0) {
             RCLCPP_ERROR(logger_, "No se pudo inicializar SDL_mixer: %s", Mix_GetError());
             SDL_Quit();
         } else {
@@ -1179,7 +1183,8 @@ public:
             currentSongIndex = -1;
             return;
         }
-        songDuration = probeDuration(audioPath);
+        songDuration = 0.0;
+        { const std::string pth = audioPath; std::thread([this, pth]() { songDuration = probeDuration(pth); }).detach(); }
         if (audioInitialized) {
             Mix_Music* music = Mix_LoadMUS(audioPath.c_str());
             if (music) {
@@ -1194,7 +1199,7 @@ public:
                     started = (Mix_FadeInMusic(currentMusic, -1, 500) == 0);
                 }
                 if (started) {
-                    std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
+                    launchDance();
                     return;
                 }
                 if (audioMutex_) {
@@ -1211,7 +1216,7 @@ public:
         }
         std::string cmd = "mpg123 -q \"" + audioPath + "\" &";
         std::thread([cmd]() { std::system(cmd.c_str()); }).detach();
-        std::system("python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
+        launchDance();
     }
 
     void handleMouse(int ev, int x, int y) {
@@ -1289,7 +1294,7 @@ private:
     bool showFace { true };
     cv::Rect viewBtn {0,0,0,0};
     bool hovView { false };
-    double songDuration { 0.0 };
+    std::atomic<double> songDuration { 0.0 };
     cv::Rect playBtn {0,0,0,0};
     bool hovPlay { false };
     cv::Rect prevSongBtn {0,0,0,0}, nextSongBtn {0,0,0,0};
@@ -1297,8 +1302,19 @@ private:
     // FIX-E: mutex de audio compartido
     std::mutex* audioMutex_ {nullptr};
 
+    std::atomic<int> danceGen_ { 0 };
+    void launchDance() {
+        const int gen = danceGen_.load();
+        std::thread([this, gen]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            if (danceGen_.load() != gen) return;      // pararon la musica antes de tiempo
+            std::system("nice -n 19 python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
+        }).detach();
+    }
+
     // FIX-E: implementación interna de killAudio (sin lock, el caller lo gestiona)
     void killAudioImpl() {
+        ++danceGen_;
         if (audioInitialized && Mix_PlayingMusic()) {
             Mix_HaltMusic();
         }
@@ -1308,7 +1324,7 @@ private:
         }
         currentSongIndex = -1;
         std::system("for pid in $(ps aux | grep -E 'yaren_dance_radio.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
-        std::system("ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
+        std::system("nice -n 19 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
     }
 
     double probeDuration(const std::string& path) {
@@ -3100,8 +3116,7 @@ public:
         loadIcon("chat", "chat_bot.png"); loadIcon("dice", "simon_dice.png"); loadIcon("movements", "movements.png");
         loadIcon("emotions", "emociones.png"); loadIcon("filtros", "filtros_menu.png"); loadIcon("rutina1", "yaren2.png");
         loadIcon("rutina2", "yaren3.png"); loadIcon("rutina3", "yaren4.png"); loadIcon("animales", "animales.png");
-        loadIcon("accesorios", "filtro.png"); loadIcon("settings", "settings.png"); loadIcon("piopio", "piopio.png");
-        loadIcon("gallinaturuleca", "gallinaturuleca.png"); loadIcon("susanita", "susanita.png"); loadIcon("vacalola", "vacalola.png");
+        loadIcon("accesorios", "filtro.png"); loadIcon("fondofiltro", "fondofiltro.png");loadIcon("settings", "settings.png"); 
         loadIcon("video", "video.png"); loadIcon("musica", "musica.png"); loadIcon("radio", "radio.png");
         loadIcon("palabras", "juegopalabras.png"); loadIcon("paint", "pintor.png");
         loadIcon("juegobaile", "juegobaile.png"); loadIcon("memoria", "memoria.png");
@@ -3169,16 +3184,8 @@ public:
         {
             const std::string introDir = ws_dir + "/src/YAREN2/yaren_radio/videos/";
             introPath_ = introDir + "intro_yaren.mp4";
-            introVideo.open(introPath_);
-            if (introVideo.isOpened()) {
-                introFps = introVideo.get(cv::CAP_PROP_FPS);
-                if (introFps < 1.0 || introFps > 120.0) introFps = 30.0;
-                {
-                    double nf = introVideo.get(cv::CAP_PROP_FRAME_COUNT);
-                    introDur_ = (nf > 0) ? nf / introFps : 0.0;
-                }
-                introIdx = -1;
-                introStart = std::chrono::steady_clock::now();
+            if (fs::exists(introPath_)) {
+                startIntroDecoder();
                 const std::string wav = introDir + "intro_yaren.wav";
                 if (fs::exists(wav)) {
                     std::lock_guard<std::mutex> lk(audioMutex_);
@@ -3389,7 +3396,7 @@ public:
 
         sttListeningSubscription_ = this->create_subscription<std_msgs::msg::Bool>(
             "/stt_listening", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                if (activeMode == "yaren_chat" || activeMode == "yaren_chat_local") {
+                if (activeMode == "yaren_chat") {
                     if (msg->data) {
                         // Es el turno del niño
                         std::thread([this]() {
@@ -3512,215 +3519,12 @@ public:
         // NOTA: renderThread se arranca desde main() post-construcción
         RCLCPP_INFO(get_logger(), "face_screen listo con Radio y Rutinas Personales.");
 
-        std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|paint_node|palabras_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
-        const char* home = std::getenv("HOME");
-        if (home) {
-            std::string python  = std::string(home) + "/robotis_ws/venv_yaren/bin/python3";
-            std::string ws      = std::string(home) + "/robotis_ws";
-            std::string setup   = ws + "/install/setup.bash";
-            std::string venv    = ws + "/venv_yaren/bin/activate";
-            std::string bridge = ws + "/src/YAREN2/yaren_face_display/scripts/ws_bridge.py";
-            std::string wake    = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/wake_word_node.py";
-            std::string voice   = ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/yaren_voice_menu.py";
-            std::string lang    = ws + "/src/YAREN2/yaren_idioma/yaren_idioma/gestor_idioma.py";
-
-            std::string cmd_wake  = "bash -c 'source " + setup + " && " + python + " " + wake  + "' &";
-            std::string cmd_voice = "bash -c 'source " + setup + " && " + python + " " + voice + "' &";
-            std::string cmd_lang  = "bash -c 'source " + setup + " && " + python + " " + lang  + "' &";
-
-            std::string cmd_llm = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat llm_lifecycle_node.py' &";
-            std::string cmd_stt = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat stt_lifecycle_node.py' &";
-            std::string cmd_tts = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat tts_lifecycle_node.py' &";
-            std::string cmd_det = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_emotions detect_emotion.py' &";
-            std::string cmd_filter = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters face_filter_node' &";
-            std::string cmd_animal = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters animal_filter_mask' &";
-            std::string cmd_landmarks = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters face_landmark_detector.py' &";
-            std::string cmd_body = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice body_landmarks.py' &";
-            std::string cmd_body_help = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice body_landmarks_visual.py' &";
-            std::string cmd_speak = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_dice speaker_node.py' &";
-            std::string cmd_fondo = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_filters fondo_virtual.py' &";
-            std::string cmd_camara = "bash -c 'source " + setup + " && ros2 run camara_usb_csi csi_cam_pub.py' &";
-            std::string cmd_llm_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 llm_local_lifecycle_node.py' &";
-            std::string cmd_stt_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 stt_local_lifecycle_node.py' &";
-            std::string cmd_tts_local = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_chat2 tts_local_lifecycle_node.py' &";
-            std::string cmd_paint = "bash -c 'source " + setup + " && source " + venv + " && python3 " + ws + "/src/YAREN2/yaren_paint/yaren_paint/paint_node.py' &";
-            std::string cmd_memoria = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_juegos memoria_node' &";
-            std::string cmd_dance = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_juegos dance_game_node' &"; // NUEVO
-            std::string cmd_palabras = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_juegos palabras_node' &";
-            std::string cmd_body_tracker = "bash -c 'source " + setup + " && ros2 run yaren_arm_mimic body_tracker_node' &";
-            std::string cmd_controller   = "bash -c 'source " + setup + " && ros2 run yaren_arm_mimic yaren_controller' &";
-            std::string cmd_mimic_gate   = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_arm_mimic mimic_gate_node.py' &";
-            std::string cmd_body_mimic = "bash -c 'source " + setup + " && source " + venv + " && ros2 run yaren_arm_mimic body_points_detector.py' &";
-            std::string cmd_bridge = "bash -c 'source " + setup +" && python3 " + bridge +" --ros-args -p allow_poweroff:=true' > /tmp/ws_bridge.log 2>&1 &";
-
-            std::system(cmd_wake.c_str());
-            std::system(cmd_voice.c_str());
-            std::system(cmd_lang.c_str());
-            std::system(cmd_llm.c_str());
-            std::system(cmd_stt.c_str());
-            std::system(cmd_tts.c_str());
-            std::system(cmd_det.c_str());
-            std::system(cmd_filter.c_str());
-            std::system(cmd_animal.c_str());
-            std::system(cmd_landmarks.c_str());
-            std::system(cmd_body.c_str());
-            std::system(cmd_body_help.c_str());
-            std::system(cmd_speak.c_str());
-            std::system(cmd_fondo.c_str());
-            std::system(cmd_camara.c_str()); 
-            std::system(cmd_llm_local.c_str());
-            std::system(cmd_stt_local.c_str());
-            std::system(cmd_tts_local.c_str());
-            std::system(cmd_memoria.c_str());
-            std::system(cmd_dance.c_str());
-            std::system(cmd_paint.c_str());
-            std::system(cmd_palabras.c_str());
-            std::system(cmd_body_tracker.c_str());
-            std::system(cmd_controller.c_str());
-            std::system(cmd_mimic_gate.c_str());
-            std::system(cmd_body_mimic.c_str());
-            std::system(cmd_bridge.c_str());
-
-
-                        std::thread([this, setup]() {
-                // ── a) Pausa inicial para que se vea la animación ──
-                RCLCPP_INFO(this->get_logger(),
-                    "[ BOOT ] Esperando 3s antes de verificar red...");
-                std::this_thread::sleep_for(std::chrono::seconds(3));
- 
-                // ── b) Verificar internet con timeout de 10s ──
-                RCLCPP_INFO(this->get_logger(),
-                    "[ BOOT ] Verificando conexion a internet...");
-                chatAvailable_ = checkChatAvailable();
- 
-                // ── c) Sin internet → mostrar pantalla WiFi ──
-                if (!chatAvailable_) {
-                    RCLCPP_WARN(this->get_logger(),
-                        "[ BOOT ] Sin internet. Mostrando configuracion WiFi...");
- 
-                    {
-                        std::lock_guard<std::mutex> lk(configStatusMutex);
-                        configStatus = isEnglish
-                            ? "No internet - configure WiFi..."
-                            : "Sin internet - configura el WiFi...";
-                    }
- 
-                    wifiSetup_.refresh();
-                    {
-                        std::lock_guard<std::mutex> lk(modeFlagMutex);
-                        showWifiSetup_ = true;
-                    }
- 
-                    // Esperar hasta que el usuario conecte u omita
-                    while (true) {
-                        bool still;
-                        {
-                            std::lock_guard<std::mutex> lk(modeFlagMutex);
-                            still = showWifiSetup_;
-                        }
-                        if (!still) break;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                    }
- 
-                    // Re-verificar tras el intento de conexión
-                    chatAvailable_ = checkChatAvailable();
-                    RCLCPP_INFO(this->get_logger(),
-                        "[ BOOT ] Tras WiFi setup — internet: %s",
-                        chatAvailable_ ? "SI" : "NO");
-                } else {
-                    RCLCPP_INFO(this->get_logger(),
-                        "[ BOOT ] Internet OK. Continuando arranque...");
-                }
- 
-                // ── d) Configurar lifecycle nodes ──
-                auto configure_node = [&](const std::string& name,
-                                          const std::string& display) {
-                    {
-                        std::lock_guard<std::mutex> lk(configStatusMutex);
-                        configStatus = "Cargando " + display + "...";
-                    }
-                    RCLCPP_INFO(this->get_logger(),
-                        "[ NODE ] Configurando: %s", name.c_str());
- 
-                    bool ok = false;
-                    for (int intento = 0; intento < 3 && !ok; intento++) {
-                        if (intento > 0) {
-                            RCLCPP_WARN(this->get_logger(),
-                                "[ NODE ] Reintentando %s (%d/3)...",
-                                name.c_str(), intento + 1);
-                            std::this_thread::sleep_for(std::chrono::seconds(3));
-                        }
-                        int ret = std::system(
-                            ("bash -c 'source " + setup +
-                             " && ros2 lifecycle set /" + name +
-                             " configure' > /dev/null 2>&1").c_str());
-                        ok = (ret == 0);
-                    }
- 
-                    if (ok)
-                        RCLCPP_INFO(this->get_logger(),
-                            "[ NODE ] ✓ %s configurado.", name.c_str());
-                    else
-                        RCLCPP_ERROR(this->get_logger(),
-                            "[ NODE ] ✗ No se pudo configurar: %s", name.c_str());
- 
-                    configProgress++;
-                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                };
-                
-                configure_node("llm_lifecycle_node",        "Inteligencia Artificial (Cloud)");
-                configure_node("llm_local_lifecycle_node",  "Inteligencia Artificial (Local)");               
-                configure_node("stt_lifecycle_node",        "Reconocimiento de Voz (Cloud)");
-                configure_node("tts_lifecycle_node",        "Síntesis de Voz (Cloud)");
-                configure_node("stt_local_lifecycle_node",        "Reconocimiento de Voz (Local)");
-                configure_node("tts_local_lifecycle_node",        "Síntesis de Voz (Local)");
-                configure_node("detector",                  "Detección de Emociones");
-                configure_node("face_filter_node",          "Filtros de Cara");
-                configure_node("body_points_detector_node", "Detección Corporal");
-                configure_node("body_points_detector_node_visual", "Detección Corporal con Ayuda");
-                configure_node("yaren_speaker_node",        "Altavoz");
-                configure_node("virtual_background_node",   "Fondo Virtual");
-                configure_node("filtro_animales",           "Filtro de Animales");
-                configure_node("face_landmark_publisher",   "Landmarks Faciales");
-                configure_node("csi_cam_node",              "Cámara Principal");
-                configure_node("paint_node", "Yaren Paint");
-                configure_node("memoria_node",  "Juego de Memoria");
-                configure_node("dance_game_node", "Juego de Baile");
-                configure_node("palabras_node", "Juego de palabras");
- 
-                // ── e) Finalizar pantalla de carga ──
-                {
-                    std::lock_guard<std::mutex> lk(configStatusMutex);
-                    configStatus   = isEnglish ? "Yaren is ready!" : "Yaren listo!";
-                    configProgress = configTotal;
-                }
-                RCLCPP_INFO(this->get_logger(),
-                    "[ BOOT ] Sistema listo. Iniciando modo interactivo.");
- 
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                resetIdleTimer();
- 
-                {
-                    std::lock_guard<std::mutex> lk(audioMutex_);
-                    if (bootMusic) {
-                        Mix_HaltMusic();
-                        Mix_FreeMusic(bootMusic);
-                        bootMusic = nullptr;
-                    }
-                }
- 
-                {
-                    std::lock_guard<std::mutex> lk(audioMutex_);
-                    if (introMusic) {
-                        Mix_HaltMusic();
-                        Mix_FreeMusic(introMusic);
-                        introMusic = nullptr;
-                    }
-                }
-                configuring = false;
- 
-            }).detach();
-        }
+        // ===== BOOT PROGRESIVO =====
+        // Callback group reentrante: las respuestas de los servicios lifecycle
+        // se procesan en paralelo y nunca quedan detras de otro callback.
+        lcGroup_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        bootLightPhase();                                            // FASE 1: inmediata y liviana
+        bootThread_ = std::thread([this]() { bootHeavyPhase(); });   // FASE 2: pesada, en segundo plano
     }
 
     // FIX: startRenderThread se llama desde main() post-construcción
@@ -3802,6 +3606,9 @@ public:
             }
         }
         if (renderThread.joinable()) renderThread.join();
+        if (bootThread_.joinable()) bootThread_.join();
+        stopIntroDecoder();
+        if (introThread_.joinable()) introThread_.join();
         // FIX-F: verificar joinable antes de join en testThread
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
@@ -3867,7 +3674,7 @@ private:
     bool showRadio_     { false };
     bool showRoutines_  { false };
     bool showWifiSetup_ { false };
-    bool chatAvailable_ { false };
+    std::atomic<bool> chatAvailable_ { false };
     WifiSetupScreen wifiSetup_;
     
 
@@ -3949,10 +3756,10 @@ private:
         std::string rdDir  = absCwd + "/src/YAREN2/yaren_radio/yaren_radio/";
 
         rootMenuItems = {
-            MI("modo_prueba", isEnglish ? "TEST MODE" : "MODO PRUEBA", isEnglish ? "diagnostics and tests" : "diagnóstico y tests", {255,140,0}, "", "", true, "sub_modo_prueba", "test"),
+            MI("modo_prueba", isEnglish ? "FOR PARENTS" : "PARA PAPÁS", isEnglish ? "diagnostics and tests" : "diagnóstico y tests", {255,140,0}, "", "", true, "sub_modo_prueba", "test"),
             MI("yaren", "YAREN", isEnglish ? "main modes" : "modos principales", {0,229,255}, "", "", true, "sub_yaren", "yaren"),
         };
-        subMenuMap["sub_modo_prueba"] = { isEnglish ? "TEST MODE" : "MODO PRUEBA", {255,140,0}, {
+        subMenuMap["sub_modo_prueba"] = { isEnglish ? "FOR PARENTS" : "PARA PAPÁS", {255,140,0}, {
             MI("test_camara", isEnglish ? "CAMERA" : "CÁMARA", isEnglish ? "test camera" : "probar cámara", {0,200,255}, ("python " + absCwd + "/src/YAREN2/CSI-Camera/simple_camera.py &").c_str(), "", false, "", "camera"),
             MI("test_mic", isEnglish ? "MICROPHONE" : "MICRÓFONO", isEnglish ? "test microphone" : "probar micrófono", {0,255,128}, "", "", false, "", "microfono"),
             MI("test_motores", isEnglish ? "MOTORS" : "MOTORES", isEnglish ? "test motors" : "probar motores", {255,140,0}, "", "", true, "sub_motores", "motores"),
@@ -3985,12 +3792,12 @@ private:
             MI("cabeza_orig", isEnglish ? "HOME POS." : "POS. ORIGINAL", isEnglish ? "original position" : "posición original", {140,60,80}, "timeout 5 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"", "", false, "", "yaren"),
         }};
         subMenuMap["sub_yaren"] = { "YAREN", {0,229,255}, {
-            MI("yaren_mimic", "MIMIC", isEnglish ? "Yaren imitates you" : "Yaren te Imita",{0,229,255},"", "",   false, "", "mimic",{"csi_cam_node", "body_points_mimic_detector_node","body_tracker_node", "body_trajectory_controller", "mimic_gate_node"}),
-            MI("yaren_ai", "IA", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            
-            MI("yaren_juegos", isEnglish ? "GAMES" : "JUEGOS", isEnglish ? "Play with Yaren" : "Juega con Yaren", {255, 140, 50}, "", "", true, "sub_yaren_juegos", "juegos"),
-            MI("yaren_movements", isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
-            MI("yaren_emotions", isEnglish ? "EMOTIONS" : "EMOCIONES", isEnglish ? "Detects your emotion" : "Yaren detecta tu emoción", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
-            MI("yaren_filtros", isEnglish ? "FILTERS" : "FILTROS", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
+            MI("yaren_mimic", isEnglish ? "COPY ME" : "IMÍTAME", isEnglish ? "Yaren imitates you" : "Yaren te Imita",{0,229,255},"", "",   false, "", "mimic",{"csi_cam_node", "body_points_mimic_detector_node","body_tracker_node", "body_trajectory_controller", "mimic_gate_node"}),
+            MI("yaren_ai", isEnglish ? "LET'S TALK" : "HABLEMOS", isEnglish ? "Artificial Intelligence" : "Inteligencia Artificial", {29,233,22}, "", "", true, "sub_yaren_ai", "chat"),            
+            MI("yaren_juegos", isEnglish ? "LET'S PLAY" : "A JUGAR", isEnglish ? "Play with Yaren" : "Juega con Yaren", {255, 140, 50}, "", "", true, "sub_yaren_juegos", "juegos"),
+            MI("yaren_movements", isEnglish ? "I MOVE" : "ME MUEVO", isEnglish ? "Yaren moves" : "Yaren se mueve", {251,64,224}, "", "", true, "sub_yaren_movements", "movements"),
+            MI("yaren_emotions", isEnglish ? "MY EMOTION" : "MI EMOCIÓN", isEnglish ? "Detects your emotion" : "Yaren detecta tu emoción", {82,82,255}, "", "", false, "", "emotions", {"csi_cam_node","detector"}),
+            MI("yaren_filtros", isEnglish ? "DRESS UP" : "DISFRACES", isEnglish ? "Fun face filters" : "Yaren te pone filtros", {105,240,174}, "", "", true, "sub_yaren_filtros", "filtros"),
         }};
         subMenuMap["sub_yaren_ai"] = { isEnglish ? "ARTIFICIAL INTELLIGENCE" : "INTELIGENCIA ARTIFICIAL", {29,233,22}, {
             MI("yaren_chat", 
@@ -4004,20 +3811,10 @@ private:
             "chat", 
             {"llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node"}),
             
-            MI("yaren_chat_local", 
-            isEnglish ? "LOCAL AI" : "IA LOCAL", 
-            isEnglish ? "Chat with Yaren using local LLM" : "Chatea con Yaren usando LLM local", 
-            {255,200,50}, 
-            "", 
-            "", 
-            false, 
-            "", 
-            "chat", 
-            {"llm_local_lifecycle_node", "stt_local_lifecycle_node", "tts_local_lifecycle_node"}),
         }};
         subMenuMap["sub_yaren_dice"] = { isEnglish ? "YAREN SAYS" : "YAREN DICE", {64,171,255}, {
             MI("yaren_dice_sin_ayuda",
-            isEnglish ? "WITHOUT HELP"  : "SIN AYUDA",
+            isEnglish ? "ON MY OWN" : "YO SOLITO",
             isEnglish ? "No visual guide" : "Sin guía visual",
             {64,171,255},
             "ros2 run yaren_dice game_manager --ros-args -p use_help:=false &",
@@ -4026,7 +3823,7 @@ private:
             {"csi_cam_node", "body_points_detector_node", "yaren_speaker_node"}),
 
             MI("yaren_dice_con_ayuda",
-            isEnglish ? "WITH HELP"    : "CON AYUDA",
+            isEnglish ? "WITH MY MIRROR" : "CON MI ESPEJO",
             isEnglish ? "Shows your pose" : "Muestra tu pose",
             {0,200,255},
             "ros2 run yaren_dice game_manager --ros-args -p use_help:=true &",
@@ -4044,34 +3841,34 @@ private:
                 {"csi_cam_node", "body_points_detector_node", "yaren_speaker_node", "detector"}),
         }};
         subMenuMap["sub_yaren"].key = "sub_yaren";
-        subMenuMap["sub_yaren_movements"] = { isEnglish ? "MOVEMENTS" : "MOVIMIENTOS", {251,64,224}, {
+        subMenuMap["sub_yaren_movements"] = { isEnglish ? "I MOVE" : "ME MUEVO", {251,64,224}, {
             MI("yaren_rutina1", isEnglish ? "ROUTINE 1" : "RUTINA 1", isEnglish ? "Routines" : "Rutinas", {251,64,224}, ("python3 " + mvDir + "yaren_movement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_rutina1' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina1"),
             MI("yaren_rutina2", isEnglish ? "ROUTINE 2" : "RUTINA 2", isEnglish ? " Routines" : "Rutinas", {220,80,200}, ("python3 " + mvDir + "yaren_fullmovement.py &").c_str(), "for pid in $(ps aux | grep -E 'yaren_fullmovement' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", false, "", "rutina2"),
             MI("yaren_rutinanueva", isEnglish ? "PERSONAL ROUTINES" : "RUTINAS PERSONALES", isEnglish ? "manage and record" : "gestionar y grabar", {130, 80, 255}, "INTERNAL_ROUTINES", "", false, "", "rutinapersonal"),
         }};
-        subMenuMap["sub_yaren_filtros"] = { isEnglish ? "FILTERS" : "FILTROS", {105,240,174}, {
-            MI("yaren_animales", isEnglish ? "ANIMALS" : "ANIMALES", isEnglish ? "animal filter" : "filtro animal", {105,240,174}, "", "", false, "", "animales", {"csi_cam_node","face_landmark_publisher", "filtro_animales"}),
-            MI("yaren_accesorios", isEnglish ? "ACCESSORIES" : "ACCESORIOS", isEnglish ? "accessories filter" : "filtro accesorios", {60,200,130}, "", "", false, "", "accesorios", {"csi_cam_node","face_landmark_publisher", "face_filter_node"}),
-            MI("yaren_fondo", isEnglish ? "VIRT. BACKGROUNDS" : "FONDOS VIRTUAL", isEnglish ? "virtual background" : "filtro fondo virtual", {60,200,130}, "", "", false, "", "accesorios", {"csi_cam_node","virtual_background_node"}),
+        subMenuMap["sub_yaren_filtros"] = { isEnglish ? "DRESS UP" : "DISFRACES", {105,240,174}, {
+            MI("yaren_animales", isEnglish ? "I'M AN ANIMAL" : "SOY UN ANIMAL", isEnglish ? "animal filter" : "filtro animal", {105,240,174}, "", "", false, "", "animales", {"csi_cam_node","face_landmark_publisher", "filtro_animales"}),
+            MI("yaren_accesorios", isEnglish ? "HATS & GLASSES" : "GORROS Y LENTES", isEnglish ? "accessories filter" : "filtro accesorios", {60,200,130}, "", "", false, "", "accesorios", {"csi_cam_node","face_landmark_publisher", "face_filter_node"}),
+            MI("yaren_fondo", isEnglish ? "MAGIC TRIPS" : "VIAJES MÁGICOS", isEnglish ? "virtual background" : "filtro fondo virtual", {60,200,130}, "", "", false, "", "fondofiltro", {"csi_cam_node","virtual_background_node"}),
         }};
         subMenuMap["sub_yaren_p2"] = { "YAREN", {0,229,255}, {
             MI("yaren_radio", "YAREN RADIO", isEnglish ? "music and animation" : "música y animación", {255,80,160}, "", "", true, "sub_yaren_radio", "radio"),
         }};
         subMenuMap["sub_yaren_p2"].key = "sub_yaren_p2";
 
-        subMenuMap["sub_yaren_juegos"] = { isEnglish ? "GAMES" : "JUEGOS", {255, 140, 50}, {
-            MI("yaren_dice", isEnglish ? "SAYS" : "DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
-            MI("yaren_paint", isEnglish ? "PAINT" : "PINTURA", isEnglish ? "Draw and color" : "Dibuja y colorea", {255, 120, 90}, "", "", false, "", "paint", {"paint_node"}),
-            MI("yaren_memoria", isEnglish ? "MEMORY GAME" : "JUEGO MEMORIA", isEnglish ? "Remember the colors" : "Acuérdate de los colores", {80, 200, 255}, "", "", false, "", "memoria", {"memoria_node"}),
-            MI("yaren_palabras",isEnglish ? "HANGMAN" : "PALABRAS",isEnglish ? "Guess the word" : "Adivina la palabra",{220, 100, 255},"", "",false, "", "palabras",   {"palabras_node"}),
-            MI("yaren_dance", isEnglish ? "DANCE GAME" : "JUEGO DE BAILE", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "juegobaile", {"csi_cam_node","dance_game_node"}),
+        subMenuMap["sub_yaren_juegos"] = { isEnglish ? "LET'S PLAY" : "A JUGAR", {255, 140, 50}, {
+            MI("yaren_dice", isEnglish ? "YAREN SAYS" : "YAREN DICE", isEnglish ? "Play Yaren Says" : "Jugar Yaren Dice", {64,171,255}, "", "", true, "sub_yaren_dice", "dice"),
+            MI("yaren_paint", isEnglish ? "LET'S PAINT" : "PINTEMOS", isEnglish ? "Draw and color" : "Dibuja y colorea", {255, 120, 90}, "", "", false, "", "paint", {"paint_node"}),
+            MI("yaren_memoria", isEnglish ? "COLORS & MEMORY" : "COLORES Y MEMORIA", isEnglish ? "Remember the colors" : "Acuérdate de los colores", {80, 200, 255}, "", "", false, "", "memoria", {"memoria_node"}),
+            MI("yaren_palabras",isEnglish ? "GUESS THE WORD" : "ADIVINA LA PALABRA",isEnglish ? "Guess the word" : "Adivina la palabra",{220, 100, 255},"", "",false, "", "palabras",   {"palabras_node"}),
+            MI("yaren_dance", isEnglish ? "LET'S DANCE" : "A BAILAR", isEnglish ? "Follow the rhythm" : "Sigue el ritmo", {50, 255, 150}, "", "", false, "", "juegobaile", {"csi_cam_node","dance_game_node"}),
         }};
         subMenuMap["sub_yaren_juegos"].key = "sub_yaren_juegos";
         subMenuMap["sub_yaren_radio"] = { "YAREN RADIO", {255,80,160}, {
-            MI("radio_musica", isEnglish ? "MUSIC" : "MÚSICA", isEnglish ? "play music" : "reproducir música", {255,120,200}, "INTERNAL_RADIO", "", false, "", "musica"),
+            MI("radio_musica", isEnglish ? "SONGS" : "CANCIONES", isEnglish ? "play music" : "reproducir música", {255,120,200}, "INTERNAL_RADIO", "", false, "", "musica"),
             
             // Lanza tu nueva App PyQt5
-            MI("radio_videos", "YAREN TV", isEnglish ? "watch videos" : "ver videos", {200,60,140}, 
+            MI("radio_videos", "VIDEOS", isEnglish ? "watch videos" : "ver videos", {200,60,140}, 
                ("nohup python3 " + rdDir + "tvplayer.py >/dev/null 2>&1 &").c_str(), 
                "for pid in $(ps aux | grep -E 'tvplayer.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done", 
                false, "", "video"),
@@ -4504,9 +4301,17 @@ private:
                 if (level.items[i].rect.contains({ x, y })) { hoveredItem = i; break; }
             hoveredBack = (navStack.size() > 1) && backButtonRect.contains({ x, y });
             hoveredExit = exitButtonRect.contains({ x, y });
+            hoveredSubPrev_ = subPrevBtn_.area() > 0 && subPrevBtn_.contains({ x, y });
+            hoveredSubNext_ = subNextBtn_.area() > 0 && subNextBtn_.contains({ x, y });
             hoveredStop = !activeMode.empty() && stopButtonRect.contains({ x, y });
         }
         if (event == cv::EVENT_LBUTTONDOWN) {
+            if (navStack.size() > 1) {
+                const int totalPages = std::max(1, ((int)level.items.size() + kSubPerPage - 1) / kSubPerPage);
+                int& pg = subPages_[level.key];
+                if (subPrevBtn_.area() > 0 && subPrevBtn_.contains({ x, y })) { if (pg > 0) --pg; hoveredItem = -1; return; }
+                if (subNextBtn_.area() > 0 && subNextBtn_.contains({ x, y })) { if (pg < totalPages - 1) ++pg; hoveredItem = -1; return; }
+            }
             if (exitButtonRect.contains({ x, y })) {
                 navStack.clear(); hoveredItem = -1; hoveredBack = hoveredStop = hoveredExit = false;
                 stopMenuMusic();
@@ -4898,10 +4703,27 @@ private:
             else                         cv::cvtColor(im, bgra, cv::COLOR_GRAY2BGRA);
 
             if (isCoverIcon(key)) {
-                int side = std::min(bgra.cols, bgra.rows);
-                cv::Mat sq = bgra(cv::Rect((bgra.cols - side) / 2, (bgra.rows - side) / 2, side, side));
+                const double asp = (double)bgra.cols / std::max(1, bgra.rows);
                 cv::Mat rs;
-                cv::resize(sq, rs, cv::Size(D, D), 0, 0, cv::INTER_AREA);
+                if (asp > 1.08 || asp < 0.92) {
+                    // menos zoom: el lado corto ocupa kFill del circulo (1.0 = zoom maximo, 0.7 = mas alejado)
+                    const double kFill = 0.80;
+                    const bool wide = asp > 1.0;
+                    const double k = kFill * D / (double)(wide ? bgra.rows : bgra.cols);
+                    cv::Mat fg;
+                    cv::resize(bgra, fg, cv::Size(), k, k, cv::INTER_AREA);
+                    const int cw = std::min(fg.cols, D), ch = std::min(fg.rows, D);
+                    fg = fg(cv::Rect((fg.cols - cw) / 2, (fg.rows - ch) / 2, cw, ch)).clone();
+                    const int top = (D - fg.rows) / 2, bot = D - fg.rows - top;
+                    const int lef = (D - fg.cols) / 2, rig = D - fg.cols - lef;
+                    cv::copyMakeBorder(fg, rs, top, bot, lef, rig, cv::BORDER_REPLICATE);
+                    cv::GaussianBlur(rs, rs, cv::Size(0, 0), D / 24.0);   // suaviza solo el relleno
+                    fg.copyTo(rs(cv::Rect(lef, top, fg.cols, fg.rows)));  // la imagen queda nitida
+                } else {
+                    int side = std::min(bgra.cols, bgra.rows);
+                    cv::Mat sq = bgra(cv::Rect((bgra.cols - side) / 2, (bgra.rows - side) / 2, side, side));
+                    cv::resize(sq, rs, cv::Size(D, D), 0, 0, cv::INTER_AREA);
+                }
                 cv::Mat mask = cv::Mat::zeros(D, D, CV_8UC1);
                 cv::circle(mask, cv::Point(D / 2, D / 2), D / 2 - 1, cv::Scalar(255), cv::FILLED, cv::LINE_AA);
                 std::vector<cv::Mat> ch; cv::split(rs, ch);
@@ -5285,11 +5107,17 @@ private:
 
     // Dibuja una tarjeta con perspectiva (trapecio) en la posicion del carrusel
     // Disco de color con icono adentro (estilo circulos Pinkfong)
+    void prettyLabel(cv::Mat& f, const std::string& s, cv::Point org, double sc,
+                     const cv::Scalar& col, float focus) {
+        const cv::Scalar white(255, 255, 255);
+        // halo blanco suave + texto con el color del circulo (tono oscuro)
+        txu::put(f, s, cv::Point(org.x, org.y + 1), cv::FONT_HERSHEY_DUPLEX, sc, white, 5, cv::LINE_AA);
+        txu::put(f, s, org, cv::FONT_HERSHEY_DUPLEX, sc, col, 1, cv::LINE_AA);
+    }
+
     void kidDisc(cv::Mat& frame, cv::Point c, int R, const cv::Scalar& a,
                  const std::string& iconKey, float glow, bool blocked) {
         const cv::Scalar white(255, 255, 255);
-        // sombra suave
-        cv::circle(frame, cv::Point(c.x, c.y + 6), R, cv::Scalar(205, 218, 222), cv::FILLED, cv::LINE_AA);
         // halo cuando esta enfocado
         // aro de color + aro blanco
         cv::circle(frame, c, R, a, cv::FILLED, cv::LINE_AA);
@@ -5369,10 +5197,9 @@ private:
         };
         int maxW = stride - 16, bl = 0;
         int ly = cy + (int)(D * 0.58) + 36;
-        double ls = fit(e.item.label, cv::FONT_HERSHEY_DUPLEX, 0.52 + 0.14 * focus, 0.34, maxW);
+        double ls = 0.60;
         cv::Size lsz = txu::size(e.item.label, cv::FONT_HERSHEY_DUPLEX, ls, 1, &bl);
-        txu::put(frame, e.item.label, cv::Point((int)cxd - lsz.width / 2, ly), cv::FONT_HERSHEY_DUPLEX, ls,
-                    focus > 0.5f ? ink : ink * 1.5, 1, cv::LINE_AA);
+        prettyLabel(frame, e.item.label, cv::Point((int)cxd - lsz.width / 2, ly), ls, a * 0.5, focus);
 
 
         // zona tocable
@@ -5443,7 +5270,7 @@ private:
         }
 
         // SALIR / DETENER
-        bool hasStop = (activeMode == "yaren_chat" || activeMode == "yaren_chat_local" ||
+        bool hasStop = (activeMode == "yaren_chat" ||
                         activeMode == "yaren_dice_sin_ayuda" ||
                         activeMode == "yaren_dice_sesion");
         exitButtonRect = cv::Rect(24, H - 62, 120, 40);
@@ -5530,7 +5357,7 @@ private:
     }
 
     void renderMenu(cv::Mat& frame) {
-        if (navStack.size() == 1) renderCarousel(frame);   // raiz = carrusel
+        if (navStack.size() == 1) { subPages_.clear(); renderCarousel(frame); }   // raiz = carrusel
         else                      renderMenuGrid(frame);   // submenus (MODO PRUEBA) como antes
     }
 
@@ -5560,7 +5387,26 @@ private:
         else if (navStack.size() == 2) title = navStack[1].title;
         else if (navStack.size() >= 3) title = navStack[navStack.size() - 2].title + "  >  " + navStack.back().title;
         else title = navStack.back().title;
-        cv::Scalar titleColor = isRoot ? cv::Scalar(230, 190, 90) : level.accentColor;
+        // colores neutros (BGR) por submenu: verde, azul, rojo, naranja, morado normales
+        static const std::map<std::string, cv::Scalar> kNeutral = {
+            {"sub_yaren",           cv::Scalar(180, 110,  50)},   // azul
+            {"sub_yaren_p2",        cv::Scalar(180, 110,  50)},   // azul
+            {"sub_yaren_ai",        cv::Scalar( 80, 150,  60)},   // verde
+            {"sub_yaren_juegos",    cv::Scalar( 40, 130, 230)},   // naranja
+            {"sub_yaren_dice",      cv::Scalar(180, 110,  50)},   // azul
+            {"sub_yaren_movements", cv::Scalar(160,  80, 140)},   // morado
+            {"sub_yaren_filtros",   cv::Scalar(150, 150,  60)},   // verde azulado
+            {"sub_yaren_radio",     cv::Scalar( 60,  60, 200)},   // rojo
+            {"sub_modo_prueba",     cv::Scalar( 65,  95, 140)},   // cafe
+            {"sub_motores",         cv::Scalar( 60,  60, 200)},   // rojo
+            {"sub_brazo_izq",       cv::Scalar( 60,  60, 200)},   // rojo
+            {"sub_brazo_der",       cv::Scalar( 60,  60, 200)},   // rojo
+            {"sub_base",            cv::Scalar( 60,  60, 200)},   // rojo
+            {"sub_cabeza",          cv::Scalar( 60,  60, 200)}    // rojo
+        };
+        cv::Scalar nAcc(180, 110, 50);
+        { auto nit = kNeutral.find(level.key); if (nit != kNeutral.end()) nAcc = nit->second; }
+        cv::Scalar titleColor = isRoot ? cv::Scalar(180, 110, 50) : nAcc;
         {
             int bl = 0;
             cv::Size tsz = txu::size(title, cv::FONT_HERSHEY_DUPLEX, 0.6, 1, &bl);
@@ -5568,35 +5414,47 @@ private:
             drawPill(frame, cv::Rect((W - pw) / 2, 10, pw, 34), title, titleColor, false, 0.6);
         }
 
-        // --- Layout (mismo calculo que antes + pequeno arco en las laterales) ---
-        int COLS = (N <= 2) ? 2 : 3, ROWS = (N + COLS - 1) / COLS;
-        int CW = std::min((N <= 2) ? 340 : 220, W / COLS - 20);
-        int CH = std::min((N <= 2) ? 260 : 230, (H - 130 - (ROWS - 1) * 10) / std::max(ROWS, 1));
-        int G = 10, TH = ROWS * CH + (ROWS - 1) * G, SY = 54 + ((H - 130) - TH) / 2;
-        for (int i = 0; i < N; ++i) {
-            int row = i / COLS, col = i % COLS, rowItems = std::min(COLS, N - row * COLS);
+        // --- Paginacion: maximo kSubPerPage opciones por vista ---
+        const int pages = std::max(1, (N + kSubPerPage - 1) / kSubPerPage);
+        int& page = subPages_[level.key];
+        page = std::max(0, std::min(page, pages - 1));
+        const int off   = page * kSubPerPage;
+        const int pageN = std::max(0, std::min(kSubPerPage, N - off));
+        for (auto& it : level.items) it.rect = {0, 0, 0, 0};   // fuera de pagina = no clickeable
+
+        // --- Layout unico = el de FILTROS: 3 columnas, tarjetas de 220 px ---
+        // (la ultima pagina con 1-2 items usa el mismo tamano y queda centrada)
+        const int COLS = 3;
+        const int ROWS = 1;
+        const int CW = std::min(220, W / COLS - 20);
+        const int CH = std::min(230, (H - 130 - (ROWS - 1) * 10) / ROWS);
+        const int G = 10, TH = ROWS * CH + (ROWS - 1) * G, SY = 54 + ((H - 130) - TH) / 2;
+        for (int k = 0; k < pageN; ++k) {
+            int row = k / COLS, col = k % COLS, rowItems = std::min(COLS, pageN - row * COLS);
             int rowW = rowItems * CW + (rowItems - 1) * G, rowSX = (W - rowW) / 2;
             int arc = (rowItems >= 3 && (col == 0 || col == 2)) ? 14 : 0;
-            level.items[i].rect = { rowSX + col * (CW + G), SY + row * (CH + G) + arc, CW, CH };
+            level.items[off + k].rect = { rowSX + col * (CW + G), SY + row * (CH + G) + arc, CW, CH };
         }
 
-        // --- Animacion de hover + dibujo (la tarjeta enfocada va al final, encima) ---
-        for (int i = 0; i < N && i < 16; ++i) {
+        // --- Animacion de hover + dibujo (la enfocada va al final, encima) ---
+        for (int k = 0; k < pageN && k < 16; ++k) {
+            int i = off + k;
             bool blocked = (level.items[i].id == "yaren_chat") && !chatAvailable_;
             float target = (i == hi && !blocked) ? 1.f : 0.f;
-            menuHoverAnim_[i] += (target - menuHoverAnim_[i]) * 0.25f;
+            menuHoverAnim_[k] += (target - menuHoverAnim_[k]) * 0.25f;
         }
-        for (int i = 0; i < N; ++i)
+        for (int k = 0; k < pageN; ++k) {
+            int i = off + k;
             if (i != hi) drawCard(frame, level.items[i], level.items[i].rect,
-                                  menuHoverAnim_[std::min(i, 15)], level.items[i].hasSubMenu, t, i);
-        if (hi >= 0 && hi < N)
+                                  menuHoverAnim_[std::min(k, 15)], level.items[i].hasSubMenu, t, i);
+        }
+        if (hi >= off && hi < off + pageN)
             drawCard(frame, level.items[hi], level.items[hi].rect,
-                     menuHoverAnim_[std::min(hi, 15)], level.items[hi].hasSubMenu, t, hi);
+                     menuHoverAnim_[std::min(hi - off, 15)], level.items[hi].hasSubMenu, t, hi);
 
         // --- Botones inferiores (pildoras) ---
         const int btnH = 40, btnY = H - 58, gap = 16, stopW = 300, navW = 150;
         bool hasStop = (activeMode == "yaren_chat" ||
-                        activeMode == "yaren_chat_local" ||
                         activeMode == "yaren_dice_sin_ayuda" ||
                         activeMode == "yaren_dice_sesion");
         bool hasBack = (navStack.size() > 1);
@@ -5631,6 +5489,37 @@ private:
         exitButtonRect = { cx, btnY, navW, btnH };
         drawPill(frame, exitButtonRect, isEnglish ? "EXIT" : "SALIR",
                  cv::Scalar(150, 150, 160), hoveredExit.load());
+
+        // --- Controles de paginacion (esquinas inferiores + puntos) ---
+        subPrevBtn_ = cv::Rect(0, 0, 0, 0);
+        subNextBtn_ = cv::Rect(0, 0, 0, 0);
+        if (pages > 1) {
+            const cv::Scalar wh(255, 255, 255);
+            const cv::Scalar acc = nAcc;
+            auto pageArrow = [&](cv::Point c, bool left, bool enabled, bool hov) {
+                const int Rr = 26;
+                cv::circle(frame, cv::Point(c.x, c.y + 3), Rr, cv::Scalar(205, 218, 222), cv::FILLED, cv::LINE_AA);
+                cv::circle(frame, c, Rr, (hov && enabled) ? acc : wh, cv::FILLED, cv::LINE_AA);
+                cv::circle(frame, c, Rr, enabled ? acc : cv::Scalar(215, 215, 215), 4, cv::LINE_AA);
+                const int sg = left ? -1 : 1;
+                std::vector<cv::Point> ch = { {c.x - sg * 5, c.y - 11}, {c.x + sg * 7, c.y}, {c.x - sg * 5, c.y + 11} };
+                cv::polylines(frame, ch, false,
+                              (hov && enabled) ? wh : (enabled ? acc * 0.8 : cv::Scalar(200, 200, 200)),
+                              5, cv::LINE_AA);
+            };
+            const cv::Point pc(40, H - 38), nc(W - 40, H - 38);
+            const bool canPrev = page > 0, canNext = page < pages - 1;
+            pageArrow(pc, true,  canPrev, hoveredSubPrev_);
+            pageArrow(nc, false, canNext, hoveredSubNext_);
+            if (canPrev) subPrevBtn_ = cv::Rect(pc.x - 32, pc.y - 32, 64, 64);
+            if (canNext) subNextBtn_ = cv::Rect(nc.x - 32, nc.y - 32, 64, 64);
+            const int dotGap = 18, dx0 = W / 2 - (pages - 1) * dotGap / 2;
+            for (int p2 = 0; p2 < pages; ++p2)
+                cv::circle(frame, cv::Point(dx0 + p2 * dotGap, H - 70), p2 == page ? 7 : 5,
+                           p2 == page ? acc : cv::Scalar(205, 210, 214), cv::FILLED, cv::LINE_AA);
+        } else {
+            hoveredSubPrev_ = hoveredSubNext_ = false;
+        }
     }
 
     void renderFaceOverlay(cv::Mat& frame) {
@@ -5690,8 +5579,6 @@ private:
         int R = Rb + (int)(hv * 8);
         cv::Point c(base.x + base.width / 2, base.y + 6 + Rb + bob - (int)(hv * 4));
 
-        cv::ellipse(frame, cv::Point(c.x, base.y + 6 + 2 * Rb + 8), cv::Size((int)(Rb * 0.8), 6),
-                    0, 0, 360, cv::Scalar(205, 218, 222), cv::FILLED, cv::LINE_AA);
         kidDisc(frame, c, R, a, item.iconKey, hv, blocked);
         if (!blocked) kidBadge(frame, c, R, a, arrow);
 
@@ -5701,10 +5588,9 @@ private:
             return sc;
         };
         int bl = 0;
-        double ls = fitScale(item.label, cv::FONT_HERSHEY_DUPLEX, 0.65, 0.32, base.width - 12);
+        double ls = 0.60;
         cv::Size lsz = txu::size(item.label, cv::FONT_HERSHEY_DUPLEX, ls, 1, &bl);
-        txu::put(frame, item.label, cv::Point(base.x + (base.width - lsz.width) / 2, base.y + base.height - 12),
-                    cv::FONT_HERSHEY_DUPLEX, ls, ink, 1, cv::LINE_AA);
+        prettyLabel(frame, item.label, cv::Point(base.x + (base.width - lsz.width) / 2, base.y + base.height - 12), ls, a * 0.5, hv);
     }
 
     cv::Mat getFaceFrame() {
@@ -5935,57 +5821,147 @@ private:
         }
     }
 
-    bool renderIntroVideo(cv::Mat& frame) {
-        if (!introVideo.isOpened()) return false;
-        const int W = frame.cols, H = frame.rows;
-        const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - introStart).count();
-        // Unos 3 s antes del final, abrir el siguiente video en un hilo aparte
-        if (introDur_ > 0.0 && el > introDur_ - 3.0 &&
-            !introNextReady_.load() && !introNextLoading_.exchange(true)) {
-            std::thread([this]() {
-                introNext_.open(introPath_);
-                introNextReady_ = introNext_.isOpened();
-                introNextLoading_ = false;
-            }).detach();
-        }
+    // ====== Intro seamless: hilo decodificador + cola + cache del inicio en RAM ======
+    struct IntroFrame { cv::Mat img; bool loopStart { false }; };
+    static constexpr size_t kIntroQMax = 75;   // ~2.5 s de buffer a 30 fps
+    static constexpr size_t kIntroHead = 45;   // frames iniciales cacheados en RAM
 
-        const long target = (long)(el * introFps);
-        bool advanced = false;
-        int guard = 0;
-        while (introIdx < target && guard++ < 8) {
-            if (!introVideo.grab()) {
-                // Fin: cambiar al video ya abierto (sin seek, sin espera)
-                if (introNextReady_.load()) {
-                    introVideo.release();
-                    introVideo = std::move(introNext_);
-                    introNext_ = cv::VideoCapture();
-                    introNextReady_ = false;
-                } else {
-                    introVideo.release();
-                    introVideo.open(introPath_);
-                }
-                introStart = std::chrono::steady_clock::now();
-                introIdx = -1;
-                std::thread([this]() {
-                    std::lock_guard<std::mutex> lk(audioMutex_);
-                    if (introMusic) Mix_PlayMusic(introMusic, -1);
-                }).detach();
-                break;   // este ciclo se queda con el ultimo introFrame
-            }
-            ++introIdx; advanced = true;
+    void startIntroDecoder() {
+        introRun_ = false;
+        { std::lock_guard<std::mutex> lk(introQMutex_); }
+        introQCv_.notify_all();
+        if (introThread_.joinable()) introThread_.join();
+        { std::lock_guard<std::mutex> lk(introQMutex_); introQ_.clear(); }
+        introFrame.release();
+        introOpened_ = false;
+        introFramesShown_ = 0;
+        introNextDue_ = std::chrono::steady_clock::time_point();
+        introRun_ = true;
+        introThread_ = std::thread(&VideoSynchronizer::introDecodeLoop, this);
+    }
+
+    void stopIntroDecoder() {
+        introRun_ = false;
+        { std::lock_guard<std::mutex> lk(introQMutex_); }   // evita lost-wakeup
+        introQCv_.notify_all();
+        introOpened_ = false;
+        introFrame.release();
+    }
+
+    void introDecodeLoop() {
+        introDecodeBody();
+        std::lock_guard<std::mutex> lk(introQMutex_);
+        introQ_.clear();
+    }
+
+    void introDecodeBody() {
+        cv::VideoCapture cap(introPath_);
+        if (!cap.isOpened()) {
+            RCLCPP_WARN(get_logger(), "No se pudo abrir el video de intro: %s", introPath_.c_str());
+            return;
         }
-        if (advanced) introVideo.retrieve(introFrame);
+        double fps = cap.get(cv::CAP_PROP_FPS);
+        if (fps < 1.0 || fps > 120.0) fps = 30.0;
+        introFps = fps;
+
+        auto prep = [](const cv::Mat& raw) {
+            cv::Mat bgr;
+            if (raw.channels() == 4)      cv::cvtColor(raw, bgr, cv::COLOR_BGRA2BGR);
+            else if (raw.channels() == 1) cv::cvtColor(raw, bgr, cv::COLOR_GRAY2BGR);
+            else                          bgr = raw;
+            const double k = std::min(800.0 / bgr.cols, 480.0 / bgr.rows);
+            cv::Mat rs;
+            cv::resize(bgr, rs, cv::Size(std::max(1, (int)(bgr.cols * k)),
+                                         std::max(1, (int)(bgr.rows * k))), 0, 0, cv::INTER_AREA);
+            return rs;
+        };
+        auto push = [&](const IntroFrame& f) -> bool {
+            std::unique_lock<std::mutex> lk(introQMutex_);
+            introQCv_.wait(lk, [&] { return introQ_.size() < kIntroQMax || !introRun_.load(); });
+            if (!introRun_.load()) return false;
+            introQ_.push_back(f);
+            lk.unlock();
+            introOpened_ = true;
+            return true;
+        };
+        auto rewindAndSkip = [&]() {
+            bool ok = cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+            size_t skipped = 0;
+            if (ok) for (; skipped < kIntroHead && introRun_.load() && cap.grab(); ++skipped) {}
+            if (!ok || skipped < kIntroHead) {          // el seek no sirvio: reabrir (en segundo plano)
+                cap.release();
+                cap.open(introPath_);
+                for (skipped = 0; skipped < kIntroHead && introRun_.load() && cap.grab(); ++skipped) {}
+            }
+        };
+
+        std::vector<IntroFrame> head;
+        head.reserve(kIntroHead);
+        bool firstPass = true, first = true;
+        cv::Mat raw;
+        while (introRun_.load()) {
+            if (cap.read(raw) && !raw.empty()) {
+                IntroFrame f;
+                f.img = prep(raw);
+                f.loopStart = first;
+                first = false;
+                if (firstPass && head.size() < kIntroHead) head.push_back(f);
+                if (!push(f)) return;
+                continue;
+            }
+            // ---- fin del video ----
+            if (head.empty()) return;
+            if (firstPass && head.size() < kIntroHead) {
+                // video corto: cabe entero en RAM, se repite desde memoria
+                while (introRun_.load())
+                    for (const auto& h : head) if (!push(h)) return;
+                return;
+            }
+            firstPass = false;
+            for (const auto& h : head) if (!push(h)) return;   // el inicio se muestra al instante
+            rewindAndSkip();                                   // mientras tanto se rebobina con 2.5 s de colchon
+            first = false;
+        }
+    }
+
+    bool renderIntroVideo(cv::Mat& frame) {
+        if (!introRun_.load() || !introOpened_.load()) return false;
+        const int W = frame.cols, H = frame.rows;
+        const auto now  = std::chrono::steady_clock::now();
+        const auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                              std::chrono::duration<double>(1.0 / introFps));
+
+        if (introFrame.empty() || now >= introNextDue_) {
+            IntroFrame f;
+            bool got = false;
+            {
+                std::lock_guard<std::mutex> lk(introQMutex_);
+                if (!introQ_.empty()) { f = std::move(introQ_.front()); introQ_.pop_front(); got = true; }
+            }
+            if (got) {
+                introQCv_.notify_one();
+                if (f.loopStart && introFramesShown_ > 0) {     // nueva vuelta: resincroniza el audio
+                    std::thread([this]() {
+                        std::lock_guard<std::mutex> lk(audioMutex_);
+                        if (introMusic) Mix_PlayMusic(introMusic, -1);
+                    }).detach();
+                }
+                ++introFramesShown_;
+                introFrame = f.img;
+                if (introNextDue_.time_since_epoch().count() == 0 || now - introNextDue_ > 5 * step)
+                    introNextDue_ = now;
+                introNextDue_ += step;
+            }
+        }
 
         frame.setTo(cv::Scalar(0, 0, 0));
         if (!introFrame.empty()) {
             cv::Mat src = introFrame;
-            if (src.channels() == 4) cv::cvtColor(src, src, cv::COLOR_BGRA2BGR);
-            else if (src.channels() == 1) cv::cvtColor(src, src, cv::COLOR_GRAY2BGR);
-            double k = std::min((double)W / src.cols, (double)H / src.rows);
-            int w = std::max(1, (int)(src.cols * k)), h = std::max(1, (int)(src.rows * k));
-            cv::Mat rs;
-            cv::resize(src, rs, cv::Size(w, h), 0, 0, cv::INTER_AREA);
-            rs.copyTo(frame(cv::Rect((W - w) / 2, (H - h) / 2, w, h)));
+            if (src.cols > W || src.rows > H) {
+                double k = std::min((double)W / src.cols, (double)H / src.rows);
+                cv::resize(src, src, cv::Size(std::max(1, (int)(src.cols * k)), std::max(1, (int)(src.rows * k))), 0, 0, cv::INTER_AREA);
+            }
+            src.copyTo(frame(cv::Rect((W - src.cols) / 2, (H - src.rows) / 2, src.cols, src.rows)));
         }
 
         // franja oscura abajo para que se lea la barra
@@ -6817,7 +6793,7 @@ private:
                 frame = cv::Mat(cv::Size(800, 480), CV_8UC3);
                 if (!renderIntroVideo(frame)) renderLoadingScreen(frame);
             } else {
-                if (introVideo.isOpened()) introVideo.release();
+                if (introRun_.load()) stopIntroDecoder();
                 frame = getFaceFrame();
             }
 
@@ -7053,7 +7029,7 @@ private:
     std::atomic<bool> running    { false };
     std::atomic<bool> configuring{true};
     std::atomic<int>  configProgress{0};
-    static constexpr int configTotal{20};
+    static constexpr int configTotal{16};
     std::string       configStatus{"Iniciando sistema..."};
     std::mutex        configStatusMutex;
     std::atomic<int>  hoveredItem { -1 };
@@ -7066,50 +7042,274 @@ private:
     std::map<std::string, rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr> lifecycle_clients_;
     std::map<std::string, rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr> lifecycle_state_clients_;
     
-    uint8_t get_lifecycle_state(const std::string& node_name) {
-    std::string service = "/" + node_name + "/get_state";
-    if (lifecycle_state_clients_.find(node_name) == lifecycle_state_clients_.end()) {
-        lifecycle_state_clients_[node_name] =
-            this->create_client<lifecycle_msgs::srv::GetState>(service);
+    // ====================== Lifecycle (cliente persistente, sin deadlock) ======================
+    using ChangeState = lifecycle_msgs::srv::ChangeState;
+    using GetState    = lifecycle_msgs::srv::GetState;
+    rclcpp::CallbackGroup::SharedPtr lcGroup_;
+    std::mutex lcMutex_;                       // protege los mapas de clientes (multi-hilo)
+
+    rclcpp::Client<GetState>::SharedPtr lcStateClient(const std::string& name) {
+        std::lock_guard<std::mutex> lk(lcMutex_);
+        auto it = lifecycle_state_clients_.find(name);
+        if (it != lifecycle_state_clients_.end()) return it->second;
+        auto c = this->create_client<GetState>("/" + name + "/get_state", rmw_qos_profile_services_default, lcGroup_);
+        lifecycle_state_clients_[name] = c;
+        return c;
     }
-    auto& client = lifecycle_state_clients_[node_name];
-    if (!client->wait_for_service(std::chrono::milliseconds(2000)))
+    rclcpp::Client<ChangeState>::SharedPtr lcChangeClient(const std::string& name) {
+        std::lock_guard<std::mutex> lk(lcMutex_);
+        auto it = lifecycle_clients_.find(name);
+        if (it != lifecycle_clients_.end()) return it->second;
+        auto c = this->create_client<ChangeState>("/" + name + "/change_state", rmw_qos_profile_services_default, lcGroup_);
+        lifecycle_clients_[name] = c;
+        return c;
+    }
+
+    // Espera un future en porciones de 250 ms; aborta si el nodo se esta cerrando.
+    template<typename FutT>
+    bool waitFut(FutT& fut, int timeoutMs) {
+        const auto t0 = std::chrono::steady_clock::now();
+        while (running.load() && rclcpp::ok()) {
+            if (fut.wait_for(std::chrono::milliseconds(250)) == std::future_status::ready) return true;
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t0).count() >= timeoutMs) return false;
+        }
+        return false;
+    }
+
+    // 0 = no disponible/desconocido, 1 = unconfigured, 2 = inactive, 3 = active
+    uint8_t get_lifecycle_state(const std::string& node_name, int timeoutMs = 2000) {
+        auto client = lcStateClient(node_name);
+        if (!client->wait_for_service(std::chrono::milliseconds(timeoutMs))) return 0;
+        auto fut = client->async_send_request(std::make_shared<GetState::Request>());
+        if (waitFut(fut, timeoutMs)) return fut.get()->current_state.id;
+        client->remove_pending_request(fut.request_id);
         return 0;
-    auto future = client->async_send_request(
-        std::make_shared<lifecycle_msgs::srv::GetState::Request>());
-    if (future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready)
-        return future.get()->current_state.id;
-    return 0;
-}
+    }
+
+    // timeoutMs <= 0: dispara y sigue (no bloquea; seguro bajo navMutex).
+    // timeoutMs  > 0: espera UNA sola respuesta (sin reintentos duplicados).
+    bool change_lifecycle_state(const std::string& node_name, uint8_t transition_id, int timeoutMs = 0) {
+        auto client = lcChangeClient(node_name);
+        auto req = std::make_shared<ChangeState::Request>();
+        req->transition.id = transition_id;
+        if (timeoutMs <= 0) {
+            if (!client->service_is_ready()) {
+                RCLCPP_WARN(this->get_logger(), "Servicio Lifecycle no disponible para: %s", node_name.c_str());
+                return false;
+            }
+            client->async_send_request(req, [](rclcpp::Client<ChangeState>::SharedFuture) {});
+            return true;
+        }
+        if (!client->wait_for_service(std::chrono::milliseconds(3000))) {
+            RCLCPP_WARN(this->get_logger(), "Servicio Lifecycle no disponible para: %s", node_name.c_str());
+            return false;
+        }
+        auto fut = client->async_send_request(req);
+        if (waitFut(fut, timeoutMs)) return fut.get()->success;
+        client->remove_pending_request(fut.request_id);
+        RCLCPP_WARN(this->get_logger(), "Timeout (%d ms) en transicion %d de %s",
+                    timeoutMs, (int)transition_id, node_name.c_str());
+        return false;
+    }
 
     void ensure_lifecycle_active(const std::string& node_name) {
-        uint8_t state = get_lifecycle_state(node_name);
-        if (state == 1 || state == 0) {
-            change_lifecycle_state(node_name, lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
-            std::this_thread::sleep_for(std::chrono::seconds(3)); // No congelará la cara porque estará en un hilo
+        const uint8_t st = get_lifecycle_state(node_name, 3000);
+        if (st == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) return;
+        if (st == lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED || st == 0) {
+            if (!change_lifecycle_state(node_name, lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE, 120000)) return;
         }
-        change_lifecycle_state(node_name, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE);
+        change_lifecycle_state(node_name, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE, 30000);
     }
 
-    void change_lifecycle_state(const std::string& node_name, uint8_t transition_id) {
-        std::string service = "/" + node_name + "/change_state";
-        if (lifecycle_clients_.find(node_name) == lifecycle_clients_.end()) {
-            lifecycle_clients_[node_name] = this->create_client<lifecycle_msgs::srv::ChangeState>(service);
-        }
-        auto& client = lifecycle_clients_[node_name];
-        if (!client->wait_for_service(std::chrono::milliseconds(1000))) {
-            RCLCPP_WARN(this->get_logger(), "Servicio Lifecycle no disponible para: %s", node_name.c_str());
+    // ====================== Boot progresivo ======================
+    struct BootEnv { std::string ws, setup, venv, python; bool ok { false }; } bootEnv_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr bootStatePub_;
+    std::thread bootThread_;
+
+    void publishBootState(const std::string& st) {
+        if (!bootStatePub_) return;
+        std_msgs::msg::String m; m.data = st;
+        bootStatePub_->publish(m);
+    }
+    void setBootStatus(const std::string& st) {
+        std::lock_guard<std::mutex> lk(configStatusMutex);
+        configStatus = st;
+    }
+    std::string bootCmd(const std::string& body, bool useVenv = true) const {
+        return "bash -c 'source " + bootEnv_.setup + (useVenv ? " && source " + bootEnv_.venv : std::string()) +
+               " && " + body + "' &";
+    }
+    void bootLaunch(const std::string& body, bool useVenv = true, int staggerMs = 0) {
+        std::system(bootCmd(body, useVenv).c_str());
+        if (staggerMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(staggerMs));
+    }
+
+    // STUB: nueva implementacion de IA offline pendiente (el equivalente C++ de "async def ... pass")
+    std::future<void> initializeOfflineAI() {
+        // TODO: Nueva implementacion pendiente
+        std::promise<void> p;
+        p.set_value();
+        return p.get_future();
+    }
+
+    // FASE 1 (inmediata): entorno, estado global, conexiones ligeras, procesos livianos.
+    void bootLightPhase() {
+        rclcpp::QoS bootQos(1);
+        bootQos.transient_local();
+        bootStatePub_ = this->create_publisher<std_msgs::msg::String>("/yaren/boot_state", bootQos);
+
+        const char* home = std::getenv("HOME");
+        if (!home) {
+            RCLCPP_ERROR(get_logger(), "[ BOOT ] HOME no definido.");
+            publishBootState("error:no_home");
             return;
         }
-        auto request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
-        request->transition.id = transition_id;
-        client->async_send_request(request);
+        bootEnv_.ws     = std::string(home) + "/robotis_ws";
+        bootEnv_.setup  = bootEnv_.ws + "/install/setup.bash";
+        bootEnv_.venv   = bootEnv_.ws + "/venv_yaren/bin/activate";
+        bootEnv_.python = bootEnv_.ws + "/venv_yaren/bin/python3";
+        bootEnv_.ok = true;
+
+        setBootStatus(isEnglish ? "Starting core..." : "Iniciando nucleo...");
+
+        // Conexiones ligeras: clientes lifecycle creados una sola vez (antes de que haya hilos concurrentes)
+        static const char* const kLc[] = {
+            "llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node", "detector",
+            "face_filter_node", "body_points_detector_node", "body_points_detector_node_visual",
+            "yaren_speaker_node", "virtual_background_node", "filtro_animales", "face_landmark_publisher",
+            "csi_cam_node", "paint_node", "memoria_node", "dance_game_node", "palabras_node",
+            "body_points_mimic_detector_node", "body_tracker_node", "body_trajectory_controller", "mimic_gate_node"};
+        for (const char* n : kLc) { lcChangeClient(n); lcStateClient(n); }
+
+        std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|paint_node|palabras_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+
+        const std::string py     = bootEnv_.python;
+        const std::string wake   = bootEnv_.ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/wake_word_node.py";
+        const std::string voice  = bootEnv_.ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/yaren_voice_menu.py";
+        const std::string lang   = bootEnv_.ws + "/src/YAREN2/yaren_idioma/yaren_idioma/gestor_idioma.py";
+        const std::string bridge = bootEnv_.ws + "/src/YAREN2/yaren_face_display/scripts/ws_bridge.py";
+
+        bootLaunch(py + " " + wake,  false);
+        bootLaunch(py + " " + voice, false);
+        bootLaunch(py + " " + lang,  false);
+        std::system(("bash -c 'source " + bootEnv_.setup + " && python3 " + bridge +
+                     " --ros-args -p allow_poweroff:=true' > /tmp/ws_bridge.log 2>&1 &").c_str());
+        bootLaunch("ros2 run camara_usb_csi csi_cam_pub.py", false);
+
+        setBootStatus(isEnglish ? "Core active - loading modules..." : "Nucleo activo - cargando modulos...");
+        publishBootState("light_ready");
+        RCLCPP_INFO(get_logger(), "[ BOOT ] Fase 1 completa: nucleo activo.");
+    }
+
+    // FASE 2 (asincrona): IA, mimic/vision y modelos, por grupos y escalonado.
+    void bootHeavyPhase() {
+        if (!bootEnv_.ok) {
+            configuring = false;
+            return;
+        }
+        // Promesa: la comprobacion de internet corre en paralelo mientras se lanzan los procesos.
+        std::future<bool> netFut = std::async(std::launch::async, [this]() { return checkChatAvailable(); });
+
+        auto configure_node = [&](const std::string& name, const std::string& display) {
+            if (!running.load()) return;
+            setBootStatus("Cargando " + display + "...");
+            // Esperar a que el proceso exponga su servicio (hasta ~60 s). Una sola peticion configure, sin reintentos.
+            uint8_t st = 0;
+            for (int i = 0; i < 30 && running.load() && st == 0; ++i) st = get_lifecycle_state(name, 2000);
+            bool ok = (st == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE ||
+                       st == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+            if (st == lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED)
+                ok = change_lifecycle_state(name, lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE, 120000);
+            if (ok) RCLCPP_INFO(get_logger(), "[ NODE ] ✓ %s configurado.", name.c_str());
+            else    RCLCPP_ERROR(get_logger(), "[ NODE ] ✗ No se pudo configurar: %s", name.c_str());
+            configProgress++;
+        };
+        const int ST = 300;   // ms entre lanzamientos pesados (evita inanicion de CPU)
+
+        // --- Grupo A: IA en la nube ---
+        setBootStatus("Cargando Inteligencia Artificial...");
+        bootLaunch("ros2 run yaren_chat llm_lifecycle_node.py", true, ST);
+        bootLaunch("ros2 run yaren_chat stt_lifecycle_node.py", true, ST);
+        bootLaunch("ros2 run yaren_chat tts_lifecycle_node.py", true, ST);
+        initializeOfflineAI().wait();   // stub: IA offline pendiente
+
+        // Internet + WiFi
+        chatAvailable_ = netFut.get();
+        if (!chatAvailable_.load() && running.load()) {
+            RCLCPP_WARN(get_logger(), "[ BOOT ] Sin internet. Mostrando configuracion WiFi...");
+            setBootStatus(isEnglish ? "No internet - configure WiFi..." : "Sin internet - configura el WiFi...");
+            wifiSetup_.refresh();
+            { std::lock_guard<std::mutex> lk(modeFlagMutex); showWifiSetup_ = true; }
+            while (running.load()) {
+                bool still;
+                { std::lock_guard<std::mutex> lk(modeFlagMutex); still = showWifiSetup_; }
+                if (!still) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+            chatAvailable_ = checkChatAvailable();
+            RCLCPP_INFO(get_logger(), "[ BOOT ] Tras WiFi setup - internet: %s", chatAvailable_.load() ? "SI" : "NO");
+        }
+        configure_node("llm_lifecycle_node", "Inteligencia Artificial (Cloud)");
+        configure_node("stt_lifecycle_node", "Reconocimiento de Voz (Cloud)");
+        configure_node("tts_lifecycle_node", "Sintesis de Voz (Cloud)");
+
+        // --- Grupo B: vision / mimic / filtros / dice ---
+        bootLaunch("ros2 run yaren_emotions detect_emotion.py", true, ST);
+        bootLaunch("ros2 run yaren_filters face_filter_node", true, ST);
+        bootLaunch("ros2 run yaren_filters animal_filter_mask", true, ST);
+        bootLaunch("ros2 run yaren_filters face_landmark_detector.py", true, ST);
+        bootLaunch("ros2 run yaren_filters fondo_virtual.py", true, ST);
+        bootLaunch("ros2 run yaren_dice body_landmarks.py", true, ST);
+        bootLaunch("ros2 run yaren_dice body_landmarks_visual.py", true, ST);
+        bootLaunch("ros2 run yaren_dice speaker_node.py", true, ST);
+        bootLaunch("ros2 run yaren_arm_mimic body_tracker_node", false, ST);
+        bootLaunch("ros2 run yaren_arm_mimic yaren_controller", false, ST);
+        bootLaunch("ros2 run yaren_arm_mimic mimic_gate_node.py", true, ST);
+        bootLaunch("ros2 run yaren_arm_mimic body_points_detector.py", true, ST);
+        configure_node("csi_cam_node",                     "Camara Principal");
+        configure_node("detector",                         "Deteccion de Emociones");
+        configure_node("face_filter_node",                 "Filtros de Cara");
+        configure_node("body_points_detector_node",        "Deteccion Corporal");
+        configure_node("body_points_detector_node_visual", "Deteccion Corporal con Ayuda");
+        configure_node("yaren_speaker_node",               "Altavoz");
+        configure_node("virtual_background_node",          "Fondo Virtual");
+        configure_node("filtro_animales",                  "Filtro de Animales");
+        configure_node("face_landmark_publisher",          "Landmarks Faciales");
+
+        // --- Grupo C: juegos ---
+        bootLaunch("ros2 run yaren_juegos memoria_node", true, ST);
+        bootLaunch("ros2 run yaren_juegos dance_game_node", true, ST);
+        bootLaunch("python3 " + bootEnv_.ws + "/src/YAREN2/yaren_paint/yaren_paint/paint_node.py", true, ST);
+        bootLaunch("ros2 run yaren_juegos palabras_node", true, ST);
+        configure_node("paint_node",      "Yaren Paint");
+        configure_node("memoria_node",    "Juego de Memoria");
+        configure_node("dance_game_node", "Juego de Baile");
+        configure_node("palabras_node",   "Juego de palabras");
+
+        if (!running.load()) return;
+        setBootStatus(isEnglish ? "Yaren is ready!" : "Yaren listo!");
+        configProgress = configTotal;
+        publishBootState("ready");
+        RCLCPP_INFO(get_logger(), "[ BOOT ] Fase 2 completa. Iniciando modo interactivo.");
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        resetIdleTimer();
+        {
+            std::lock_guard<std::mutex> lk(audioMutex_);
+            if (bootMusic)  { Mix_HaltMusic(); Mix_FreeMusic(bootMusic);  bootMusic  = nullptr; }
+            if (introMusic) { Mix_HaltMusic(); Mix_FreeMusic(introMusic); introMusic = nullptr; }
+        }
+        configuring = false;
     }
 
     cv::Rect stopButtonRect {0,0,0,0};
     cv::Rect backButtonRect {0,0,0,0};
     cv::Rect exitButtonRect {0,0,0,0};
     std::chrono::system_clock::time_point lastBlinkTime, blinkStartTime;
+    static constexpr int kSubPerPage = 3;           // maximo de opciones por vista
+    std::map<std::string, int> subPages_;          // pagina actual por submenu (key)
+    cv::Rect subPrevBtn_ {0,0,0,0}, subNextBtn_ {0,0,0,0};
+    bool hoveredSubPrev_ { false }, hoveredSubNext_ { false };
     std::vector<MenuItem>           rootMenuItems;
     std::map<std::string, NavLevel> subMenuMap;
     std::vector<NavLevel>           navStack;
@@ -7152,20 +7352,21 @@ private:
     std::vector<std::string> idleMusicPaths;
     std::vector<std::string> bootMusicPaths;
     Mix_Music* bootMusic { nullptr };
-    // Intro en video
-    cv::VideoCapture introVideo;
+    // Intro en video (decodificado en un hilo aparte)
     cv::Mat introFrame;
     Mix_Music* introMusic { nullptr };
     bool   introAudioOk_ { false };
     double introFps { 30.0 };
-    long   introIdx { -1 };
     float  introBarShown_ { 0.f };
-    std::chrono::steady_clock::time_point introStart;
-    std::string       introPath_;
-    cv::VideoCapture  introNext_;
-    std::atomic<bool> introNextReady_{false};
-    std::atomic<bool> introNextLoading_{false};
-    double            introDur_{0.0};
+    std::string               introPath_;
+    std::thread               introThread_;
+    std::atomic<bool>         introRun_ { false };
+    std::atomic<bool>         introOpened_ { false };
+    std::mutex                introQMutex_;
+    std::condition_variable   introQCv_;
+    std::deque<IntroFrame>    introQ_;
+    long                      introFramesShown_ { 0 };
+    std::chrono::steady_clock::time_point introNextDue_ {};
     // Lip sync
     cv::Mat mouthSprites_[9];          // 0-8 PNG de boca
     std::atomic<int>  currentVisemeIdx_  { 0 };
@@ -7182,12 +7383,20 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<VideoSynchronizer>();
     node->startRenderThread();
+
+    // Executor multihilo en su propio hilo: las respuestas de servicios nunca esperan
+    // a que el hilo principal (GUI/waitKey) termine un ciclo.
+    rclcpp::executors::MultiThreadedExecutor exec(rclcpp::ExecutorOptions(), 4);
+    exec.add_node(node);
+    std::thread spinner([&exec]() { exec.spin(); });
+
     rclcpp::Rate rate(30);
     while (rclcpp::ok()) {
-        rclcpp::spin_some(node);
         node->drawWindow();
         rate.sleep();
     }
+    exec.cancel();
+    if (spinner.joinable()) spinner.join();
     rclcpp::shutdown();
     return 0;
 }
