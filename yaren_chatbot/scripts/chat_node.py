@@ -32,6 +32,8 @@ class ChatNode(Node):
         self.kb = KB(self.get_parameter("db_path").value, self.get_parameter("threshold").value)
         self.dlg = Dialogue(self.get_parameter("flow_path").value, self.kb,
                             self.get_parameter("session_timeout").value)
+        self.create_subscription(String, "stt_meta",
+            lambda m: self.dlg.set_meta(json.loads(m.data)), 10)
         self.pub = self.create_publisher(String, self.get_parameter("out_topic").value, 10)
         self.pub_hint = self.create_publisher(String, self.get_parameter("hint_topic").value, 10)
         self.pub_online = self.create_publisher(String, self.get_parameter("online_topic").value, 10)

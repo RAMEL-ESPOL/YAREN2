@@ -94,115 +94,93 @@ class TTSLifecycleNode(LifecycleNode):
         self._action_client = ActionClient(self, ProcessResponse, '/response_llama')
         self.audio_queue = queue.Queue()
         self.tts_done.clear()
-        # ← worker NO se arranca aquí
-        return TransitionCallbackReturn.SUCCESS
-
-    def process_input_person(self, msg):
-        self.text_person = msg.text
-        self.get_logger().info(f"🎤 Texto recibido: {self.text_person}")
-        self.tts_done.clear()
-        self.audio_queue = queue.Queue()   # ← queue limpia para este turno
-
-        # Arrancar worker fresco para este turno
-        threading.Thread(target=self._audio_worker, daemon=True).start()
-        # Arrancar pipeline LLM
-        threading.Thread(target=self._send_goal_and_receive_chunks, daemon=True).start()
-    def _cb_speak_direct(self, msg):
-        self.get_logger().info(f"🗣️ TTS Directo recibido: {msg.data}")
-        # Lo lanzamos en un hilo para no bloquear los callbacks de ROS 2
-        threading.Thread(
-            target=self._play_audio, 
-            args=(msg.data,), 
-            daemon=True
-        ).start()
-    def on_activate(self, state):
-        self.get_logger().info('Activating TTS Node')
-        self._action_client = ActionClient(self, ProcessResponse, '/response_llama')
-
-        # Limpiar estado anterior
-        self.audio_queue = queue.Queue()
-        self.tts_done.clear()
-
-        # Hilo consumidor: sintetiza y reproduce en cuanto llega cada chunk
-        threading.Thread(target=self._audio_worker, daemon=True).start()
-
+        self._busy = False
         return TransitionCallbackReturn.SUCCESS
 
     def on_deactivate(self, state):
         self.get_logger().info('Deactivating TTS Node')
         return TransitionCallbackReturn.SUCCESS
 
-    # ── Pipeline productor / consumidor ──────────────────────────────
-    def _send_goal_and_receive_chunks(self):
-        """Envía el goal al LLM y espera a que el worker de audio termine."""
-        
-        # 1. Esperar al servidor de acciones
-        if not self._action_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error("❌ LLM action server no disponible")
-            self.tts_done.set() # Avisamos que terminamos (aunque sea por error)
+    def _release_stt(self):
+        m = Bool()
+        m.data = False
+        self.stt_status_publisher.publish(m)
+
+    def process_input_person(self, msg):
+        text = (msg.text or "").strip()
+        if not text or text in ("[unk]", "unk"):
+            self.get_logger().warn("⚠️ Texto vacío, libero el STT sin llamar al LLM")
+            self._release_stt()
             return
-
-        # 2. Validar texto
-        if self.text_person is None:
-            self.get_logger().warn("⚠️ No hay texto para procesar")
-            self.tts_done.set()
+        if getattr(self, "_busy", False):
+            self.get_logger().warn("⚠️ Turno en curso, ignoro este texto")
             return
+        self._busy = True
+        self._t0 = time.time()
+        self._first = True
+        self.text_person = text
+        self.get_logger().info(f"🎤 Texto recibido: {text}")
 
-        # 3. Preparar goal
-        goal_msg = ProcessResponse.Goal()
-        goal_msg.input_text = self.text_person
+        q = queue.Queue()                 # cola propia de este turno
+        self.audio_queue = q
+        self.tts_done.clear()
+        threading.Thread(target=self._audio_worker, args=(q,), daemon=True).start()
+        threading.Thread(target=self._run_turn, args=(text, q), daemon=True).start()
 
-        self.get_logger().info("✅ Enviando texto al LLM...")
+    def _cb_speak_direct(self, msg):
+        self.get_logger().info(f"🗣️ TTS Directo recibido: {msg.data}")
+        threading.Thread(target=self._play_audio, args=(msg.data,), daemon=True).start()
 
-        # 4. Enviar goal con callback de feedback
-        send_future = self._action_client.send_goal_async(
-            goal_msg,
-            feedback_callback=self._feedback_callback
-        )
+    def _run_turn(self, text, q):
+        """Pide la respuesta al LLM. El finally SIEMPRE cierra la cola para liberar al STT."""
+        try:
+            if not self._action_client.wait_for_server(timeout_sec=5.0):
+                self.get_logger().error("❌ LLM action server no disponible")
+                return
 
-        # 5. Esperar aceptación
-        while rclpy.ok():
-            if send_future.done():
-                break
-            time.sleep(0.05)
+            goal_msg = ProcessResponse.Goal()
+            goal_msg.input_text = text
+            self.get_logger().info("✅ Enviando texto al LLM...")
+            send_future = self._action_client.send_goal_async(
+                goal_msg, feedback_callback=self._feedback_callback)
 
-        goal_handle = send_future.result()
-        if not goal_handle or not goal_handle.accepted:
-            self.get_logger().error("❌ Goal rechazado o fallido")
-            self.tts_done.set()
-            return
+            t0 = time.time()
+            while rclpy.ok() and not send_future.done():
+                if time.time() - t0 > 10.0:
+                    self.get_logger().error("❌ Timeout esperando aceptación del goal")
+                    return
+                time.sleep(0.05)
 
-        # 6. Esperar a que el LLM termine de generar toda la respuesta
-        result_future = goal_handle.get_result_async()
-        while rclpy.ok():
-            if result_future.done():
-                break
-            time.sleep(0.05)
+            goal_handle = send_future.result()
+            if not goal_handle or not goal_handle.accepted:
+                self.get_logger().error("❌ Goal rechazado o fallido")
+                return
 
-        result = result_future.result()
-        if result.status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info("✅ LLM terminó de generar toda la respuesta.")
-            
-            # --- AQUÍ AGREGAS EL BLOQUE ---
-            # Si el feedback no se usó (o llegó incompleto), 
-            # tomamos el texto final del result si existe.
-            if hasattr(result.result, 'final_response') and result.result.final_response:
-                self.get_logger().info("📦 Tomando respuesta completa del resultado final.")
-                self.audio_queue.put(result.result.final_response)
-            # -------------------------------
-            
-        else:
-            self.get_logger().warn(f"⚠️ LLM terminó con status: {result.status}")
+            result_future = goal_handle.get_result_async()
+            t0 = time.time()
+            while rclpy.ok() and not result_future.done():
+                if time.time() - t0 > 90.0:
+                    self.get_logger().error("❌ El LLM no respondió en 90 s, cancelo")
+                    goal_handle.cancel_goal_async()
+                    return
+                time.sleep(0.05)
 
-        # 8. Señal de fin al worker de audio
-        self.audio_queue.put(None)
-        
-        # 9. AHORA esperamos a que el worker nos avise que terminó de reproducir
-        self.get_logger().info("⏳ Esperando a que el worker termine de reproducir...")
-        self.tts_done.wait()
+            status = result_future.result().status
+            if status == GoalStatus.STATUS_SUCCEEDED:
+                self.get_logger().info("✅ LLM terminó de generar toda la respuesta.")
+            else:
+                self.get_logger().warn(f"⚠️ LLM terminó con status: {status}")
+        except Exception as e:
+            self.get_logger().error(f"💥 Error en el turno: {e}")
+        finally:
+            q.put(None)   # el worker termina -> libera STT -> reaparece el botón
+
     def _feedback_callback(self, feedback_msg):
         """Recibe cada frase del LLM y la encola para síntesis inmediata."""
         chunk = feedback_msg.feedback.current_chunk
+        if chunk and getattr(self, '_first', False):
+            self._first = False
+            self.get_logger().info(f'⏱️ LLM -> primera frase: {time.time()-self._t0:.2f}s')
         is_last = feedback_msg.feedback.is_last_chunk
 
         if chunk and not is_last:
@@ -213,22 +191,20 @@ class TTSLifecycleNode(LifecycleNode):
             # El None se pone en _send_goal_and_receive_chunks al terminar el result
             pass
 
-    def _audio_worker(self):
+    def _audio_worker(self, q):
         self.get_logger().info("🔊 Audio worker iniciado")
-        while True:
-            chunk = self.audio_queue.get()
-            if chunk is None: 
-                break
-            self._play_audio(chunk)
-
-        # Aquí liberamos al hilo principal que está en el wait()
-        self.tts_done.set()
-        
-        # Avisar al resto del sistema
-        stt_msg = Bool()
-        stt_msg.data = False
-        self.stt_status_publisher.publish(stt_msg)
-        self.get_logger().info("🔊 Audio worker terminó y liberó el bloqueo")
+        try:
+            while True:
+                chunk = q.get()
+                if chunk is None:
+                    break
+                self._play_audio(chunk)
+        finally:
+            self.tts_done.set()
+            self._busy = False
+            self._release_stt()
+            self.get_logger().info(f"⏱️ Turno completo: {time.time()-getattr(self, '_t0', time.time()):.2f}s")
+            self.get_logger().info("🔊 Audio worker terminó y liberó el bloqueo")
 
     def _play_audio(self, text_to_speak):
         # NOTA: el lip sync real se publica en _publish_visemes_from_wav(),
@@ -249,6 +225,7 @@ class TTSLifecycleNode(LifecycleNode):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
                 tmp_path = fp.name
 
+            _ts = time.time()
             with self.voice_lock:
                 if self.voice is None:
                     return
@@ -258,6 +235,7 @@ class TTSLifecycleNode(LifecycleNode):
                     wav_file.setframerate(self.voice.config.sample_rate)
                     self.voice.synthesize_wav(text_to_speak, wav_file, syn_config=syn_config)
 
+            self.get_logger().info(f'⏱️ Piper sintetizó {len(text_to_speak)} chars en {time.time()-_ts:.2f}s')
             # ── Leer WAV y publicar visemas por amplitud ──
             self._publish_visemes_from_wav(tmp_path)
 

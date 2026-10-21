@@ -69,6 +69,8 @@ class STTLifecycleNode(LifecycleNode):
         qos_profile = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.lang_sub = self.create_subscription(
             String, '/yaren/current_language', self.cb_cambio_idioma, qos_profile)
+        self.ptt_held = False
+        self.ptt_sub = self.create_subscription(Bool, '/yaren/ptt', self._on_ptt, 10)
 
     # ──────────────────────────────────────────────
     # Idioma
@@ -177,6 +179,14 @@ class STTLifecycleNode(LifecycleNode):
     # Reconocimiento
     # ──────────────────────────────────────────────
 
+    def _on_ptt(self, msg):
+        self.ptt_held = bool(msg.data)
+
+    def _publish_listening(self, value):
+        m = Bool()
+        m.data = value
+        self.stt_listening_publisher.publish(m)
+
     def _recognize_speech(self):
         with noalsaerr():
             p = pyaudio.PyAudio()
@@ -184,66 +194,87 @@ class STTLifecycleNode(LifecycleNode):
                             input=True, frames_per_buffer=8000)
 
         recognizer = KaldiRecognizer(self.vosk_model, 16000)
+        recording = False
+        parts = []
 
         try:
-            self.get_logger().info("🎤 Listening...")
-            listen_msg = Bool()
-            listen_msg.data = True
-            self.stt_listening_publisher.publish(listen_msg)
+            self.get_logger().info("🎤 Esperando que el niño mantenga el botón...")
+            self._publish_listening(True)
 
             while self.is_recognizing:
                 if not self.mic_owner_event.wait(timeout=0.1):
                     continue
                 data = stream.read(4000, exception_on_overflow=False)
 
-                # Si el TTS aún no terminó, descartar audio acumulado
+                # Mientras habla Yaren: descartar todo
                 if not self.tts_finished_event.is_set():
-                    recognizer = KaldiRecognizer(self.vosk_model, 16000)
+                    recording = False
+                    parts = []
                     continue
 
+                held = self.ptt_held
+
+                # Sin botón apretado: no se escucha nada (nunca se interpreta silencio)
+                if not recording and not held:
+                    continue
+
+                if not recording and held:
+                    recording = True
+                    parts = []
+                    recognizer = KaldiRecognizer(self.vosk_model, 16000)
+                    self.get_logger().info("🎙️ Grabando...")
+
                 if recognizer.AcceptWaveform(data):
-                    result_json = recognizer.Result()
-                    result     = json.loads(result_json)
-                    text       = result.get("text", "").lower().strip()
+                    t = json.loads(recognizer.Result()).get("text", "").strip()
+                    if t:
+                        parts.append(t)
 
-                    if text:
-                        # Bloquear evento antes de publicar (evita race condition)
-                        self.tts_finished_event.clear()
+                if held:
+                    continue
 
-                        response_msg           = PersonResponse()
-                        response_msg.text      = text
-                        response_msg.timestamp = self.get_clock().now().to_msg()
-                        self.response_publisher.publish(response_msg)
-                        self.get_logger().info(f"🗣️ Person: {text}")
+                # ---- Soltó el botón: este último chunk sirve de cola ----
+                recording = False
+                t = json.loads(recognizer.FinalResult()).get("text", "").strip()
+                if t:
+                    parts.append(t)
+                text = " ".join(parts).lower().strip()
+                parts = []
 
-                        status_msg      = Bool()
-                        status_msg.data = True
-                        self.stt_status_publisher.publish(status_msg)
+                if not text:
+                    # No se entendió nada: Yaren sigue ESPERANDO, no avanza solo
+                    self.get_logger().info("🤷 Nada reconocido, vuelvo a esperar.")
+                    self._publish_listening(True)
+                    continue
 
-                        self.get_logger().info("⏸️ Esperando que Yaren termine de hablar...")
-                        self.tts_finished_event.wait()
+                self.tts_finished_event.clear()
 
-                        # Vaciar todo el audio acumulado en el buffer mientras Yaren hablaba
-                        time.sleep(0.5)
-                        try:
-                            while stream.get_read_available() > 0:
-                                stream.read(
-                                    min(stream.get_read_available(), 4000),
-                                    exception_on_overflow=False
-                                )
-                        except Exception:
-                            pass
+                response_msg           = PersonResponse()
+                response_msg.text      = text
+                response_msg.timestamp = self.get_clock().now().to_msg()
+                self.response_publisher.publish(response_msg)
+                self.get_logger().info(f"🗣️ Person: {text}")
 
-                        recognizer = KaldiRecognizer(self.vosk_model, 16000)
-                        listen_msg = Bool()
-                        listen_msg.data = True
-                        self.stt_listening_publisher.publish(listen_msg)
-                        self.get_logger().info("🎤 Listening...")
+                status_msg      = Bool()
+                status_msg.data = True
+                self.stt_status_publisher.publish(status_msg)
+
+                self.get_logger().info("⏸️ Esperando que Yaren termine de hablar...")
+                self.tts_finished_event.wait()
+
+                time.sleep(0.5)
+                try:
+                    while stream.get_read_available() > 0:
+                        stream.read(min(stream.get_read_available(), 4000),
+                                    exception_on_overflow=False)
+                except Exception:
+                    pass
+
+                recognizer = KaldiRecognizer(self.vosk_model, 16000)
+                self._publish_listening(True)
+                self.get_logger().info("🎤 Tu turno: mantén el botón y habla")
 
         finally:
-            listen_msg      = Bool()
-            listen_msg.data = False
-            self.stt_listening_publisher.publish(listen_msg)
+            self._publish_listening(False)
             stream.stop_stream()
             stream.close()
             p.terminate()

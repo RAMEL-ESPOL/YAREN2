@@ -29,6 +29,8 @@ import time
 import os
 import glob
 import unicodedata
+import faulthandler
+import traceback
 
 import cv2
 import numpy as np
@@ -38,6 +40,13 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from std_msgs.msg import Bool, String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
+
+_T0 = time.perf_counter()
+
+
+def _log_t(msg):
+    print(f"[TIMING +{time.perf_counter() - _T0:6.2f}s] {msg}", flush=True)
+
 
 # =============================================================================
 #  PATHS UNIVERSALES
@@ -134,6 +143,7 @@ class GameState:
     SUMMARY = 3
     CONFIRM_EXIT = 4
     EXITED = 5
+    MODE_SELECT = 6
 
 
 # =============================================================================
@@ -205,6 +215,14 @@ def detect_pose(kpts):
 # =============================================================================
 #  PASOS BASE   (angulos en grados, y hacia abajo: -90 = arriba, 0 = derecha)
 # =============================================================================
+def _clap_pose(t):
+    """Palmas al frente del pecho: o=1 manos abiertas, o=0 manos juntas."""
+    o = 1.0 - abs(math.sin(t * 6))
+    la, la2 = 120 + 15 * o, -36 - 34 * o
+    return dict(la=la, la2=la2, ra=180 - la, ra2=-180 - la2, ll=15, rl=-15,
+                by=math.sin(t * 6) * 4)
+
+
 _ALL_STEPS = {
     "arms_up": {
         "name_es": "Brazos Arriba",
@@ -216,13 +234,13 @@ _ALL_STEPS = {
         "name_es": "Brazo Der.",
         "name_en": "Right Arm",
         "keys": ["right"],
-        "pose": lambda t: dict(la=-100, ra=-10, ll=15, rl=-15, by=math.sin(t * 6) * 4),
+        "pose": lambda t: dict(la=100, ra=-10, ll=15, rl=-15, by=math.sin(t * 6) * 4),
     },
     "left_arm": {
         "name_es": "Brazo Izq.",
         "name_en": "Left Arm",
         "keys": ["left"],
-        "pose": lambda t: dict(la=-170, ra=-80, ll=15, rl=-15, by=math.sin(t * 6) * 4),
+        "pose": lambda t: dict(la=-170, ra=80, ll=15, rl=-15, by=math.sin(t * 6) * 4),
     },
     "t_pose": {
         "name_es": "Cruz",
@@ -240,8 +258,7 @@ _ALL_STEPS = {
         "name_es": "Aplaude",
         "name_en": "Clap",
         "keys": ["left", "right"],
-        "pose": lambda t: (lambda c=abs(math.sin(t * 6)): dict(
-            la=-95 - c * 40, ra=-85 + c * 40, ll=15, rl=-15, by=math.sin(t * 6) * 5))(),
+        "pose": _clap_pose,
     },
     "spin": {
         "name_es": "Gira",
@@ -261,19 +278,19 @@ _ALL_STEPS = {
         "name_es": "Paso Izq.",
         "name_en": "Step Left",
         "keys": ["left"],
-        "pose": lambda t: dict(la=-120, ra=-60, ll=30, rl=-10, by=math.sin(t * 5) * 6),
+        "pose": lambda t: dict(la=-135, ra=60, ll=30, rl=-10, by=math.sin(t * 5) * 6),
     },
     "right_step": {
         "name_es": "Paso Der.",
         "name_en": "Step Right",
         "keys": ["right"],
-        "pose": lambda t: dict(la=-60, ra=-120, ll=10, rl=-30, by=math.sin(t * 5) * 6),
+        "pose": lambda t: dict(la=120, ra=-45, ll=10, rl=-30, by=math.sin(t * 5) * 6),
     },
     "wave": {
         "name_es": "Saluda",
         "name_en": "Wave",
         "keys": ["right"],
-        "pose": lambda t: dict(la=-90, ra=-30 + math.sin(t * 8) * 25,
+        "pose": lambda t: dict(la=100, ra=-45 + math.sin(t * 8) * 20,
                                ll=15, rl=-15, by=math.sin(t * 4) * 3),
     },
     "crouch": {
@@ -488,24 +505,25 @@ KEY_MAP = {
 #  CARGA DE FONDOS (opcional: si hay PNG en FONDOS_DIR se mezclan con el neon)
 # =============================================================================
 _BACKGROUND_IMAGES = []
+_BG_LOCK = threading.Lock()
 
 
 def _load_backgrounds():
-    pattern = os.path.join(FONDOS_DIR, "*.png")
-    for p in sorted(glob.glob(pattern)):
+    t0 = time.perf_counter()
+    loaded = []
+    for p in sorted(glob.glob(os.path.join(FONDOS_DIR, "*.png"))):
         img = cv2.imread(p)
         if img is not None:
-            _BACKGROUND_IMAGES.append(
-                cv2.resize(img, (WIN_W, WIN_H), interpolation=cv2.INTER_LINEAR))
-    print(f"[Fondos] {len(_BACKGROUND_IMAGES)} fondos cargados.")
-
-
-_load_backgrounds()
+            loaded.append(cv2.resize(img, (WIN_W, WIN_H), interpolation=cv2.INTER_AREA))
+    with _BG_LOCK:
+        _BACKGROUND_IMAGES[:] = loaded
+    print(f"[Fondos] {len(loaded)} fondos cargados en {time.perf_counter() - t0:.2f}s.")
 
 
 def _pick_random_bg():
-    if _BACKGROUND_IMAGES:
-        return _BACKGROUND_IMAGES[random.randint(0, len(_BACKGROUND_IMAGES) - 1)].copy()
+    with _BG_LOCK:
+        if _BACKGROUND_IMAGES:
+            return random.choice(_BACKGROUND_IMAGES).copy()
     return None
 
 
@@ -644,9 +662,9 @@ def _paint_body(img, cx, cy, pose, color, Sc, extra=0, min_w=2):
         cv2.circle(img, p1, w // 2, color, -1, cv2.LINE_AA)
         cv2.circle(img, p2, w // 2, color, -1, cv2.LINE_AA)
 
-    # piernas (no se cruzan)
-    lk, lf = min(-14 + ll * 0.4, -4), min(-18 + ll * 0.7, -5)
-    rk, rf = max(14 + rl * 0.4, 4), max(18 + rl * 0.7, 5)
+    # piernas separadas (ll>0 abre la izquierda, rl<0 abre la derecha)
+    lk, lf = -(9 + ll * 0.35), -(10 + ll * 0.6)
+    rk, rf = (9 - rl * 0.35), (10 - rl * 0.6)
     limb(pt(-7, -16), pt(lk, 24), w_leg)
     limb(pt(lk, 24), pt(lf, 64), w_leg)
     limb(pt(lf, 64), pt(lf - 10, 66), max(min_w, int(w_leg * 0.8)))
@@ -752,7 +770,8 @@ class DanceRenderer:
         self._title_cache = {}
         self._card_cache = {}
         self._bokeh = self._make_bokeh(11)
-        self._bg_menu = self._build_backdrop((95, 20, 110), (200, 70, 230))
+        self._bokeh_menu = self._make_bokeh(5, n=22, rmin=3, rmax=11)
+        self._bg_menu = self._build_menu_backdrop()
         self._bg_play = self._bg_menu
 
     # ------------------------------------------------------------ fondos
@@ -812,23 +831,60 @@ class DanceRenderer:
             cv2.addWeighted(pool, 0.22, img, 0.78, 0, img)
         return img
 
-    def _make_bokeh(self, seed, n=16):
+    def _build_menu_backdrop(self):
+        """Fondo de menu: azul noche -> violeta, estrellas y suelo de rejilla (sin rayos)."""
+        H, W = self.H, self.W
+        top = np.array((46, 16, 20), np.float32)
+        bot = np.array((120, 44, 84), np.float32)
+        t = np.clip(self._v, 0, 1)[..., None]
+        img = top * (1 - t) + bot * t
+        d = np.sqrt(((self._u - 0.5) * 1.5) ** 2 + ((self._v - 0.55) * 1.3) ** 2)
+        glow = (np.clip(1.0 - d, 0, 1) ** 2)[..., None]
+        img = img + glow * np.array((55, 25, 30), np.float32)
+        du, dv = (self._u - 0.5) * 2, (self._v - 0.5) * 2
+        vign = np.clip(1.0 - 0.45 * (du ** 2 * 0.5 + dv ** 2 * 0.7), 0.45, 1.0)[..., None]
+        img = np.clip(img * vign, 0, 255).astype(np.uint8)
+
+        rng = random.Random(7)
+        for _ in range(70):
+            x, y = rng.randint(0, W - 1), rng.randint(0, int(H * 0.62))
+            b = rng.randint(120, 230)
+            cv2.circle(img, (x, y), rng.choice((1, 1, 2)), (b, b, b), -1, cv2.LINE_AA)
+
+        hy = int(H * 0.66)
+        grid = img.copy()
+        col = (190, 120, 170)
+        for i in range(-6, 17):
+            x1 = int(W * i / 10)
+            cv2.line(grid, (x1, hy), (int((x1 - W / 2) * 3.0 + W / 2), H), col, 1, cv2.LINE_AA)
+        for k in range(1, 7):
+            fy = hy + int((H - hy) * (k / 6.0) ** 1.8)
+            cv2.line(grid, (0, fy), (W, fy), col, 1, cv2.LINE_AA)
+        cv2.line(grid, (0, hy), (W, hy), (255, 200, 230), 2, cv2.LINE_AA)
+        cv2.addWeighted(grid, 0.30, img, 0.70, 0, img)
+        return img
+
+    def _make_bokeh(self, seed, n=16, rmin=8, rmax=26):
         rng = random.Random(seed)
-        return [(rng.uniform(0, self.W), rng.uniform(0, self.H), rng.randint(8, 26),
+        return [(rng.uniform(0, self.W), rng.uniform(0, self.H), rng.randint(rmin, rmax),
                  rng.uniform(-14, 14), rng.uniform(-22, -6), rng.uniform(0, 6.28))
                 for _ in range(n)]
 
     def draw_background(self, frame, t, play=True):
-        np.copyto(frame, self._bg_play if (play and self.has_theme) else self._bg_menu)
+        themed = play and self.has_theme
+        np.copyto(frame, self._bg_play if themed else self._bg_menu)
         if FX_BOKEH:
-            base = _lighten(self.figure_color, 90) if (play and self.has_theme) else (255, 190, 255)
+            if themed:
+                base, pts, alpha = _lighten(self.figure_color, 90), self._bokeh, 0.16
+            else:
+                base, pts, alpha = (255, 215, 170), self._bokeh_menu, 0.10
             ov = frame.copy()
-            for i, (x0, y0, r, vx, vy, ph) in enumerate(self._bokeh):
+            for i, (x0, y0, r, vx, vy, ph) in enumerate(pts):
                 x = int((x0 + vx * t) % (self.W + 60)) - 30
                 y = int((y0 + vy * t) % (self.H + 60)) - 30
                 rr = int(r * (1 + 0.15 * math.sin(t * 1.5 + ph)))
                 cv2.circle(ov, (x, y), rr, base if i % 2 else C_WHITE, -1, cv2.LINE_AA)
-            cv2.addWeighted(ov, 0.16, frame, 0.84, 0, frame)
+            cv2.addWeighted(ov, alpha, frame, 1 - alpha, 0, frame)
 
     def floor_ring(self, frame, cx, t, alpha_col=(255, 255, 255)):
         rx = int(100 + 6 * math.sin(t * 5))
@@ -1011,6 +1067,7 @@ class DanceGame:
         self.pose_camera = pose_camera
         self.renderer = DanceRenderer(WIN_W, WIN_H)
         self.state = GameState.WELCOME
+        self.use_camera = False   # True: solo camara | False: solo teclado
 
         self._current_song_id = None
         self._routine = []
@@ -1156,6 +1213,11 @@ class DanceGame:
     def handle_input(self, direction_or_set):
         if self.state != GameState.PLAYING:
             return
+        is_key = isinstance(direction_or_set, str)
+        if is_key and self.use_camera:
+            return              # modo camara: el teclado se ignora
+        if (not is_key) and not self.use_camera:
+            return              # modo teclado: la camara se ignora
         active = next((q for q in self.queue
                        if not q["done"] and 0.55 <= q["progress"] <= 1.05), None)
         if not active:
@@ -1237,7 +1299,7 @@ class DanceGame:
             self.start_delay -= dt
             return
 
-        if self.pose_camera and not self.pose_camera.active_detection:
+        if self.use_camera and self.pose_camera and not self.pose_camera.active_detection:
             self.pose_camera.active_detection = True
             print("[JUEGO] El baile comenzo. Camara activa para puntuar.")
 
@@ -1295,10 +1357,22 @@ class DanceGame:
                     self.state = GameState.SUMMARY
                 elif self.state in [GameState.WELCOME, GameState.MENU]:
                     self.state = GameState.CONFIRM_EXIT
+                elif self.state == GameState.MODE_SELECT:
+                    self.state = GameState.WELCOME
 
     def _handle_button_click(self, btn_id):
         if btn_id == "btn_start_welcome":
+            self.state = GameState.MODE_SELECT
+        elif btn_id == "btn_mode_cam":
+            self.use_camera = True
+            self._apply_input_mode()
             self.state = GameState.MENU
+        elif btn_id == "btn_mode_key":
+            self.use_camera = False
+            self._apply_input_mode()
+            self.state = GameState.MENU
+        elif btn_id == "btn_menu_mode":
+            self.state = GameState.MODE_SELECT
         elif btn_id.startswith("btn_song_"):
             idx = int(btn_id.split("_")[2])
             self.play_song(SONGS[idx])
@@ -1319,6 +1393,18 @@ class DanceGame:
         elif btn_id == "btn_confirm_no":
             self.state = GameState.MENU
 
+    def _apply_input_mode(self):
+        """Camara: solo pose (teclado ignorado). Sin camara: solo teclado (YOLO no se carga)."""
+        pc = self.pose_camera
+        if pc is None:
+            return
+        if self.use_camera:
+            pc.enabled = True
+            pc.start()          # idempotente; carga YOLO en su hilo la primera vez
+        else:
+            pc.enabled = False
+            pc.active_detection = False
+
     def _is_hovered(self, rect):
         bx, by, bw, bh = rect
         return bx <= self.mx <= bx + bw and by <= self.my <= by + bh
@@ -1337,8 +1423,11 @@ class DanceGame:
             self._render_summary(frame)
         elif self.state == GameState.CONFIRM_EXIT:
             self._render_confirm_exit(frame)
+        elif self.state == GameState.MODE_SELECT:
+            self._render_mode_select(frame)
 
-        if self.state in [GameState.WELCOME, GameState.MENU, GameState.PLAYING]:
+        if self.state in [GameState.WELCOME, GameState.MENU, GameState.PLAYING,
+                          GameState.MODE_SELECT]:
             self._draw_close_btn(frame)
 
         with self.btn_lock:
@@ -1372,15 +1461,15 @@ class DanceGame:
         desc = ("Follow the dancer's moves to the music.\nEach song has its own routine." if en else
                 "Sigue los movimientos del bailarin al ritmo de la musica.\n"
                 "Cada cancion tiene su propia coreografia.")
-        R.text_multiline(frame, desc, WIN_W / 2, 158, 0.62, UI_TEXT, line_spacing=28)
+        R.text_multiline(frame, desc, WIN_W / 2, 150, 0.62, UI_TEXT, line_spacing=26)
 
         trio = (("wave", SONGS[0]["figure"], ACTIVE_X - 60, 0.0),
                 ("jump", SONGS[1]["figure"], WIN_W // 2, 1.3),
                 ("clap", SONGS[3]["figure"], WIN_W - ACTIVE_X + 60, 2.1))
         for name, col, x, ph in trio:
             pose = S(name)["pose"](self.ui_t + ph)
-            cv2.ellipse(frame, (x, 372), (62, 11), 0, 0, 360, (0, 0, 0), -1, cv2.LINE_AA)
-            R._draw_figure(frame, x, 296, pose, col, 1.0, scale=1.0)
+            cv2.ellipse(frame, (x, 378), (54, 9), 0, 0, 360, (0, 0, 0), -1, cv2.LINE_AA)
+            R._draw_figure(frame, x, 320, pose, col, 1.0, scale=0.8)
 
         bw, bh = 250, 58
         pulse = int(3 * math.sin(self.ui_t * 5))
@@ -1401,6 +1490,11 @@ class DanceGame:
         R.title(frame, "SONG MENU" if en else "MENU DE CANCIONES", WIN_W // 2, 38, 1.1,
                 top=(140, 245, 255), bot=C_ORANGE, thick=2, out_w=4)
         R.text(frame, f"{self._menu_page + 1}/{total_pages}", WIN_W - 48, 38, 0.65, UI_TEXT, bold=True)
+        mode_txt = (("CAMERA" if en else "CAMARA") if self.use_camera
+                    else ("KEYBOARD" if en else "TECLADO"))
+        self.temp_rects["btn_menu_mode"] = R.draw_button(
+            frame, mode_txt, 62, 20, 126, 36, (150, 80, 60),
+            self._is_hovered((62, 20, 126, 36)), 0.5)
 
         cw, ch, gap = 236, 156, 14
         sx0 = (WIN_W - (3 * cw + 2 * gap)) // 2
@@ -1421,8 +1515,8 @@ class DanceGame:
 
             # mini coach
             pose = dict(S_pose_for_card(song, self.ui_t if hov else 0.26))
-            _paint_body(frame, x + cw - 62, yy + 70, pose, (40, 14, 50), 0.5, extra=3)
-            _paint_body(frame, x + cw - 62, yy + 70, pose, C_WHITE, 0.5, min_w=3)
+            _paint_body(frame, x + cw - 52, yy + 56, pose, (40, 14, 50), 0.42, extra=3)
+            _paint_body(frame, x + cw - 52, yy + 56, pose, C_WHITE, 0.42, min_w=3)
 
             # numero
             cv2.circle(frame, (x + 30, yy + 30), 20, (30, 14, 40), -1, cv2.LINE_AA)
@@ -1457,6 +1551,56 @@ class DanceGame:
             dx = WIN_W // 2 + int((p - (total_pages - 1) / 2) * 20)
             cv2.circle(frame, (dx, nav_y + 20), 6, C_WHITE if p == self._menu_page else (140, 110, 160),
                        -1, cv2.LINE_AA)
+
+    # ------------------------------------------------------------ MODO DE JUEGO
+    def _render_mode_select(self, frame):
+        R = self.renderer
+        en = self.is_english
+        R.draw_background(frame, self.ui_t, play=False)
+        R.title(frame, "HOW DO YOU WANT TO PLAY?" if en else "COMO QUIERES JUGAR?",
+                WIN_W // 2, 52, 1.1, top=(140, 245, 255), bot=C_ORANGE, thick=2, out_w=4)
+
+        cw, ch, gap = 300, 250, 30
+        x0 = (WIN_W - (2 * cw + gap)) // 2
+        y0 = 100
+        cards = (
+            ("btn_mode_cam", (255, 190, 40), "WITH CAMERA" if en else "CON CAMARA",
+             "Move your body to dance.\nKeyboard is disabled." if en else
+             "Mueve tu cuerpo para bailar.\nEl teclado se desactiva."),
+            ("btn_mode_key", (190, 80, 240), "NO CAMERA" if en else "SIN CAMARA",
+             "Play with the keyboard.\nCamera is ignored." if en else
+             "Juega con el teclado.\nLa camara se ignora."),
+        )
+        dark = (28, 16, 46)
+        for i, (bid, col, label, desc) in enumerate(cards):
+            x = x0 + i * (cw + gap)
+            hov = self._is_hovered((x, y0, cw, ch))
+            y = y0 - 5 if hov else y0
+            cx = x + cw // 2
+            _rounded_rect(frame, (x + 3, y + 7), (x + cw + 3, y + ch + 7), C_BLACK,
+                          radius=22, alpha=0.40)
+            _rounded_rect(frame, (x, y), (x + cw, y + ch), dark, radius=22, alpha=0.90)
+            _rounded_rect(frame, (x, y), (x + cw, y + ch), C_WHITE if hov else col,
+                          radius=22, thickness=3)
+            cy = y + 82
+            if i == 0:
+                _rounded_rect(frame, (cx - 46, cy - 26), (cx + 46, cy + 30), col, radius=10)
+                _rounded_rect(frame, (cx - 20, cy - 38), (cx + 14, cy - 24), col, radius=4)
+                cv2.circle(frame, (cx, cy + 2), 19, dark, -1, cv2.LINE_AA)
+                cv2.circle(frame, (cx, cy + 2), 19, C_WHITE, 3, cv2.LINE_AA)
+                cv2.circle(frame, (cx, cy + 2), 8, col, -1, cv2.LINE_AA)
+            else:
+                for kx, ky, kc in ((cx, cy - 22, "W"), (cx - 40, cy + 18, "A"),
+                                   (cx, cy + 18, "S"), (cx + 40, cy + 18, "D")):
+                    _rounded_rect(frame, (kx - 17, ky - 17), (kx + 17, ky + 17), col, radius=6)
+                    R.text(frame, kc, kx, ky, 0.6, C_WHITE, bold=True, shadow=False)
+            R.text(frame, label, cx, y + 168, 0.85, C_WHITE, bold=True)
+            R.text_multiline(frame, desc, cx, y + 198, 0.5, UI_DIM, line_spacing=22)
+            self.temp_rects[bid] = (x, y0, cw, ch)
+
+        R.text(frame, "You can change this later from the song menu." if en else
+               "Puedes cambiarlo despues desde el menu de canciones.",
+               WIN_W / 2, 420, 0.5, UI_DIM)
 
     # ------------------------------------------------------------ HUD / TIMELINE
     def _draw_hud(self, frame):
@@ -1602,12 +1746,16 @@ class DanceGame:
 
         # fases de arranque
         if self.start_delay > self.CAM_ANNOUNCE_DUR:
-            cam_ok = self.pose_camera.camera_ok if self.pose_camera else False
+            cam_ok = (self.pose_camera.camera_ok and self.pose_camera.model_ready) if self.pose_camera else False
+            if not self.use_camera:
+                cam_ok = True
             _rounded_rect(frame, (WIN_W // 2 - 260, 120), (WIN_W // 2 + 260, 300), (12, 6, 26),
                           radius=28, alpha=0.84)
             dot = (80, 220, 90) if cam_ok else (60, 190, 255)
             cv2.circle(frame, (WIN_W // 2 - 150, 162), 8, dot, -1, cv2.LINE_AA)
-            if cam_ok:
+            if not self.use_camera:
+                msg = "KEYBOARD MODE" if en else "MODO TECLADO"
+            elif cam_ok:
                 msg = "CAMERA READY" if en else "CAMARA LISTA"
             else:
                 msg = "CONNECTING CAMERA..." if en else "CONECTANDO CAMARA..."
@@ -1714,6 +1862,18 @@ def S_pose_for_card(song, t):
     return song["routine"][0]["pose"](t)
 
 
+def _splash(msg):
+    f = np.full((WIN_H, WIN_W, 3), UI_BG, np.uint8)
+    font = cv2.FONT_HERSHEY_DUPLEX
+    t1 = "YAREN DANCE"
+    (tw, _), _ = cv2.getTextSize(t1, font, 1.8, 4)
+    cv2.putText(f, t1, ((WIN_W - tw) // 2, WIN_H // 2 - 10), font, 1.8, C_GOLD, 4, cv2.LINE_AA)
+    (tw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)
+    cv2.putText(f, msg, ((WIN_W - tw) // 2, WIN_H // 2 + 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, UI_DIM, 1, cv2.LINE_AA)
+    return f
+
+
 # =============================================================================
 #  POSECAMERA -- recibe frames desde el nodo via callback, sin cerrarse abruptamente
 # =============================================================================
@@ -1725,30 +1885,34 @@ class PoseCamera:
         self.infer_size = infer_size
         self.current_pose = frozenset()
         self.camera_ok = False
+        self.model_ready = False      # True cuando YOLO cargo (o fallo y queda modo teclado)
+        self.enabled = False          # lo activa DanceGame._apply_input_mode
         self._running = False
         self.active_detection = False
         self._thread = None
         self._lock = threading.Lock()
         self.model = None
-
-        # Frame compartido: el nodo lo escribe, el hilo YOLO lo lee
         self._latest_frame = None
         self._frame_lock = threading.Lock()
 
+    def _load_model(self):
+        t0 = time.perf_counter()
         try:
-            from ultralytics import YOLO
-            print(f"[PoseCamera] Cargando modelo YOLO desde: {self.model_path} ...")
             if not os.path.exists(self.model_path):
                 print("[PoseCamera] Modelo no encontrado. Modo solo teclado.")
-                self.model = None
-            else:
-                self.model = YOLO(self.model_path)
-                dummy = np.zeros((self.infer_size, self.infer_size, 3), dtype=np.uint8)
-                self.model(dummy, verbose=False)
-                print("[PoseCamera] YOLO listo.")
+                return
+            from ultralytics import YOLO
+            _log_t("import ultralytics listo")
+            self.model = YOLO(self.model_path)
+            _log_t("modelo YOLO cargado")
+            dummy = np.zeros((self.infer_size, self.infer_size, 3), dtype=np.uint8)
+            self.model(dummy, imgsz=self.infer_size, verbose=False)
+            print(f"[PoseCamera] YOLO listo en {time.perf_counter() - t0:.2f}s.")
         except Exception as e:
             print(f"[PoseCamera] Error cargando modelo: {e}. Modo solo teclado.")
             self.model = None
+        finally:
+            self.model_ready = True
 
     def push_frame(self, frame: np.ndarray):
         """Llamado desde el image_callback del nodo con el frame BGR ya convertido."""
@@ -1773,6 +1937,7 @@ class PoseCamera:
             self._thread = None
 
     def _loop(self):
+        self._load_model()
         if self.model is None:
             print("[PoseCamera] Modelo no disponible. Modo solo teclado.")
             while self._running:
@@ -1790,6 +1955,9 @@ class PoseCamera:
 
             if frame is None:
                 time.sleep(0.03)
+                continue
+
+            if not self.enabled:
                 continue
 
             now = time.time()
@@ -1831,7 +1999,27 @@ class PoseCamera:
 # =============================================================================
 #  NODO PRINCIPAL -- mismo patron que memoria_node.py
 # =============================================================================
+class RunState:
+    INACTIVE = 0
+    INITIALIZING = 1
+    ACTIVE = 2
+    CLOSING = 3
+    ERROR = 4
+
+
+_RS_NAMES = {0: "INACTIVE", 1: "INITIALIZING", 2: "ACTIVE", 3: "CLOSING", 4: "ERROR"}
+
+CLOSE_WAIT_S = 3.0   # espera maxima (acotada) de los callbacks de ROS al cierre real de la ventana
+
+
 class DanceGameNode(LifecycleNode):
+    """
+    REGLA DE HILOS: toda llamada a cv2 con ventana (namedWindow/imshow/waitKey/destroy*)
+    ocurre SOLO en el hilo principal (run_display_main_thread). Los callbacks de ROS
+    (hilo de spin) unicamente cambian banderas y esperan, con tiempo limite, a que el
+    hilo principal termine de cerrar. Asi nunca se toca Qt/OpenCV desde otro hilo.
+    """
+
     def __init__(self):
         super().__init__("dance_game_node")
         self._active = False
@@ -1844,7 +2032,28 @@ class DanceGameNode(LifecycleNode):
         self._pose_camera = None
         self.game = None
 
-    # -- Lifecycle -------------------------------------------------------------
+        self._state_lock = threading.Lock()
+        self._run_state = RunState.INACTIVE
+        self._want_active = False
+        self._shutdown_evt = threading.Event()
+        self._closed_evt = threading.Event()
+        self._closed_evt.set()          # set = no hay sesion abierta
+
+    # -- helpers de estado ----------------------------------------------------
+    def _set_run_state(self, new):
+        """Llamar con self._state_lock tomado."""
+        old = self._run_state
+        self._run_state = new
+        self.get_logger().info(f"[ESTADO] {_RS_NAMES[old]} -> {_RS_NAMES[new]}")
+
+    def request_shutdown(self):
+        with self._state_lock:
+            self._want_active = False
+            self._active = False
+        self._shutdown_evt.set()
+        self._closed_evt.wait(timeout=CLOSE_WAIT_S)
+
+    # -- Lifecycle (hilo de spin: SIN llamadas a la GUI de cv2) -----------------
     def on_configure(self, state):
         self.get_logger().info('DanceGameNode: configurando...')
         try:
@@ -1860,40 +2069,40 @@ class DanceGameNode(LifecycleNode):
 
     def on_activate(self, state):
         self.get_logger().info('DanceGameNode: ACTIVO')
-        self._active = True
+        with self._state_lock:
+            self._want_active = True      # el hilo principal abre UNA sesion cuando pueda
+            self._active = True
         self._set_game_active(True)
-
-        self._cam_sub = self.create_subscription(
-            Image, '/csi_camera/image_raw', self._image_callback, 10)
-        self.get_logger().info('Suscrito a /csi_camera/image_raw')
-
+        if self._cam_sub is None:
+            self._cam_sub = self.create_subscription(
+                Image, '/csi_camera/image_raw', self._image_callback, 10)
+            self.get_logger().info('Suscrito a /csi_camera/image_raw')
         return super().on_activate(state)
 
     def on_deactivate(self, state):
         self.get_logger().info('DanceGameNode: INACTIVO')
-        self._active = False
-        self._set_game_active(False)
-
-        if self._pose_camera is not None:
-            try:
-                self._pose_camera.stop()
-            except Exception as e:
-                self.get_logger().warning(f"Error al detener PoseCamera: {e}")
-            self._pose_camera = None
-
+        with self._state_lock:
+            self._want_active = False
+            self._active = False
         if self._cam_sub is not None:
-            self.destroy_subscription(self._cam_sub)
+            try:
+                self.destroy_subscription(self._cam_sub)
+            except Exception as e:
+                self.get_logger().warning(f"Error al destruir suscripcion: {e}")
             self._cam_sub = None
-
-        try:
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
-        except Exception:
-            pass
-
+        # El hilo principal cierra ventana, audio y pose. Espera acotada (nunca infinita).
+        if not self._closed_evt.wait(timeout=CLOSE_WAIT_S):
+            self.get_logger().warning(
+                f"El cierre del juego tardo mas de {CLOSE_WAIT_S}s; se continua igualmente.")
+        # Solo ahora (ventana y audio ya liberados) se avisa al resto del sistema.
+        self._set_game_active(False)
         return super().on_deactivate(state)
 
     def on_cleanup(self, state):
+        with self._state_lock:
+            self._want_active = False
+            self._active = False
+        self._closed_evt.wait(timeout=CLOSE_WAIT_S)
         if self._mode_pub:
             self.destroy_publisher(self._mode_pub)
             self._mode_pub = None
@@ -1903,37 +2112,41 @@ class DanceGameNode(LifecycleNode):
         if self._lang_sub:
             self.destroy_subscription(self._lang_sub)
             self._lang_sub = None
-        cv2.destroyAllWindows()
+        if self._cam_sub:
+            self.destroy_subscription(self._cam_sub)
+            self._cam_sub = None
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state):
-        self._active = False
-        cv2.destroyAllWindows()
+        self.request_shutdown()
         return TransitionCallbackReturn.SUCCESS
 
-    # -- Callbacks -------------------------------------------------------------
+    # -- Callbacks --------------------------------------------------------------
     def _cb_lang(self, msg):
         self.is_english = msg.data
-        if self.game:
-            self.game.is_english = self.is_english
+        g = self.game
+        if g:
+            g.is_english = self.is_english
 
     def _image_callback(self, msg):
-        if not self._active or self._pose_camera is None:
+        pc = self._pose_camera            # copia local: el hilo principal puede ponerla a None
+        if not self._active or pc is None or not getattr(pc, "enabled", True):
             return
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
             frame = cv2.flip(frame, 0)
-            self._pose_camera.push_frame(frame)
+            pc.push_frame(frame)
         except Exception as e:
             self.get_logger().error(f'image_callback error: {e}')
 
     def _mouse_callback(self, event, x, y, flags, param):
-        if not self.game:
+        g = self.game
+        if not g:
             return
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.game.process_mouse(x, y, True)
+            g.process_mouse(x, y, True)
         elif event == cv2.EVENT_MOUSEMOVE:
-            self.game.process_mouse(x, y, False)
+            g.process_mouse(x, y, False)
 
     def _set_game_active(self, value: bool):
         if self._game_active_pub:
@@ -1944,55 +2157,80 @@ class DanceGameNode(LifecycleNode):
 
     def publish_idle(self):
         if self._mode_pub:
-            msg = String()
-            msg.data = "idle"
-            self._mode_pub.publish(msg)
+            try:
+                msg = String()
+                msg.data = "idle"
+                self._mode_pub.publish(msg)
+            except Exception:
+                pass
 
-    # -- Display loop (DEBE correr en el main thread) --------------------------
+    @staticmethod
+    def _focus_window(win_name):
+        time.sleep(0.4)
+        # timeout: evita que xdotool --sync quede colgado si la ventana ya se cerro
+        os.system(f"timeout 3 xdotool search --sync --name '{win_name}' "
+                  "windowactivate --sync windowraise 2>/dev/null")
+
+    # -- Hilo principal: dueno de la ventana --------------------------------------
     def run_display_main_thread(self):
-        win_name = WIN_NAME
-
-        while rclpy.ok():
-            while not self._active and rclpy.ok():
+        while rclpy.ok() and not self._shutdown_evt.is_set():
+            with self._state_lock:
+                go = self._want_active and self._run_state == RunState.INACTIVE
+                if go:
+                    self._set_run_state(RunState.INITIALIZING)
+                    self._closed_evt.clear()
+            if not go:
                 time.sleep(0.05)
+                continue
+            self._run_session()
 
-            if not rclpy.ok():
-                break
-
-            music = MusicManager()
-
-            pose_camera = PoseCamera(model_path=YOLO_MODEL)
-            self._pose_camera = pose_camera
-
-            game = None
-
-            def on_pose_confirmed(pose_set):
-                if game:
-                    game.handle_input(pose_set)
-
-            pose_camera.on_pose_confirmed = on_pose_confirmed
-            pose_camera.start()
+    def _run_session(self):
+        win_name = WIN_NAME
+        music = None
+        pose_camera = None
+        window_created = False
+        failed = False
+        try:
+            _log_t("activado -> abriendo ventana")
+            self.game = None
 
             cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+            window_created = True
             cv2.resizeWindow(win_name, WIN_W, WIN_H)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
             cv2.setMouseCallback(win_name, self._mouse_callback)
+            cv2.imshow(win_name, _splash("Loading..." if self.is_english else "Cargando..."))
+            cv2.waitKey(1)
+            _log_t("ventana visible")
 
-            def _focus():
-                time.sleep(0.4)
-                os.system(f"xdotool search --sync --name '{win_name}' "
-                          "windowactivate --sync windowraise 2>/dev/null")
-            threading.Thread(target=_focus, daemon=True).start()
+            threading.Thread(target=self._focus_window, args=(win_name,), daemon=True).start()
+            if not _BACKGROUND_IMAGES:
+                threading.Thread(target=_load_backgrounds, daemon=True).start()
+
+            music = MusicManager()
+            _log_t("MusicManager listo")
+
+            pose_camera = PoseCamera(model_path=YOLO_MODEL)
+            self._pose_camera = pose_camera
+
+            def on_pose_confirmed(pose_set):
+                g = self.game
+                if g:
+                    g.handle_input(pose_set)
+
+            pose_camera.on_pose_confirmed = on_pose_confirmed
 
             game = DanceGame(music=music, pose_camera=pose_camera,
                              is_english=self.is_english)
             self.game = game
+            _log_t("DanceGame listo (renderer + fondo del menu)")
+
+            with self._state_lock:
+                self._set_run_state(RunState.ACTIVE)
+
             last = time.time()
-            shown_at = time.time()
-
-            while rclpy.ok() and self._active:
-
+            while rclpy.ok() and self._want_active and not self._shutdown_evt.is_set():
                 now = time.time()
                 dt = min(now - last, 0.05)
                 last = now
@@ -2001,8 +2239,9 @@ class DanceGameNode(LifecycleNode):
                     game.is_english = self.is_english
 
                 if game.state == GameState.EXITED:
-                    self._active = False
-                    self.publish_idle()
+                    with self._state_lock:
+                        self._want_active = False
+                        self._active = False
                     break
 
                 game.update(dt)
@@ -2016,30 +2255,68 @@ class DanceGameNode(LifecycleNode):
                         game.state = GameState.SUMMARY
                     elif game.state in [GameState.WELCOME, GameState.MENU]:
                         game.state = GameState.CONFIRM_EXIT
+                    elif game.state == GameState.MODE_SELECT:
+                        game.state = GameState.WELCOME
                     else:
                         game.state = GameState.MENU
 
                 direction = KEY_MAP.get(key)
                 if direction:
                     game.handle_input(direction)
+        except Exception:
+            failed = True
+            self.get_logger().error("Error en la sesion del juego:\n" + traceback.format_exc())
+        finally:
+            self._close_session(win_name, window_created, music, pose_camera, failed)
 
-            pose_camera.stop()
-            music.quit()
-            self._pose_camera = None
+    def _close_session(self, win_name, window_created, music, pose_camera, failed):
+        """Cierre idempotente, siempre en el hilo principal (dueno de la ventana)."""
+        with self._state_lock:
+            if self._run_state == RunState.INACTIVE:
+                return                                  # ya cerrado
+            self._set_run_state(RunState.ERROR if failed else RunState.CLOSING)
+            if failed:
+                self._want_active = False               # no reintentar en bucle
+                self._active = False
 
+        self.game = None                # el mouse/pose ya no entran al juego
+        self._pose_camera = None        # el image_callback deja de empujar frames
+
+        if pose_camera is not None:
+            try:
+                pose_camera.active_detection = False
+                pose_camera.enabled = False
+                pose_camera.on_pose_confirmed = None
+                pose_camera.stop()
+            except Exception as e:
+                self.get_logger().warning(f"Error al detener PoseCamera: {e}")
+        if music is not None:
+            try:
+                music.quit()
+            except Exception as e:
+                self.get_logger().warning(f"Error al cerrar audio: {e}")
+        if window_created:
             try:
                 cv2.destroyAllWindows()
-                cv2.waitKey(1)
-            except Exception:
-                pass
+                for _ in range(3):
+                    cv2.waitKey(1)
+            except Exception as e:
+                self.get_logger().warning(f"Error al cerrar la ventana: {e}")
 
-            self.publish_idle()
+        if failed:
+            self._set_game_active(False)     # que la interfaz no quede en la pantalla de carga
+        self.publish_idle()
+
+        with self._state_lock:
+            self._set_run_state(RunState.INACTIVE)
+            self._closed_evt.set()           # listo para reabrir
 
 
 # =============================================================================
-#  MAIN -- mismo patron que memoria_node.py
+#  MAIN
 # =============================================================================
 def main(args=None):
+    faulthandler.enable()    # si hay segfault, imprime la traza de Python de cada hilo
     rclpy.init(args=args)
     node = DanceGameNode()
 
@@ -2051,24 +2328,15 @@ def main(args=None):
     except KeyboardInterrupt:
         print("Interrupcion recibida, cerrando...")
     finally:
-        node._active = False
-
-        try:
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
-        except Exception:
-            pass
-
+        node.request_shutdown()
         try:
             node.trigger_deactivate()
             print("DanceGameNode transicionado a INACTIVE")
         except Exception as e:
             print(f"Error al desactivar: {e}")
-
-        time.sleep(2.0)
-
+        time.sleep(0.5)
         spin_thread.join(timeout=3.0)
-        print("DanceGameNode listo para ser reactivado (estado INACTIVE)")
+        print("DanceGameNode finalizado")
 
 
 if __name__ == "__main__":

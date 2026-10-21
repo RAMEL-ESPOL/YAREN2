@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <lifecycle_msgs/srv/change_state.hpp>
 #include <lifecycle_msgs/msg/transition.hpp>
 #include <lifecycle_msgs/msg/state.hpp>
@@ -1079,16 +1080,30 @@ public:
         logger_ = log;
         currentPage = 0;
         songs = {
-            // Canciones base originales
-            { "aramsamsam",    "ARA RAM SAM SAM",         "Luli Pampín",         "Luli Pampín - ARAM SAM SAM 2021.mp3",                                           {220, 100, 255}, 3.0 },
-            { "gorila",        "BAILE DE GORILA",         "CantaJuego",          "CantaJuego - El Baile del Gorila.mp3",                                          {180,  60, 255}, 2.5 },
+            // Canciones con video
+            { "aramsamsam", "ARA RAM SAM SAM", "Luli Pampín", "AramSamSam.mp3", {220,100,255}, 3.0 },
+            { "gorila", "BAILE DE GORILA", "CantaJuego", "BaileGorila.mp3", {180,60,255}, 2.5 },
+            { "libresoy", "LIBRE SOY", "Martina Stoessel", "LibreSoy.mp3", {255,180,50}, 1.8 },
+            { "bailedelsapo", "BAILE DEL SAPO", "Canción infantil", "BaileDelSapo.mp3", {60,200,90}, 3.0 },
+            { "gallinaturuleca", "GALLINA TURULECA", "Canción infantil", "GallinaTuruleca.mp3", {60,180,255}, 3.2 },
+            { "pollitopio", "POLLITO PÍO", "Canción infantil", "PollitoPio.mp3", {50,215,255}, 3.0 },
+            { "vacalola", "LA VACA LOLA", "Canción infantil", "VacaLola.mp3", {220,160,60}, 3.0 },
+            { "hakunamatata", "HAKUNA MATATA", "El Rey León", "HakunaMatata.mp3", {60,140,230}, 2.6 },
+            { "amigofiel", "AMIGO FIEL", "Toy Story", "AmigoFiel.mp3", {200,140,70}, 2.4 },
+            { "bruno", "NO HABLAMOS DE BRUNO", "Encanto", "Bruno.mp3", {140,200,80}, 2.8 },
+            { "apt", "APT.", "ROSÉ & Bruno Mars", "APT.mp3", {180,60,255}, 3.0 },
+            { "wakawaka", "WAKA WAKA", "Shakira", "WakaWaka.mp3", {40,200,255}, 3.0 },
+            { "vidaloca", "LIVIN' LA VIDA LOCA", "Ricky Martin", "VidaLoca.mp3", {40,90,230}, 2.9 },
+            { "yakkomundo", "EL MUNDO DE YAKKO", "Animaniacs", "YakkoMundo.mp3", {90,170,255}, 3.0 },
+            { "lallorona", "LA LLORONA", "Coco", "LaLlorona.mp3", {200,80,160}, 2.2 },
+            { "goldenkpop", "GOLDEN", "KPop Demon Hunters", "GoldenKpop.mp3", {255,200,60}, 2.8 },
+            { "sodapop", "SODA POP", "KPop Demon Hunters", "SodaPop.mp3", {200,120,255}, 3.0 },
+            { "youridol", "YOUR IDOL", "KPop Demon Hunters", "YourIdol.mp3", {60,60,220}, 3.0 },
+            // Solo audio
             { "barney",        "BARNEY ES UN DINOSAURIO", "Barney y sus amigos", "Intro de Barney y sus amigos.mp3",                                              {200, 100, 100}, 2.0 },
             { "chipichapa",    "CHOPI CHOPI",             "Christell",           "Chipi chipi chapa chapa dubi dubi daba daba Christell - Dubidubidu Subtitulada en español.mp3", { 50, 200, 255}, 3.5 },
-            { "libresoy",      "LIBRE SOY",               "Martina Stoessel",    "Martina Stoessel_ Libre Soy - Frozen_ Una Aventura Congelada.mp3",              {255, 180,  50}, 1.8 },
             { "sasa",          "SA SA",                   "Luli Pampín",         "Luli Pampín - SASA LA SERPIENTE (Official Video).mp3",                          { 80, 255, 180}, 2.8 },
             { "sitienesganas", "SI TIENES GANAS",         "Luli Pampín",         "Luli Pampín - SI TÚ TIENES MUCHAS GANAS DE APLAUDIR - Official Video.mp3",      { 60, 180, 255}, 3.2 },
-
-            // Nuevas canciones añadidas desde el directorio audios
             { "superestrella", "SUPERESTRELLA",           "Aitana",              "Aitana - SUPERESTRELLA.mp3",              {255, 100, 150}, 2.6 },
             { "balada",        "BALADA",                  "Desconocido",         "Balada.mp3",                              {100, 150, 255}, 2.0 },
             { "rosapastel",    "ROSA PASTEL",             "Belanova",            "Belanova - Rosa Pastel.mp3",              {255, 182, 193}, 2.5 },
@@ -1155,6 +1170,7 @@ public:
 
     void reset() {
         killAudio();
+        closeVideo();
         viewMode_ = 0;
         state = RadioState::SELECTING;
         currentSong = -1;
@@ -1634,6 +1650,7 @@ private:
     }
     void stopToList() {
         killAudio();
+        closeVideo();
         viewMode_ = 0;
         paused_ = false;
         state = RadioState::SELECTING;
@@ -1880,8 +1897,9 @@ private:
         updateTheme(s.color);
         frame.setTo(nBg());
         if (songDuration > 0.0 && !repeatOn_ && t >= songDuration) { playStep(+1); return; }
+        if (viewMode_ != 2) closeVideo();
         if (viewMode_ == 1) { renderFullFace(frame, s, t, beat); return; }
-        if (viewMode_ == 2) { renderVideoPlaceholder(frame); return; }
+        if (viewMode_ == 2) { renderVideo(frame, s, t, beat); return; }
         drawPanelBase(frame);
         drawSidebar(frame, true);
 
@@ -1983,7 +2001,77 @@ private:
     }
 
 
-    int viewMode_ { 0 };   // 0 normal, 1 cara completa, 2 video (futuro)
+
+    // ---- video de la cancion (mudo; el audio sale del mp3) ----
+    cv::VideoCapture vcap_;
+    cv::Mat vframe_;
+    int    vSong_ { -1 };
+    double vFps_ { 30.0 }, vDur_ { 0.0 };
+    long   vIdx_ { 0 };
+
+    static std::string videoFor(const std::string& id) {
+        static const std::map<std::string, std::string> M = {
+            {"aramsamsam","aramsamsamvideo.mp4"}, {"gorila","bailegorilavideo.mp4"}, {"libresoy","libresoyvideo.mp4"},
+            {"bailedelsapo","bailedelsapovideo.mp4"}, {"gallinaturuleca","gallina_turuleca.mp4"},
+            {"pollitopio","pollito_pio.mp4"}, {"vacalola","vaca_lola.mp4"},
+            {"hakunamatata","hakunamatatavideo.mp4"}, {"amigofiel","amigofielvideo.mp4"},
+            {"bruno","brunovideo.mp4"}, {"apt","aptvideo.mp4"}, {"wakawaka","wakawakavideo.mp4"},
+            {"vidaloca","vidalocovideo.mp4"}, {"yakkomundo","Yakko-Mundo.mp4"}, {"lallorona","lloronavideo.mp4"},
+            {"goldenkpop","h264/Golden-Kpop.mp4"}, {"sodapop","h264/Soda-Pop.mp4"}, {"youridol","h264/Your-Idol.mp4"}};
+        auto it = M.find(id);
+        return it == M.end() ? "" : it->second;
+    }
+    void closeVideo() {
+        if (vcap_.isOpened()) vcap_.release();
+        vframe_.release();
+        vSong_ = -1; vIdx_ = 0; vDur_ = 0.0;
+    }
+    void renderVideo(cv::Mat& frame, const SongInfo& s, double t, double beat) {
+        frame.setTo(cv::Scalar(0, 0, 0));
+        if (vSong_ != currentSong) {
+            closeVideo();
+            vSong_ = currentSong;
+            std::string v = videoFor(s.id);
+            if (!v.empty()) {
+                std::string p = fs::current_path().string() + "/src/YAREN2/yaren_radio/videos/" + v;
+                if (fs::exists(p) && vcap_.open(p)) {
+                    double fps = vcap_.get(cv::CAP_PROP_FPS), n = vcap_.get(cv::CAP_PROP_FRAME_COUNT);
+                    vFps_ = (fps > 1.0 && fps < 130.0) ? fps : 30.0;
+                    vDur_ = (n > 0) ? n / vFps_ : 0.0;
+                    vIdx_ = 0;
+                } else {
+                    RCLCPP_WARN(logger_, "Video no disponible: %s", p.c_str());
+                }
+            }
+        }
+        if (vcap_.isOpened()) {
+            double target = (vDur_ > 0.0) ? std::fmod(t, vDur_) : t;
+            long ti = (long)(target * vFps_);
+            if (vIdx_ > ti + 2 || ti - vIdx_ > 15) {            // desfase: re-sincroniza
+                vcap_.set(cv::CAP_PROP_POS_FRAMES, (double)ti);
+                vIdx_ = ti;
+            }
+            if (vIdx_ <= ti) {
+                cv::Mat f;
+                if (vcap_.read(f) && !f.empty()) { vframe_ = f; ++vIdx_; }
+                else { vcap_.set(cv::CAP_PROP_POS_FRAMES, 0); vIdx_ = 0; }
+            }
+        }
+        if (!vframe_.empty()) {
+            cv::Mat bgr = vframe_;
+            if (bgr.channels() == 4) cv::cvtColor(bgr, bgr, cv::COLOR_BGRA2BGR);
+            double k = std::min(frame.cols / (double)bgr.cols, frame.rows / (double)bgr.rows);
+            cv::Mat rs;
+            cv::resize(bgr, rs, cv::Size(std::max(1, (int)(bgr.cols * k)), std::max(1, (int)(bgr.rows * k))), 0, 0, cv::INTER_AREA);
+            rs.copyTo(frame(cv::Rect((frame.cols - rs.cols) / 2, (frame.rows - rs.rows) / 2, rs.cols, rs.rows)));
+        } else {
+            // sin video para esta cancion: visualizador animado
+            frame.setTo(nBg());
+            drawVideoView(frame, cv::Rect(0, 0, frame.cols, frame.rows), s, t, beat);
+        }
+    }
+
+    int viewMode_ { 0 };   // 0 normal, 1 cara completa, 2 video
     void renderFullFace(cv::Mat& frame, const SongInfo& s, double t, double beat) {
         frame.setTo(cv::Scalar(0, 0, 0));
         drawAnimatedFace(frame, s, t, beat);
@@ -3244,9 +3332,8 @@ public:
             }
         }
         menuPlaylist = {
-            ws_dir + "/src/YAREN2/yaren_radio/audios/Intro1.mp3",
-            ws_dir + "/src/YAREN2/yaren_radio/audios/Intro2.mp3",
-            ws_dir + "/src/YAREN2/yaren_radio/audios/Intro3.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/WiiSound1.mp3",
+            ws_dir + "/src/YAREN2/yaren_radio/audios/WiiSound2.mp3",
         };
         radioApp.onBack = [this]() {
             std::lock_guard<std::mutex> lock(navMutex);
@@ -3396,12 +3483,14 @@ public:
 
         sttListeningSubscription_ = this->create_subscription<std_msgs::msg::Bool>(
             "/stt_listening", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
-                if (activeMode == "yaren_chat") {
+                sttListening_ = msg->data;
+                if (!msg->data) releasePtt();
+                if (activeMode == "yaren_chat" || activeMode == "yaren_chatbot") {
                     if (msg->data) {
                         // Es el turno del niño
                         std::thread([this]() {
                             showCustomOverlay(FaceOverlay::MIC_PLAYING,
-                                isEnglish ? "Your turn Speak now" : "Tu turno, habla ahora",
+                                isEnglish ? "Hold the button and speak" : "Mantén el botón y habla",
                                 2.0);
                         }).detach();
                     } else {
@@ -3478,6 +3567,8 @@ public:
         micOwnerPublisher_ = this->create_publisher<std_msgs::msg::String>("/yaren/mic_owner", qos_mic);
         micTestPublisher_ = this->create_publisher<std_msgs::msg::Bool>("/yaren/mic_test", 10); 
 
+        pttPub_ = this->create_publisher<std_msgs::msg::Bool>("/yaren/ptt", 10);
+        chatStartPub_ = this->create_publisher<std_msgs::msg::Empty>("/chat_start", 10);
         wakeEventSubscription = this->create_subscription<std_msgs::msg::Bool>(
             "/yaren/wake_event", 10, [this](const std_msgs::msg::Bool::SharedPtr msg) {
                 resetIdleTimer(); // Despertar a Yaren si escucha su nombre
@@ -3754,6 +3845,13 @@ private:
         std::string absCwd = std::filesystem::current_path().string();
         std::string mvDir  = absCwd + "/src/YAREN2/yaren_movements/yaren_movements/";
         std::string rdDir  = absCwd + "/src/YAREN2/yaren_radio/yaren_radio/";
+        const std::string cbCmd =
+            "bash -c 'source " + absCwd + "/install/setup.bash && source " + absCwd + "/venv_yaren/bin/activate && "
+            "ros2 run yaren_chatbot stt_node.py --ros-args -p use_ptt:=true -p speaking_topic:=/audio_playing & "
+            "ros2 run yaren_chatbot chat_node.py --ros-args -p out_topic:=/yaren/speak_direct -p use_online:=false & "
+            "wait'";
+        const std::string cbStop =
+            "for pid in $(ps aux | grep -E 'stt_node.py|chat_node.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done";
 
         rootMenuItems = {
             MI("modo_prueba", isEnglish ? "FOR PARENTS" : "PARA PAPÁS", isEnglish ? "diagnostics and tests" : "diagnóstico y tests", {255,140,0}, "", "", true, "sub_modo_prueba", "test"),
@@ -3810,6 +3908,10 @@ private:
             "", 
             "chat", 
             {"llm_lifecycle_node", "stt_lifecycle_node", "tts_lifecycle_node"}),
+            MI("yaren_chatbot",
+               isEnglish ? "OFFLINE CHAT" : "SIN INTERNET",
+               isEnglish ? "Chat with Yaren, no internet" : "Charla con Yaren sin internet",
+               {120,200,255}, cbCmd.c_str(), cbStop.c_str(), false, "", "chat"),
             
         }};
         subMenuMap["sub_yaren_dice"] = { isEnglish ? "YAREN SAYS" : "YAREN DICE", {64,171,255}, {
@@ -4233,6 +4335,19 @@ private:
             return;
         }
 
+        // --- Pulsar para hablar ---
+        if (event == cv::EVENT_LBUTTONDOWN && talkBtnRect_.area() > 0 && talkBtnRect_.contains({x, y})) {
+            pttHeld_ = true;
+            if (pttPub_) { std_msgs::msg::Bool m; m.data = true; pttPub_->publish(m); }
+            return;
+        }
+        if (event == cv::EVENT_LBUTTONUP && pttHeld_.load()) {
+            releasePtt();
+            sttListening_ = false;   // oculta el boton hasta que el STT vuelva a escuchar
+            return;
+        }
+        if (pttHeld_.load()) return;
+
         // FIX-M: hoveredSettings/hoveredPower son atomic<bool>, safe sin lock adicional
         if (event == cv::EVENT_MOUSEMOVE) {
             hoveredSettings = settingsButtonRect.contains({x, y});
@@ -4472,6 +4587,13 @@ private:
                 modePublisher->publish(msg);
             }
 
+            if (item.id == "yaren_chatbot") {   // Yaren saluda primero
+                std::thread([this]() {
+                    std::this_thread::sleep_for(std::chrono::seconds(4));
+                    if (activeMode == "yaren_chatbot" && chatStartPub_)
+                        chatStartPub_->publish(std_msgs::msg::Empty());
+                }).detach();
+            }
             // 7. Ejecutar el script/comando del modo si lo hay
             if (!cleanCmd.empty()) {
                 std::system(cleanCmd.c_str());   // bloquea hasta que el programa termina
@@ -4486,6 +4608,30 @@ private:
 
         }).detach(); // <- Esto "libera" el hilo para que corra por su cuenta sin trabar la pantalla
     }
+    // ---- Pulsar para hablar ----
+    void releasePtt() {
+        if (!pttHeld_.exchange(false)) return;
+        if (!pttPub_) return;
+        std_msgs::msg::Bool m; m.data = false;
+        pttPub_->publish(m);
+    }
+
+    void renderTalkButton(cv::Mat& frame) {
+        const int W = frame.cols, H = frame.rows;
+        talkBtnRect_ = cv::Rect(W / 2 - 190, H - 104, 380, 84);
+        const bool held = pttHeld_.load();
+        const double t = kd::now();
+        if (held) {
+            int grow = 4 + (int)(6.0 * std::fabs(std::sin(t * 6.0)));
+            cv::Rect g(talkBtnRect_.x - grow, talkBtnRect_.y - grow,
+                       talkBtnRect_.width + 2 * grow, talkBtnRect_.height + 2 * grow);
+            kd::strokeRound(frame, g, g.height / 2, kd::pal(0), 4);
+        }
+        std::string label = held ? (isEnglish ? "LISTENING..." : "ESCUCHANDO...")
+                                 : (isEnglish ? "HOLD TO TALK" : "MANTÉN PARA HABLAR");
+        kd::button(frame, talkBtnRect_, label, held ? kd::pal(0) : cv::Scalar(90, 200, 90), held, true, 0.8);
+    }
+
     void renderSettingsButton(cv::Mat& frame) {
         int W = frame.cols, btnSz = 44, margin = 10;
         settingsButtonRect = {W - btnSz - margin, margin, btnSz, btnSz};
@@ -5270,7 +5416,7 @@ private:
         }
 
         // SALIR / DETENER
-        bool hasStop = (activeMode == "yaren_chat" ||
+        bool hasStop = (activeMode == "yaren_chat" || activeMode == "yaren_chatbot" ||
                         activeMode == "yaren_dice_sin_ayuda" ||
                         activeMode == "yaren_dice_sesion");
         exitButtonRect = cv::Rect(24, H - 62, 120, 40);
@@ -5454,7 +5600,7 @@ private:
 
         // --- Botones inferiores (pildoras) ---
         const int btnH = 40, btnY = H - 58, gap = 16, stopW = 300, navW = 150;
-        bool hasStop = (activeMode == "yaren_chat" ||
+        bool hasStop = (activeMode == "yaren_chat" || activeMode == "yaren_chatbot" ||
                         activeMode == "yaren_dice_sin_ayuda" ||
                         activeMode == "yaren_dice_sesion");
         bool hasBack = (navStack.size() > 1);
@@ -6821,6 +6967,15 @@ private:
                 }
             }
 
+            {
+                bool showTalk = false;
+                if (!configuring.load() && !sWifi && !sSettings && !sRadio && !sRoutines && sttListening_.load()) {
+                    std::lock_guard<std::mutex> lock(navMutex);
+                    showTalk = navStack.empty() && (activeMode == "yaren_chat" || activeMode == "yaren_chatbot");
+                }
+                if (showTalk) renderTalkButton(frame);
+                else { talkBtnRect_ = cv::Rect(); releasePtt(); }
+            }
             // 4. DETERMINAR SI YAREN ESTÁ INACTIVO
             // Solo se activa el screensaver si Yaren está en la cara pura:
             // sin menú, sin modo activo, sin settings, sin radio, sin rutinas,
@@ -7322,6 +7477,11 @@ private:
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr  sttListeningSubscription_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lipsyncSub_;
     std::atomic<bool> first_listen_done { false };
+    rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr chatStartPub_;
+    std::atomic<bool> sttListening_ { false };
+    std::atomic<bool> pttHeld_ { false };
+    cv::Rect talkBtnRect_ {0,0,0,0};
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pttPub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr faceScreenPublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   modePublisher;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr micOwnerPublisher_;

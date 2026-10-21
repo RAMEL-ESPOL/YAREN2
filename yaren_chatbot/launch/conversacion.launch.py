@@ -8,8 +8,8 @@ from launch_ros.parameter_descriptions import ParameterValue as PV
 
 def generate_launch_description():
     args = [
-        DeclareLaunchArgument("vosk_model", default_value="~/yaren_models/vosk-model-small-es-0.42"),
-        DeclareLaunchArgument("piper_model", default_value="~/yaren_models/es_MX-claude-high.onnx"),
+        DeclareLaunchArgument("vosk_model", default_value="/home/roberto/robotis_ws/src/YAREN2/yaren_chat/models/STT/vosk-model-small-es-0.42"),
+        DeclareLaunchArgument("piper_model", default_value="/home/roberto/robotis_ws/src/YAREN2/yaren_chat/models/TTS/es_MX-claude-high.onnx"),
         DeclareLaunchArgument("mic_device", default_value=""),
         DeclareLaunchArgument("speaker_device", default_value=""),
         DeclareLaunchArgument("gain", default_value="1.05"),

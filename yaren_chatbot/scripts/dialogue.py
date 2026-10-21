@@ -5,7 +5,7 @@
 - Ignora ruido ("eh", "mmm", "[unk]"), entiende "repite" / "qué?" y reintenta con otras palabras.
 - El flujo vive en data/conversacion.json.
 """
-import json, random, re, time
+import difflib, json, random, re, time
 from kb import norm, same, fono
 
 GREET = {"hola", "ola", "buenas", "buenos", "hey", "saludos", "hello"}
@@ -79,6 +79,7 @@ class Dialogue:
         self.kb = kb
         self.timeout = timeout
         self.rng = random.Random(seed)
+        self.meta = {}
         self.reset()
 
     # ---------- estado ----------
@@ -247,9 +248,40 @@ class Dialogue:
                 if self._kb(text, strong=True) or (len(toks) == 1 and self._yesno(toks, ntext) == "si"):
                     return None                       # ej. "gracias" o "sí" no son una respuesta, son charla
                 return self._free(node, text, ntext, toks, node.get("reply_free"))
-            return None
+            return self._lenient(nid, opts, toks)
         if kind == "free":
             return self._free(node, text, ntext, toks, node.get("reply"))
+        return None
+
+    # ---------- comprensión permisiva (voz de niño) ----------
+    def set_meta(self, meta):
+        """Metadatos del STT (stt_meta): conf, fuzzy, raw. Llamar antes de handle()."""
+        self.meta = meta if isinstance(meta, dict) else {}
+
+    def _lenient(self, nid, opts, toks):
+        """Último intento: la opción esperada que más se parece (letras o sonido). Siempre confirma."""
+        low = self.meta.get("conf", 1.0) < 0.6 or self.meta.get("fuzzy")
+        cutoff = 0.5 if low else 0.62
+        cands = set(with_pairs(toks)) | set(norm(self.meta.get("raw", "")).split())
+        best, bs = None, 0.0
+        for key, o in opts.items():
+            if o.get("generic"):
+                continue
+            for k in o.get("kw", []):
+                k = norm(k).strip()
+                if not k or " " in k:
+                    continue
+                for t in cands:
+                    if len(t) < 2:
+                        continue
+                    s = max(difflib.SequenceMatcher(None, k, t).ratio(),
+                            difflib.SequenceMatcher(None, fono(k), fono(t)).ratio())
+                    if s > bs:
+                        best, bs = key, s
+        if best and bs >= cutoff:
+            r = self._res(self.nodes[nid], best, opts[best])
+            r["confirm"] = self.flow["confirm"]
+            return r
         return None
 
     # ---------- avance ----------

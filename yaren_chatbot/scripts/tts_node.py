@@ -27,7 +27,7 @@ class TTSNode(Node):
         P = self.declare_parameter
         share = get_package_share_directory("yaren_chatbot")
         P("backend", "piper")            # piper | espeak
-        P("model_path", "~/yaren_models/es_MX-claude-high.onnx")
+        P("model_path", "/home/roberto/robotis_ws/src/YAREN2/yaren_chat/models/TTS/es_MX-claude-high.onnx")
         P("length_scale", 0.85)           # >1 = más lento (más claro para niños)
         P("speaker_id", -1)
         P("volume", 1.0)
