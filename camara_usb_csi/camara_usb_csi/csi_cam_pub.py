@@ -4,20 +4,21 @@ import cv2
 import rclpy
 from rclpy.lifecycle import Node as LifecycleNode
 from rclpy.lifecycle import State, TransitionCallbackReturn
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
 
 def gstreamer_pipeline(
-    sensor_id=0, capture_width=1920, capture_height=1080,
-    display_width=1920, display_height=1080, framerate=30, flip_method=0,
+    sensor_id=0, capture_width=1280, capture_height=720,
+    display_width=854, display_height=480, framerate=30, flip_method=0,
 ):
     return (
         "nvarguscamerasrc sensor-id=%d ! "
         "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
         "nvvidconv flip-method=%d ! "
         "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
-        "videoconvert ! video/x-raw, format=(string)BGR ! appsink"
+        "videoconvert ! video/x-raw, format=(string)BGR ! appsink drop=true max-buffers=1 sync=false"
         % (sensor_id, capture_width, capture_height, framerate,
            flip_method, display_width, display_height)
     )
@@ -41,10 +42,10 @@ class CSICameraLifecycle(LifecycleNode):
         super().__init__('csi_cam_node')
 
         self.declare_parameter('sensor_id',      0)
-        self.declare_parameter('capture_width',  1920)
-        self.declare_parameter('capture_height', 1080)
-        self.declare_parameter('display_width',  1920)
-        self.declare_parameter('display_height', 1080)
+        self.declare_parameter('capture_width',  1280)
+        self.declare_parameter('capture_height', 720)
+        self.declare_parameter('display_width',  854)
+        self.declare_parameter('display_height', 480)
         self.declare_parameter('framerate',      30)
         self.declare_parameter('flip_method',    0)
 

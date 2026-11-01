@@ -17,6 +17,10 @@
 #include <chrono>
 #include <thread>
 #include <mutex>
+#include <atomic>
+#include <cstdio>
+#include <cmath>
+#include <cctype>
 #include <map>
 #include <cstdlib>
 #include <atomic>
@@ -33,7 +37,9 @@
 
 namespace fs = std::filesystem;
 
+
 #include <cstdint>
+#include <cctype>
 // =============================================================================
 //  txu: texto con acentos y ñ para las fuentes Hershey de OpenCV (solo ASCII)
 //  Dibuja la letra base y le pinta encima la tilde / acento / dieresis.
@@ -1215,7 +1221,7 @@ public:
                     started = (Mix_FadeInMusic(currentMusic, -1, 500) == 0);
                 }
                 if (started) {
-                    launchDance();
+                    launchDance(songs[idx].id);
                     return;
                 }
                 if (audioMutex_) {
@@ -1232,13 +1238,16 @@ public:
         }
         std::string cmd = "mpg123 -q \"" + audioPath + "\" &";
         std::thread([cmd]() { std::system(cmd.c_str()); }).detach();
-        launchDance();
+        launchDance(songs[idx].id);
     }
 
     void handleMouse(int ev, int x, int y) {
         mousePos = {x, y, 1, 1};
         const cv::Point pt(x, y);
         hovPt_ = pt;
+        if (state == RadioState::PLAYING && viewMode_ == 0 && (volOpen_ || volDrag_)) {
+            if (volHandleMouse(ev, pt)) return;
+        }
         if (ev != cv::EVENT_LBUTTONDOWN) return;
         auto in = [&](const cv::Rect& r) { return r.area() > 0 && r.contains(pt); };
         if (fav_.size() != songs.size()) fav_.assign(songs.size(), false);
@@ -1268,7 +1277,7 @@ public:
             if (in(heartBtn_))   { if (currentSong >= 0 && currentSong < (int)fav_.size()) fav_[currentSong] = !fav_[currentSong]; return; }
             if (in(repeatBtn_))  { repeatOn_ = !repeatOn_; return; }
             if (in(queueBtn_))   { randomSong(true); return; }
-            if (in(volBtn_))     { toggleMute(); return; }
+            if (in(volBtn_))     { volOpenBar(); return; }
             if (in(dotsBtn_) || in(viewBtn)) { viewMode_ = 1; return; }
         }
     }
@@ -1319,13 +1328,40 @@ private:
     std::mutex* audioMutex_ {nullptr};
 
     std::atomic<int> danceGen_ { 0 };
-    void launchDance() {
+    std::chrono::steady_clock::time_point lastStop_{};
+    void launchDance(const std::string& songId = "", double offsetSec = 0.0) {
+        // cambio de cancion con baile en curso: detenerlo con transicion a base
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - lastStop_).count() >= 3.2 &&
+            std::system("pgrep -f '[y]aren_dance_radio.py' > /dev/null 2>&1") == 0)
+            stopDance();
         const int gen = danceGen_.load();
-        std::thread([this, gen]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-            if (danceGen_.load() != gen) return;      // pararon la musica antes de tiempo
-            std::system("nice -n 19 python3 src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &");
+        const double startEpoch = std::chrono::duration<double>(
+            std::chrono::system_clock::now().time_since_epoch()).count() - offsetSec;
+        // si se acaba de detener un baile, espera a que termine de volver a base
+        const double sinceStop = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - lastStop_).count();
+        const double wait = sinceStop < 3.2 ? 3.2 - sinceStop : 0.0;
+        std::thread([this, gen, songId, startEpoch, wait]() {
+            if (wait > 0.0)
+                std::this_thread::sleep_for(std::chrono::milliseconds((int)(wait * 1000)));
+            if (danceGen_.load() != gen) return;
+            std::string sid;
+            for (char c : songId) if (std::isalnum((unsigned char)c)) sid += (char)std::tolower((unsigned char)c);
+            char st[48];
+            std::snprintf(st, sizeof(st), "%.3f", startEpoch);
+            std::string cmd = "SONG=" + sid + " SONG_START=" + st +
+                " python3 -u src/YAREN2/yaren_movements/yaren_movements/yaren_dance_radio.py &";
+            std::system(cmd.c_str());
         }).detach();
+    }
+
+    void stopDance() {
+        ++danceGen_;
+        lastStop_ = std::chrono::steady_clock::now();
+        // el baile (Python) recibe SIGTERM y regresa solo a base con transicion suave
+        std::system("pkill -TERM -f '[y]aren_dance_radio.py'");
+        // respaldo: si no hay baile corriendo 4 s despues, lleva a base
+        std::system(R"CMD((sleep 4; pgrep -f '[y]aren_dance_radio.py' > /dev/null || timeout 5 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory "{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8','joint_9','joint_10','joint_11','joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}") > /dev/null 2>&1 &)CMD");
     }
 
     // FIX-E: implementación interna de killAudio (sin lock, el caller lo gestiona)
@@ -1340,7 +1376,7 @@ private:
         }
         currentSongIndex = -1;
         std::system("for pid in $(ps aux | grep -E 'yaren_dance_radio.py' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
-        std::system("nice -n 19 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
+        std::system("timeout 5 nice -n 19 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\" > /dev/null 2>&1 &");
     }
 
     double probeDuration(const std::string& path) {
@@ -1470,6 +1506,15 @@ private:
     std::chrono::steady_clock::time_point pauseStart_;
     bool   repeatOn_ { true };
     int    preMuteVol_ { 64 };
+    // ---- barra de volumen (0-150 %, sonido extra de Ubuntu) ----
+    int  volPct_ { 100 };
+    int  preMutePct_ { 60 };
+    bool volMuted_ { false };
+    bool volOpen_ { false };
+    bool volDrag_ { false };
+    std::chrono::steady_clock::time_point volLastTouch_ {};
+    std::chrono::steady_clock::time_point volLastApply_ {};
+    cv::Rect volBox_ {0, 0, 0, 0}, volHit_ {0, 0, 0, 0}, volTrack_ {0, 0, 0, 0}, volMuteBtn_ {0, 0, 0, 0};
     cv::Point hovPt_ { -1, -1 };
     std::vector<int> cardSong_;
     cv::Rect tabMusic_, tabFav_, heartBtn_, repeatBtn_, queueBtn_, volBtn_, dotsBtn_, chevBtn_, artRect_, ppBtn_;
@@ -1669,11 +1714,171 @@ private:
         if (paused_) {
             pausedTotal_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - pauseStart_).count();
             paused_ = false;
+            if (currentSong >= 0) launchDance(songs[currentSong].id, elapsedSec());
         } else {
             pauseStart_ = std::chrono::steady_clock::now();
             paused_ = true;
+            stopDance();
         }
     }
+    // ================= BARRA DE VOLUMEN =================
+    static int readSysVolume() {
+        int pct = -1;
+        if (FILE* fp = popen("pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null", "r")) {
+            char b[512];
+            std::string out;
+            while (fgets(b, sizeof(b), fp)) out += b;
+            pclose(fp);
+            size_t pos = out.find('%');
+            if (pos != std::string::npos) {
+                size_t st = pos;
+                while (st > 0 && std::isdigit((unsigned char)out[st - 1])) --st;
+                if (st < pos) pct = std::atoi(out.substr(st, pos - st).c_str());
+            }
+        }
+        return pct;
+    }
+
+    bool volIsMuted() const { return volMuted_ || volPct_ <= 0; }
+
+    void applyVolume() {
+        static std::atomic<int> target {100};
+        static std::mutex mx;
+        target = volIsMuted() ? 0 : volPct_;
+        if (audioInitialized) {                      // el volumen real lo manda el sistema
+            if (audioMutex_) { std::lock_guard<std::mutex> lk(*audioMutex_); Mix_VolumeMusic(128); }
+            else Mix_VolumeMusic(128);
+        }
+        std::thread([]() {
+            std::lock_guard<std::mutex> lk(mx);
+            std::string cmd = "pactl set-sink-volume @DEFAULT_SINK@ " + std::to_string(target.load()) + "% 2>/dev/null";
+            std::system(cmd.c_str());
+        }).detach();
+    }
+
+    void volOpenBar() {
+        if (!volMuted_) {
+            int sink = readSysVolume();
+            if (sink >= 0) {
+                int mixv = 128;
+                if (audioInitialized) {
+                    if (audioMutex_) { std::lock_guard<std::mutex> lk(*audioMutex_); mixv = Mix_VolumeMusic(-1); }
+                    else mixv = Mix_VolumeMusic(-1);
+                }
+                if (mixv <= 0) mixv = 128;
+                volPct_ = sink * mixv / 128;     // volumen efectivo actual
+                applyVolume();                   // deja SDL al 100 % y el sistema como unico control
+            }
+        }
+        volOpen_ = true;
+        volLastTouch_ = std::chrono::steady_clock::now();
+    }
+
+    void volToggleMute() {
+        if (volIsMuted()) {
+            volMuted_ = false;
+            if (volPct_ <= 0) volPct_ = preMutePct_ > 0 ? preMutePct_ : 60;
+        } else {
+            preMutePct_ = volPct_;
+            volMuted_ = true;
+        }
+        applyVolume();
+    }
+
+    void volSetFromX(int x) {
+        if (volTrack_.width <= 0) return;
+        int pct = (int)std::lround((x - volTrack_.x) * 150.0 / volTrack_.width);
+        pct = std::max(0, std::min(150, pct));
+        if (std::abs(pct - 100) <= 3) pct = 100;      // iman en 100 %
+        volPct_ = pct;
+        volMuted_ = false;
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration<double>(now - volLastApply_).count() > 0.08) {
+            volLastApply_ = now;
+            applyVolume();
+        }
+    }
+
+    // true si el evento fue consumido por la barra
+    bool volHandleMouse(int ev, const cv::Point& pt) {
+        volLastTouch_ = std::chrono::steady_clock::now();
+        if (ev == cv::EVENT_MOUSEMOVE) {
+            if (volDrag_) { volSetFromX(pt.x); return true; }
+            return false;
+        }
+        if (ev == cv::EVENT_LBUTTONUP) {
+            if (volDrag_) { volDrag_ = false; volSetFromX(pt.x); applyVolume(); return true; }
+            return false;
+        }
+        if (ev == cv::EVENT_LBUTTONDOWN) {
+            if (volMuteBtn_.area() > 0 && volMuteBtn_.contains(pt)) { volToggleMute(); return true; }
+            if (volHit_.area() > 0 && volHit_.contains(pt)) { volDrag_ = true; volSetFromX(pt.x); return true; }
+            if (volBox_.area() > 0 && volBox_.contains(pt)) return true;
+            volOpen_ = false;          // toque fuera: cierra y deja pasar el toque
+            return false;
+        }
+        return false;
+    }
+
+    void drawVolumeBar(cv::Mat& frame, int iy) {
+        volBox_ = volHit_ = volTrack_ = volMuteBtn_ = cv::Rect(0, 0, 0, 0);
+        if (!volOpen_) return;
+        using clk = std::chrono::steady_clock;
+        const cv::Rect box(146, iy - 27, 334, 54);
+        if (box.contains(hovPt_) || volDrag_) volLastTouch_ = clk::now();
+        else if (std::chrono::duration<double>(clk::now() - volLastTouch_).count() > 3.0) { volOpen_ = false; return; }
+
+        volBox_ = box;
+        const cv::Scalar bg = cv::mean(frame(cv::Rect(150, 114, 20, 8)));   // color del panel
+        const cv::Scalar extra(50, 140, 245);                               // zona de sonido extra
+        auto pill = [&](cv::Rect r, const cv::Scalar& c) {
+            if (r.width <= 0) return;
+            int rad = r.height / 2;
+            if (r.width < 2 * rad) {
+                cv::circle(frame, cv::Point(r.x + r.width / 2, r.y + rad), std::max(1, r.width / 2), c, cv::FILLED, cv::LINE_AA);
+                return;
+            }
+            cv::rectangle(frame, cv::Rect(r.x + rad, r.y, r.width - 2 * rad, r.height), c, cv::FILLED, cv::LINE_AA);
+            cv::circle(frame, cv::Point(r.x + rad, r.y + rad), rad, c, cv::FILLED, cv::LINE_AA);
+            cv::circle(frame, cv::Point(r.x + r.width - rad, r.y + rad), rad, c, cv::FILLED, cv::LINE_AA);
+        };
+
+        pill(cv::Rect(box.x, box.y + 3, box.width, box.height), bg * 0.82);   // sombra
+        pill(box, bg);
+
+        // altavoz / mute
+        volMuteBtn_ = cv::Rect(box.x + 8, iy - 22, 44, 44);
+        if (volMuteBtn_.contains(hovPt_))
+            blendCircle(frame, cv::Point(box.x + 30, iy), 22, nDark(), 0.25);
+        icoVolume(frame, cv::Point(box.x + 30, iy), nInk(), volIsMuted());
+
+        // riel
+        const cv::Rect T(box.x + 70, iy - 4, 200, 8);
+        volTrack_ = T;
+        volHit_ = cv::Rect(T.x - 14, iy - 22, T.width + 28, 44);
+        pill(T, bg * 0.72);
+        const int shown = volIsMuted() ? 0 : volPct_;
+        const int x100 = T.x + T.width * 100 / 150;
+        const int xf = T.x + T.width * shown / 150;
+        if (xf > T.x) pill(cv::Rect(T.x, T.y, xf - T.x, T.height), nInk());
+        if (shown > 100) {
+            cv::rectangle(frame, cv::Rect(x100, T.y, xf - x100, T.height), extra, cv::FILLED);
+            cv::circle(frame, cv::Point(xf, iy), 4, extra, cv::FILLED, cv::LINE_AA);
+        }
+        cv::line(frame, cv::Point(x100, iy - 11), cv::Point(x100, iy + 11), nGray(), 2, cv::LINE_AA);
+        cv::putText(frame, "100", cv::Point(x100 - 12, iy - 14), cv::FONT_HERSHEY_SIMPLEX, 0.32, nGray(), 1, cv::LINE_AA);
+
+        // perilla
+        cv::circle(frame, cv::Point(xf, iy), 11, cv::Scalar(255, 255, 255), cv::FILLED, cv::LINE_AA);
+        cv::circle(frame, cv::Point(xf, iy), 11, shown > 100 ? extra : nInk(), 2, cv::LINE_AA);
+
+        // porcentaje
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d%%", shown);
+        cv::putText(frame, buf, cv::Point(box.x + 288, iy + 6), cv::FONT_HERSHEY_DUPLEX, 0.5,
+                    shown > 100 ? extra : nInk(), 1, cv::LINE_AA);
+    }
+
     void toggleMute() {
         if (!audioInitialized) return;
         auto doIt = [&]() {
@@ -1927,8 +2132,9 @@ private:
         icoHeart(frame, cv::Point(ixs[0], iy), fav_[currentSong]);
         icoRepeat(frame, cv::Point(ixs[1], iy), repeatOn_ ? nInk() : nGray());
         icoQueue(frame, cv::Point(ixs[2], iy), nInk());
-        bool vmuted = audioInitialized && Mix_VolumeMusic(-1) == 0;
+        bool vmuted = volIsMuted();
         icoVolume(frame, cv::Point(ixs[3], iy), nInk(), vmuted);
+        drawVolumeBar(frame, iy);
 
         // progreso
         const double dur = songDuration;
@@ -3396,7 +3602,7 @@ public:
                         active_lifecycle_nodes.clear();
                         stopCmdToRun = activeStopCmd;
                         if (activeMode == "yaren_dice_con_ayuda" || activeMode == "yaren_dice_sesion") {
-                                std::string homeCmd = "ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"";
+                                std::string homeCmd = "timeout 5 ros2 topic pub --once /joint_trajectory_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \"{joint_names: ['joint_1','joint_2','joint_3','joint_4','joint_5','joint_6','joint_7','joint_8', 'joint_9', 'joint_10', 'joint_11', 'joint_12'], points: [{positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5], time_from_start: {sec: 2, nanosec: 0}}]}\"";
                             std::thread([homeCmd]() { std::system(homeCmd.c_str()); }).detach();
                         }
                         activeMode.clear(); activeStopCmd.clear();

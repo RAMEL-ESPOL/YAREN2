@@ -58,6 +58,7 @@ private:
     void load_animal_assets(const std::string& animal);
     void stop_sound();
     void play_sound(bool turn_on);
+    void set_camera_streams(bool on);
 
     message_filters::Subscriber<ImageMsg,  rclcpp_lifecycle::LifecycleNode> image_sub_;
     message_filters::Subscriber<Landmarks, rclcpp_lifecycle::LifecycleNode> landmarks_sub_;
@@ -70,6 +71,9 @@ private:
 
     AnimalFilter current_filter_;
     std::mutex   filter_mutex_;
+    std::mutex   frame_mutex_;
+    std::atomic<bool> camera_view_active_{ false };
+    bool streams_on_{ false };
     cv::Mat      last_frame_;
     bool         has_frame_{ false };
 

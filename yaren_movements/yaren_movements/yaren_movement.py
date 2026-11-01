@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import math
@@ -8,6 +9,44 @@ import time
 import threading
 import cv2
 import numpy as np
+
+TIME_SCALE = 1.0     # >1 = mas lento, <1 = mas rapido
+START_DELAY = 2.0    # s para llegar a la 1ra pose desde donde este
+
+
+def smooth_points(routine, scale=TIME_SCALE, start_delay=START_DELAY, min_dt=0.1):
+    """routine = [(pose, t)]; t = tiempo para llegar a esa pose desde la anterior.
+    Devuelve (puntos, duracion_total) con velocidades continuas: el controlador
+    hace spline cubica y NO frena en cada pose (si el joint invierte direccion
+    o la pose se repite, velocidad 0 para evitar rebotes)."""
+    import math as _math
+    P = [[float(x) for x in pos] for pos, _ in routine]
+    n, J = len(P), len(P[0])
+    T, acc = [], 0.0
+    for i, (_, t) in enumerate(routine):
+        dt = max(float(t) * scale, min_dt)
+        if i == 0:
+            dt = max(dt, start_delay)
+        acc += dt
+        T.append(acc)
+    points = []
+    for i in range(n):
+        vel = [0.0] * J
+        if 0 < i < n - 1:
+            for j in range(J):
+                s0 = (P[i][j] - P[i - 1][j]) / (T[i] - T[i - 1])
+                s1 = (P[i + 1][j] - P[i][j]) / (T[i + 1] - T[i])
+                if s0 * s1 > 0:
+                    v = (s0 + s1) / 2.0
+                    lim = 3.0 * min(abs(s0), abs(s1))
+                    vel[j] = _math.copysign(min(abs(v), lim), v)
+        pt = JointTrajectoryPoint()
+        pt.positions = P[i]
+        pt.velocities = vel
+        pt.time_from_start = Duration(sec=int(T[i]), nanosec=int((T[i] % 1) * 1e9))
+        points.append(pt)
+    return points, T[-1]
+
 
 class YarenMotionControl(Node):
     def __init__(self):
@@ -99,13 +138,53 @@ class YarenMotionControl(Node):
         msg.points.append(point)
         self.publisher.publish(msg)
 
+    def wait_match(self, timeout=40.0, check_running=True):
+        """Espera a que el controlador este enlazado. False solo si te detienen."""
+        t0 = time.time()
+        waited = False
+        while rclpy.ok() and self.publisher.get_subscription_count() == 0:
+            if check_running and not self.is_running:
+                return False
+            if time.time() - t0 > timeout:
+                self.get_logger().warn("Controlador sin enlazar, envio igual")
+                return True
+            waited = True
+            time.sleep(0.1)
+        if waited:
+            time.sleep(0.5)   # margen tras el match
+        return True
+
+    def send_routine(self, routine):
+        """Envia TODA la rutina como una sola trayectoria suave."""
+        msg = JointTrajectory()
+        msg.joint_names = self.joint_names
+        msg.points, total = smooth_points(routine)
+        if not self.wait_match():
+            return 0.0
+        self.publisher.publish(msg)
+        self.get_logger().info(
+            f"Trayectoria enviada ({len(msg.points)} puntos, {total:.1f} s), "
+            f"suscriptores: {self.publisher.get_subscription_count()}")
+        return total
+
+    def wait_interruptible(self, secs):
+        end = time.time() + secs
+        while self.is_running and rclpy.ok() and time.time() < end:
+            time.sleep(0.05)
+
+    def go_home(self, secs=2.5):
+        """Vuelve a la posicion base (reemplaza cualquier trayectoria en curso)."""
+        try:
+            self.wait_match(timeout=5.0, check_running=False)
+            self.send_movement(self.home_position, secs)
+            time.sleep(secs + 0.3)
+        except Exception as e:
+            self.get_logger().error(f"No se pudo volver a base: {e}")
+
     def routine_loop(self):
-        while self.is_running:
-            for pos, t in self.processed_routine:
-                if not self.is_running:
-                    break
-                self.send_movement(pos, t)
-                time.sleep(t)
+        while self.is_running and rclpy.ok():
+            total = self.send_routine(self.processed_routine)
+            self.wait_interruptible(total)
 
     def start_routine(self):
         if not self.is_running:
@@ -115,16 +194,13 @@ class YarenMotionControl(Node):
             self.routine_thread.start()
 
     def stop_and_home(self):
-        if self.is_running:
-            self.is_running = False
-            self.status_msg = "DETENIENDO... VOLVIENDO A ORIGEN."
-            if self.routine_thread is not None:
-                self.routine_thread.join()
-            
-            # Movimiento suave a home (estado original)
-            self.send_movement(self.home_position, 2.0)
-            self.status_msg = "RUTINA DETENIDA. (ESTADO ORIGEN)"
-
+        self.is_running = False
+        self.status_msg = "DETENIENDO... VOLVIENDO A ORIGEN."
+        t = self.routine_thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join()
+        self.go_home()
+        self.status_msg = "RUTINA DETENIDA. (ESTADO ORIGEN)"
     # =========================================================================
     #  OpenCV UI Logic
     # =========================================================================
@@ -188,7 +264,7 @@ class YarenMotionControl(Node):
         return frame
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = YarenMotionControl()
     
     ros_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)

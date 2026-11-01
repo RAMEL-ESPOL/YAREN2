@@ -37,7 +37,7 @@ class STTNode(Node):
     def __init__(self):
         super().__init__("stt_node")
         P = self.declare_parameter
-        P("model_path", "/home/roberto/robotis_ws/src/YAREN2/yaren_chat/models/STT/vosk-model-small-es-0.42")
+        P("model_path", "/home/jetson/robotis_ws/src/YAREN2/yaren_chat/models/STT/vosk-model-small-es-0.42")
         P("device", "")                 # índice o nombre del micrófono ("" = por defecto)
         P("channels", 1)
         P("input_rate", 16000)          # frecuencia nativa del micrófono

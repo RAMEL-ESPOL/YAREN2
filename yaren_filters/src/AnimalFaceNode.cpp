@@ -11,6 +11,8 @@
 #include <chrono>
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include <cstdlib>
+#include <spawn.h>
+extern char** environ;
 #include <unistd.h>    // fork, execl, _exit
 #include <signal.h>    // kill, SIGTERM
 #include <sys/wait.h>  // waitpid
@@ -96,31 +98,27 @@ static std::atomic<bool> g_animal_filter_ready{false};
 // ══════════════════════════════════════════════════════════════
 
 static void overlay_rgba(cv::Mat& bg, const cv::Mat& fg, int ox, int oy) {
-    if (fg.empty()) return;
+    if (fg.empty() || bg.empty() || bg.type() != CV_8UC3) return;
     int y1 = std::max(oy, 0), y2 = std::min(oy + fg.rows, bg.rows);
     int x1 = std::max(ox, 0), x2 = std::min(ox + fg.cols, bg.cols);
     if (x1 >= x2 || y1 >= y2) return;
-    cv::Mat fc = fg(cv::Rect(x1-ox, y1-oy, x2-x1, y2-y1));
-    cv::Mat bc = bg(cv::Rect(x1, y1, x2-x1, y2-y1));
-    std::vector<cv::Mat> ch; cv::split(fc, ch);
-    bool ha = (ch.size() == 4);
-    cv::Mat a32, inv;
-    if (ha) { ch[3].convertTo(a32, CV_32F, 1./255.); inv = 1.f - a32; }
-    cv::Mat fg_bgr;
-    if (fc.channels() == 4) cv::cvtColor(fc, fg_bgr, cv::COLOR_BGRA2BGR);
-    else fg_bgr = fc;
-    cv::Mat bf, ff;
-    bc.convertTo(bf, CV_32FC3, 1./255.);
-    fg_bgr.convertTo(ff, CV_32FC3, 1./255.);
-    cv::Mat out;
-    if (ha) {
-        std::vector<cv::Mat> bc3, fc3, r(3);
-        cv::split(bf, bc3); cv::split(ff, fc3);
-        for (int c = 0; c < 3; ++c) r[c] = fc3[c].mul(a32) + bc3[c].mul(inv);
-        cv::merge(r, out);
-    } else { out = ff; }
-    cv::Mat o8; out.convertTo(o8, CV_8UC3, 255.);
-    o8.copyTo(bc);
+    cv::Mat fc = fg(cv::Rect(x1 - ox, y1 - oy, x2 - x1, y2 - y1));
+    cv::Mat bc = bg(cv::Rect(x1, y1, x2 - x1, y2 - y1));
+    if (fc.channels() == 3) { fc.copyTo(bc); return; }
+    if (fc.channels() != 4) return;
+    for (int r = 0; r < bc.rows; ++r) {
+        uchar* b = bc.ptr<uchar>(r);
+        const uchar* o = fc.ptr<uchar>(r);
+        for (int c = 0; c < bc.cols; ++c, b += 3, o += 4) {
+            const int a = o[3];
+            if (a == 0) continue;
+            if (a == 255) { b[0] = o[0]; b[1] = o[1]; b[2] = o[2]; continue; }
+            const int ia = 255 - a;
+            b[0] = (uchar)((b[0] * ia + o[0] * a + 127) / 255);
+            b[1] = (uchar)((b[1] * ia + o[1] * a + 127) / 255);
+            b[2] = (uchar)((b[2] * ia + o[2] * a + 127) / 255);
+        }
+    }
 }
 
 [[maybe_unused]] static cv::Rect card_rect(int idx) {
@@ -184,10 +182,22 @@ static std::vector<cv::Mat> load_raw_animals() {
             cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
             if (img.empty()) continue;
             if (img.channels() == 3) cv::cvtColor(img, img, cv::COLOR_BGR2BGRA);
-            out[i] = crop_transparent(img);
+            cv::Mat cropped = crop_transparent(img);
+            if (cropped.rows > 300) {
+                double k = 300.0 / cropped.rows;
+                cv::resize(cropped, cropped,
+                           cv::Size(std::max(1, (int)(cropped.cols * k)), 300),
+                           0, 0, cv::INTER_AREA);
+            }
+            out[i] = cropped;
         }
     } catch (...) {}
     return out;
+}
+
+static const std::vector<cv::Mat>& get_raw_animals() {
+    static const std::vector<cv::Mat> cache = load_raw_animals();
+    return cache;
 }
 
 static void draw_animal(cv::Mat& canvas, const cv::Mat& img, const cv::Scalar& col,
@@ -205,7 +215,7 @@ static void draw_animal(cv::Mat& canvas, const cv::Mat& img, const cv::Scalar& c
         double sc = std::min((double)h / img.rows, (double)(h * 1.3) / img.cols);
         w = std::max(1, (int)(img.cols * sc));
         h = std::max(1, (int)(img.rows * sc));
-        cv::resize(img, rs, cv::Size(w, h), 0, 0, cv::INTER_AREA);
+        cv::resize(img, rs, cv::Size(w, h), 0, 0, cv::INTER_LINEAR);
     }
     int ox = cx - w / 2, oy = cy - h / 2;
     cv::Rect clip = cv::Rect(ox, oy, w, h) & cv::Rect(0, 0, canvas.cols, canvas.rows);
@@ -393,7 +403,7 @@ static void draw_menu(cv::Mat& canvas, MenuState& ms, const std::vector<cv::Mat>
 
 static std::string show_menu(const std::vector<cv::Mat>& previews, const Texts& txt) {
     (void)previews;
-    std::vector<cv::Mat> raws = load_raw_animals();
+    const std::vector<cv::Mat>& raws = get_raw_animals();
     cv::namedWindow(MENU_WIN, cv::WINDOW_NORMAL);
     cv::setWindowProperty(MENU_WIN, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
     std::thread([]() {
@@ -497,6 +507,8 @@ public:
             if (alpha <= 0.0) return frame;
         }
 
+        if (alpha >= 0.999) return bg_ready_.clone();
+
         cv::Mat result;
         cv::addWeighted(bg_ready_, alpha, frame, 1.0 - alpha, 0, result);
         return result;
@@ -544,11 +556,11 @@ CallbackReturn AnimalFaceNode::on_configure(const rclcpp_lifecycle::State&)
 
 CallbackReturn AnimalFaceNode::on_activate(const rclcpp_lifecycle::State&)
 {
-    image_sub_.subscribe(this, "/csi_camera/image_raw", rmw_qos_profile_default);
-    landmarks_sub_.subscribe(this, "/face_landmarks");
+    // camara y landmarks se suscriben solo al abrir la vista del filtro (set_camera_streams)
+    
 
     sync_ = std::make_shared<Synchronizer>(
-        ApproximateTimePolicy(10), image_sub_, landmarks_sub_);
+        ApproximateTimePolicy(3), image_sub_, landmarks_sub_);
     sync_->registerCallback(&AnimalFaceNode::callback, this);
 
     image_pub_ = this->create_publisher<ImageMsg>("filtered_image", 10);
@@ -580,6 +592,7 @@ CallbackReturn AnimalFaceNode::on_deactivate(const rclcpp_lifecycle::State&)
 
     if (ui_thread_.joinable()) ui_thread_.join();
 
+    set_camera_streams(false);
     sync_.reset();
     image_pub_.reset();
     tongue_detector_.reset();
@@ -621,7 +634,10 @@ void AnimalFaceNode::load_animal_assets(const std::string& animal)
         const AnimalConfig& cfg = it->second;
 
         if (virtual_bg_) {
-            virtual_bg_->load(pkg, cfg.bg_file);
+            {
+                std::lock_guard<std::mutex> lk(filter_mutex_);
+                virtual_bg_->load(pkg, cfg.bg_file);
+            }
         }
 
         current_sound_path_ = pkg + "/imgs/sounds/" + cfg.sound_file;
@@ -646,20 +662,17 @@ void AnimalFaceNode::stop_sound()
 //                    turn_on=false lo mata ────────────────────────────────
 void AnimalFaceNode::play_sound(bool turn_on)
 {
-    // Siempre matar el proceso anterior primero
     stop_sound();
-
     if (!turn_on || current_sound_path_.empty()) return;
 
-    // Lanzar mpg123 en loop (-1 = infinito) y guardar el PID
-    sound_pid_ = fork();
-    if (sound_pid_ == 0) {
-        // Proceso hijo — reemplaza la imagen con mpg123
-        execl("/usr/bin/mpg123", "mpg123", "-q", "--loop", "-1",
-              current_sound_path_.c_str(), nullptr);
-        _exit(1);  // Solo llega aquí si execl falla
+    const char* argv[] = { "mpg123", "-q", "--loop", "-1", current_sound_path_.c_str(), nullptr };
+    pid_t pid = -1;
+    if (posix_spawn(&pid, "/usr/bin/mpg123", nullptr, nullptr,
+                    const_cast<char* const*>(argv), environ) == 0) {
+        sound_pid_ = pid;
     }
 }
+
 static void anim_pill(cv::Mat& f, const cv::Rect& r, const cv::Scalar& col)
 {
     int rad = r.height / 2;
@@ -693,7 +706,7 @@ static bool show_intro_screen(bool is_english)
         else if (event == cv::EVENT_LBUTTONDOWN && in) s->clicked = true;
     }, &st);
 
-    std::vector<cv::Mat> raws = load_raw_animals();
+    const std::vector<cv::Mat>& raws = get_raw_animals();
     const cv::Scalar WHITE(255, 255, 255);
     const int FD = cv::FONT_HERSHEY_DUPLEX, FS = cv::FONT_HERSHEY_SIMPLEX;
 
@@ -778,7 +791,8 @@ static bool show_intro_screen(bool is_english)
         }
 
         // columna izquierda
-        cv::Mat baseFrame = frame.clone();
+        cv::Mat baseFrame;
+        if (t < 0.9) baseFrame = frame.clone();
         double a_in = out_cubic_d(t / 0.9);
         int dx = (int)(-60 * (1.0 - a_in));
 
@@ -871,12 +885,14 @@ void AnimalFaceNode::run_ui()
         }).detach();
 
         cv::setMouseCallback(CAM_WIN, on_cam_mouse, &cam_clicked_);
+        set_camera_streams(true);
 
         while (rclcpp::ok() && !cam_clicked_ && ui_running_) {
             cv::Mat frame;
             if (get_last_frame(frame)) cv::imshow(CAM_WIN, frame);
             cv::waitKey(16);
         }
+        set_camera_streams(false);
         cv::destroyWindow(CAM_WIN);
     }
 
@@ -908,24 +924,69 @@ void AnimalFaceNode::set_filter(const std::string& animal)
 
 bool AnimalFaceNode::get_last_frame(cv::Mat& out)
 {
-    std::lock_guard<std::mutex> lock(filter_mutex_);
+    std::lock_guard<std::mutex> lock(frame_mutex_);
     if (!has_frame_) return false;
     out        = last_frame_;
     has_frame_ = false;
     return true;
 }
 
+// Camara y landmarks solo se reciben mientras se muestra la vista del filtro
+void AnimalFaceNode::set_camera_streams(bool on)
+{
+    if (on == streams_on_) return;
+    streams_on_ = on;
+    if (on) {
+        {
+            std::lock_guard<std::mutex> lk(frame_mutex_);
+            has_frame_ = false;
+        }
+        camera_view_active_ = true;
+        image_sub_.subscribe(this, "/csi_camera/image_raw", rmw_qos_profile_sensor_data);
+        landmarks_sub_.subscribe(this, "/face_landmarks");
+    } else {
+        camera_view_active_ = false;
+        image_sub_.unsubscribe();
+        landmarks_sub_.unsubscribe();
+    }
+}
+
 void AnimalFaceNode::callback(
     const ImageMsg::ConstSharedPtr& img_msg,
     const Landmarks::ConstSharedPtr& lm_msg)
 {
-    Texts txt = make_texts(is_english_);
+    if (!camera_view_active_.load()) return;
     try {
-        cv::Mat frame = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
+        const int TW = 800, TH = 480;
 
-        std::vector<cv::Point2f> landmarks;
-        for (const auto& p : lm_msg->landmarks)
-            landmarks.emplace_back(p.x * frame.cols, p.y * frame.rows);
+        cv_bridge::CvImageConstPtr cv_in = cv_bridge::toCvShare(img_msg, "bgr8");
+        const cv::Mat& src = cv_in->image;
+        if (src.empty()) return;
+
+        // Recorte "cover" 800x480 sobre el frame original (sin copiar todo el frame)
+        const double sc = std::max((double)TW / src.cols, (double)TH / src.rows);
+        const int cw = std::min(src.cols, std::max(1, (int)std::lround(TW / sc)));
+        const int ch = std::min(src.rows, std::max(1, (int)std::lround(TH / sc)));
+        const int cx0 = (src.cols - cw) / 2;
+        const int cy0 = (src.rows - ch) / 2;      // coordenadas del frame ya volteado
+        const int cy_src = src.rows - cy0 - ch;   // mismo recorte en el frame original
+
+        cv::Mat small;
+        cv::resize(src(cv::Rect(cx0, cy_src, cw, ch)), small, cv::Size(TW, TH), 0, 0,
+                   sc < 0.5 ? cv::INTER_AREA : cv::INTER_LINEAR);
+        cv::flip(small, small, 0);
+
+        const double sx = (double)TW / cw, sy = (double)TH / ch;
+
+        // Landmarks: normalizados (para la boca) y en pixeles del frame de salida (para el filtro)
+        std::vector<cv::Point2f> lm_norm, lm_px;
+        lm_norm.reserve(lm_msg->landmarks.size());
+        lm_px.reserve(lm_msg->landmarks.size());
+        for (const auto& p : lm_msg->landmarks) {
+            lm_norm.emplace_back(p.x, p.y);
+            lm_px.emplace_back((float)((p.x * src.cols - cx0) * sx),
+                               (float)((p.y * src.rows - cy0) * sy));
+        }
 
         cv::Mat processed;
         bool mouth_triggered = false;
@@ -933,23 +994,14 @@ void AnimalFaceNode::callback(
 
         {
             std::lock_guard<std::mutex> lock(filter_mutex_);
-            cv::flip(frame, frame, 0);
 
-            // ── Detección de boca abierta (toggle) ────────────────────
-            std::vector<cv::Point2f> lm_norm;
-            for (const auto& p : lm_msg->landmarks)
-                lm_norm.emplace_back(p.x, p.y);
-
-            if (tongue_detector_) {
+            // Deteccion de boca abierta (toggle)
+            if (tongue_detector_ && virtual_bg_) {
                 auto result = tongue_detector_->check(lm_norm);
                 if (result.triggered) {
-                    // Fondo: toggle igual que antes
                     virtual_bg_->set_active(result.turning_on);
-
-                    // Audio: guardar para reproducir/detener fuera del mutex
                     mouth_triggered  = true;
                     mouth_turning_on = result.turning_on;
-
                     RCLCPP_INFO(get_logger(),
                         result.turning_on
                             ? "Boca abierta! Fondo ON + sonido ON."
@@ -957,41 +1009,31 @@ void AnimalFaceNode::callback(
                 }
             }
 
-            // ── Aplicar fondo virtual ──────────────────────────────────
-            if (virtual_bg_) {
-                frame = virtual_bg_->apply(frame);
-            }
+            if (virtual_bg_) small = virtual_bg_->apply(small);
 
-            // ── Aplicar filtro de animal ───────────────────────────────
             if (g_animal_filter_ready.load()) {
-                processed = current_filter_.apply_filter(frame, landmarks);
+                processed = current_filter_.apply_filter(small, lm_px, (float)sx);
             } else {
-                processed = frame.clone();
+                processed = small;
             }
         }
 
-        // ── Toggle de audio fuera del mutex ───────────────────────────
-        if (mouth_triggered) {
-            play_sound(mouth_turning_on);
-        }
-
-        const int TW = 800, TH = 480;
-        double sc = std::max((double)TW/processed.cols, (double)TH/processed.rows);
-        cv::Mat zoomed;
-        cv::resize(processed, zoomed, cv::Size(), sc, sc, cv::INTER_AREA);
-        int x = (zoomed.cols-TW)/2, y = (zoomed.rows-TH)/2;
-        processed = zoomed(cv::Rect(x,y,TW,TH));
+        if (mouth_triggered) play_sound(mouth_turning_on);
 
         {
-            std::lock_guard<std::mutex> lock(filter_mutex_);
-            last_frame_ = processed.clone();
+            std::lock_guard<std::mutex> lock(frame_mutex_);
+            last_frame_ = processed;
             has_frame_  = true;
         }
 
-        image_pub_->publish(
-            *cv_bridge::CvImage(img_msg->header, "bgr8", processed).toImageMsg());
+        // Solo se publica si alguien escucha
+        if (image_pub_ && image_pub_->get_subscription_count() > 0) {
+            image_pub_->publish(
+                *cv_bridge::CvImage(img_msg->header, "bgr8", processed).toImageMsg());
+        }
 
     } catch (const std::exception& e) {
+        Texts txt = make_texts(is_english_);
         RCLCPP_ERROR(get_logger(), "%s%s", txt.log_cb_error.c_str(), e.what());
     }
 }

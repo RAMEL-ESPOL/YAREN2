@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, qos_profile_sensor_data
 from std_msgs.msg import Bool, String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
@@ -83,9 +83,11 @@ MUSIC_VOLUME = 0.6
 WIN_NAME = "Yaren Dance"
 WIN_W = 800
 WIN_H = 480
-FPS = 60
+FPS = 30
 STEP_DUR = 2.4
 
+GLOW_DOWN = 3      # el glow se calcula a 1/3 de resolucion
+POSE_MAX_FPS = 12  # maximo de inferencias YOLO por segundo
 FX_GLOW = True     # glow alrededor del coach (si va lento, ponlo en False)
 FX_BOKEH = True    # circulos de luz flotando en el fondo
 
@@ -769,8 +771,8 @@ class DanceRenderer:
                                        np.linspace(0, 1, h, dtype=np.float32))
         self._title_cache = {}
         self._card_cache = {}
-        self._bokeh = self._make_bokeh(11)
-        self._bokeh_menu = self._make_bokeh(5, n=22, rmin=3, rmax=11)
+        self._bokeh = self._make_bokeh(11, n=8)
+        self._bokeh_menu = self._make_bokeh(5, n=12, rmin=3, rmax=11)
         self._bg_menu = self._build_menu_backdrop()
         self._bg_play = self._bg_menu
 
@@ -958,9 +960,13 @@ class DanceRenderer:
         work = roi.copy() if alpha < 1.0 else roi
         lx, ly = cx - x0, cy - y0
         if glow and FX_GLOW:
-            g = np.zeros_like(work)
-            _paint_body(g, lx, ly, pose, color, Sc, extra=int(10 * Sc))
-            g = cv2.GaussianBlur(g, (0, 0), 9 * Sc)
+            k = GLOW_DOWN
+            gw, gh = x1 - x0, y1 - y0
+            g = np.zeros((max(1, gh // k), max(1, gw // k), 3), np.uint8)
+            _paint_body(g, lx // k, ly // k, pose, color, Sc / k,
+                        extra=max(1, int(10 * Sc / k)), min_w=1)
+            g = cv2.GaussianBlur(g, (0, 0), max(1.0, 9 * Sc / k))
+            g = cv2.resize(g, (gw, gh), interpolation=cv2.INTER_LINEAR)
             cv2.addWeighted(work, 1.0, g, 0.9, 0, work)
         _paint_body(work, lx, ly, pose, (40, 14, 50), Sc, extra=max(3, int(5 * Sc)))
         _paint_body(work, lx, ly, pose, color, Sc)
@@ -1006,11 +1012,17 @@ class DanceRenderer:
         if pts is None:
             return
         pts = pts + np.array([cx, cy], dtype=np.int32)
-        target = frame.copy() if alpha < 1.0 else frame
-        cv2.fillPoly(target, [pts], color, cv2.LINE_AA)
-        cv2.polylines(target, [pts], True, C_WHITE, 2, cv2.LINE_AA)
+        x0, y0 = max(0, int(pts[:, 0].min()) - 3), max(0, int(pts[:, 1].min()) - 3)
+        x1, y1 = min(self.W, int(pts[:, 0].max()) + 4), min(self.H, int(pts[:, 1].max()) + 4)
+        if x1 <= x0 or y1 <= y0:
+            return
+        roi = frame[y0:y1, x0:x1]
+        target = roi.copy() if alpha < 1.0 else roi
+        pp = pts - np.array([x0, y0], np.int32)
+        cv2.fillPoly(target, [pp], color, cv2.LINE_AA)
+        cv2.polylines(target, [pp], True, C_WHITE, 2, cv2.LINE_AA)
         if alpha < 1.0:
-            cv2.addWeighted(target, alpha, frame, 1 - alpha, 0, frame)
+            cv2.addWeighted(target, alpha, roi, 1 - alpha, 0, roi)
 
     def draw_arrows(self, frame, cx, cy, step, alpha=1.0):
         offsets = {"up": (0, -168), "down": (95, 62), "left": (-118, -20), "right": (118, -20)}
@@ -1061,10 +1073,11 @@ class DanceGame:
     SONGS_PER_PAGE = 6
     CAM_ANNOUNCE_DUR = 2.0
 
-    def __init__(self, music, pose_camera, is_english=False):
+    def __init__(self, music, pose_camera, is_english=False, camera_toggle=None):
         self.is_english = is_english
         self.music = music
         self.pose_camera = pose_camera
+        self.camera_toggle = camera_toggle
         self.renderer = DanceRenderer(WIN_W, WIN_H)
         self.state = GameState.WELCOME
         self.use_camera = False   # True: solo camara | False: solo teclado
@@ -1396,14 +1409,20 @@ class DanceGame:
     def _apply_input_mode(self):
         """Camara: solo pose (teclado ignorado). Sin camara: solo teclado (YOLO no se carga)."""
         pc = self.pose_camera
-        if pc is None:
-            return
         if self.use_camera:
-            pc.enabled = True
-            pc.start()          # idempotente; carga YOLO en su hilo la primera vez
+            if pc is not None:
+                pc.camera_ok = False
+            if self.camera_toggle:
+                self.camera_toggle(True)
+            if pc is not None:
+                pc.enabled = True
+                pc.start()          # idempotente; carga YOLO en su hilo la primera vez
         else:
-            pc.enabled = False
-            pc.active_detection = False
+            if self.camera_toggle:
+                self.camera_toggle(False)
+            if pc is not None:
+                pc.enabled = False
+                pc.active_detection = False
 
     def _is_hovered(self, rect):
         bx, by, bw, bh = rect
@@ -1894,6 +1913,7 @@ class PoseCamera:
         self.model = None
         self._latest_frame = None
         self._frame_lock = threading.Lock()
+        self._infer_kw = {}
 
     def _load_model(self):
         t0 = time.perf_counter()
@@ -1904,9 +1924,20 @@ class PoseCamera:
             from ultralytics import YOLO
             _log_t("import ultralytics listo")
             self.model = YOLO(self.model_path)
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self._infer_kw = dict(device=0, half=True)
+            except Exception:
+                pass
             _log_t("modelo YOLO cargado")
             dummy = np.zeros((self.infer_size, self.infer_size, 3), dtype=np.uint8)
-            self.model(dummy, imgsz=self.infer_size, verbose=False)
+            try:
+                self.model(dummy, imgsz=self.infer_size, verbose=False, **self._infer_kw)
+            except Exception as e:
+                print(f"[PoseCamera] GPU/half fallo ({e}); usando CPU.")
+                self._infer_kw = {}
+                self.model(dummy, imgsz=self.infer_size, verbose=False)
             print(f"[PoseCamera] YOLO listo en {time.perf_counter() - t0:.2f}s.")
         except Exception as e:
             print(f"[PoseCamera] Error cargando modelo: {e}. Modo solo teclado.")
@@ -1957,15 +1988,25 @@ class PoseCamera:
                 time.sleep(0.03)
                 continue
 
-            if not self.enabled:
+            if not self.enabled or not self.active_detection:
+                with self._lock:
+                    self.current_pose = frozenset()
+                hold_pose = frozenset()
+                hold_t = 0.0
+                last_t = time.time()
+                time.sleep(0.05)
                 continue
 
             now = time.time()
             dt = now - last_t
+            if dt < 1.0 / POSE_MAX_FPS:
+                time.sleep(1.0 / POSE_MAX_FPS - dt)
+                now = time.time()
+                dt = now - last_t
             last_t = now
 
             try:
-                results = self.model(frame, imgsz=self.infer_size, verbose=False)
+                results = self.model(frame, imgsz=self.infer_size, verbose=False, **self._infer_kw)
                 kpts_raw = results[0].keypoints
                 kpts = None
                 if kpts_raw is not None and len(kpts_raw.xy) > 0:
@@ -2029,6 +2070,7 @@ class DanceGameNode(LifecycleNode):
         self._cam_sub = None
         self._game_active_pub = None
         self._bridge = CvBridge()
+        self._last_img_t = 0.0
         self._pose_camera = None
         self.game = None
 
@@ -2073,10 +2115,6 @@ class DanceGameNode(LifecycleNode):
             self._want_active = True      # el hilo principal abre UNA sesion cuando pueda
             self._active = True
         self._set_game_active(True)
-        if self._cam_sub is None:
-            self._cam_sub = self.create_subscription(
-                Image, '/csi_camera/image_raw', self._image_callback, 10)
-            self.get_logger().info('Suscrito a /csi_camera/image_raw')
         return super().on_activate(state)
 
     def on_deactivate(self, state):
@@ -2128,13 +2166,37 @@ class DanceGameNode(LifecycleNode):
         if g:
             g.is_english = self.is_english
 
+    def _set_camera_sub(self, enable: bool):
+        """Suscribe/desuscribe la camara. Sin suscriptor el nodo de camara no captura ni imprime."""
+        if enable and self._cam_sub is None:
+            self._last_img_t = 0.0
+            self._cam_sub = self.create_subscription(
+                Image, '/csi_camera/image_raw', self._image_callback, qos_profile_sensor_data)
+            self.get_logger().info('Camara ON: suscrito a /csi_camera/image_raw')
+        elif not enable and self._cam_sub is not None:
+            try:
+                self.destroy_subscription(self._cam_sub)
+            except Exception as e:
+                self.get_logger().warning(f"Error al destruir suscripcion: {e}")
+            self._cam_sub = None
+            self.get_logger().info('Camara OFF')
+
     def _image_callback(self, msg):
         pc = self._pose_camera            # copia local: el hilo principal puede ponerla a None
         if not self._active or pc is None or not getattr(pc, "enabled", True):
             return
+        now = time.time()
+        min_dt = 1.0 / POSE_MAX_FPS if pc.active_detection else 0.5
+        if now - self._last_img_t < min_dt:
+            return
+        self._last_img_t = now
         try:
             frame = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
             frame = cv2.flip(frame, 0)
+            h, w = frame.shape[:2]
+            if w > CAM_INFER_SIZE:
+                frame = cv2.resize(frame, (CAM_INFER_SIZE, max(1, int(h * CAM_INFER_SIZE / w))),
+                                   interpolation=cv2.INTER_AREA)
             pc.push_frame(frame)
         except Exception as e:
             self.get_logger().error(f'image_callback error: {e}')
@@ -2222,6 +2284,7 @@ class DanceGameNode(LifecycleNode):
             pose_camera.on_pose_confirmed = on_pose_confirmed
 
             game = DanceGame(music=music, pose_camera=pose_camera,
+                             camera_toggle=self._set_camera_sub,
                              is_english=self.is_english)
             self.game = game
             _log_t("DanceGame listo (renderer + fondo del menu)")
@@ -2282,6 +2345,7 @@ class DanceGameNode(LifecycleNode):
         self.game = None                # el mouse/pose ya no entran al juego
         self._pose_camera = None        # el image_callback deja de empujar frames
 
+        self._set_camera_sub(False)
         if pose_camera is not None:
             try:
                 pose_camera.active_detection = False

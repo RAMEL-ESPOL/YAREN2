@@ -1110,10 +1110,50 @@ from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import time
+from rclpy.signals import SignalHandlerOptions
 
 JOINT_NAMES   = {JOINT_NAMES!r}
 STEP_DURATION = {STEP_DURATION}
 STEPS         = {steps_con_base!r}
+BASE_POSITION = {posicion_base!r}
+
+TIME_SCALE = 1.0     # >1 = mas lento, <1 = mas rapido
+START_DELAY = 2.0    # s para llegar a la 1ra pose desde donde este
+
+
+def smooth_points(routine, scale=TIME_SCALE, start_delay=START_DELAY, min_dt=0.1):
+    """routine = [(pose, t)]; t = tiempo para llegar a esa pose desde la anterior.
+    Devuelve (puntos, duracion_total) con velocidades continuas: el controlador
+    hace spline cubica y NO frena en cada pose (si el joint invierte direccion
+    o la pose se repite, velocidad 0 para evitar rebotes)."""
+    import math as _math
+    P = [[float(x) for x in pos] for pos, _ in routine]
+    n, J = len(P), len(P[0])
+    T, acc = [], 0.0
+    for i, (_, t) in enumerate(routine):
+        dt = max(float(t) * scale, min_dt)
+        if i == 0:
+            dt = max(dt, start_delay)
+        acc += dt
+        T.append(acc)
+    points = []
+    for i in range(n):
+        vel = [0.0] * J
+        if 0 < i < n - 1:
+            for j in range(J):
+                s0 = (P[i][j] - P[i - 1][j]) / (T[i] - T[i - 1])
+                s1 = (P[i + 1][j] - P[i][j]) / (T[i + 1] - T[i])
+                if s0 * s1 > 0:
+                    v = (s0 + s1) / 2.0
+                    lim = 3.0 * min(abs(s0), abs(s1))
+                    vel[j] = _math.copysign(min(abs(v), lim), v)
+        pt = JointTrajectoryPoint()
+        pt.positions = P[i]
+        pt.velocities = vel
+        pt.time_from_start = Duration(sec=int(T[i]), nanosec=int((T[i] % 1) * 1e9))
+        points.append(pt)
+    return points, T[-1]
+
 
 class RutinaNode(Node):
     def __init__(self):
@@ -1122,9 +1162,20 @@ class RutinaNode(Node):
             JointTrajectory,
             "/joint_trajectory_controller/joint_trajectory", 10)
 
+    def go_base(self):
+        msg = JointTrajectory()
+        msg.joint_names = JOINT_NAMES
+        pt = JointTrajectoryPoint()
+        pt.positions = BASE_POSITION
+        pt.velocities = [0.0] * len(JOINT_NAMES)
+        pt.time_from_start = Duration(sec=3, nanosec=0)
+        msg.points = [pt]
+        self._pub.publish(msg)
+        time.sleep(3.3)
+
     def run(self):
         self.get_logger().info("Esperando controlador...")
-        timeout = 10.0
+        timeout = 40.0
         start   = time.time()
         while self._pub.get_subscription_count() == 0:
             if time.time() - start > timeout:
@@ -1135,26 +1186,29 @@ class RutinaNode(Node):
         self.get_logger().info("Controlador conectado. Ejecutando rutina...")
         time.sleep(0.5)
 
-        for i, positions in enumerate(STEPS):
-            self.get_logger().info(f"Paso {{i+1}}/{{len(STEPS)}}")
-            msg              = JointTrajectory()
-            msg.joint_names  = JOINT_NAMES
-            pt               = JointTrajectoryPoint()
-            pt.positions     = positions
-            pt.velocities    = [0.0] * len(JOINT_NAMES)
-            pt.time_from_start = Duration(sec=STEP_DURATION, nanosec=0)
-            msg.points       = [pt]
-            self._pub.publish(msg)
-            time.sleep(STEP_DURATION + 0.5)
+        # Trayectoria unica y suave: velocidades continuas, sin frenar en cada pose
+        msg = JointTrajectory()
+        msg.joint_names = JOINT_NAMES
+        msg.points, total = smooth_points([(p, STEP_DURATION) for p in STEPS])
+        self.get_logger().info("Ejecutando rutina suave: " + str(len(STEPS)) + " poses")
+        self._pub.publish(msg)
+        time.sleep(total + 0.5)
 
         self.get_logger().info("Rutina completada.")
 
 def main():
-    rclpy.init()
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = RutinaNode()
-    node.run()
-    node.destroy_node()
-    rclpy.shutdown()
+    interrumpida = False
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        interrumpida = True
+    finally:
+        if interrumpida:
+            node.go_base()
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__": main()
 '''

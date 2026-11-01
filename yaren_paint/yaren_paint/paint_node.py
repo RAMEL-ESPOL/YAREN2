@@ -226,7 +226,7 @@ def draw_shape(img, shape, vp, color, thick):
                       False, color, thick, cv2.LINE_AA)
 
 
-ICON_PATH = "/home/roberto/robotis_ws/src/YAREN2/yaren_paint/icono/pintor.png"
+ICON_PATH = "/home/jetson/robotis_ws/src/YAREN2/yaren_paint/icono/pintor.png"
 _icon_cache = {}
 
 
@@ -1035,7 +1035,7 @@ PaintNode._draw_guide = _draw_guide_gt
 
 
 # ─── LINEART_BLOCK: dibujo original (lineas) encima de los colores ───────────
-LINEART_DIR = "/home/roberto/robotis_ws/src/YAREN2/yaren_paint/lineart"
+LINEART_DIR = "/home/jetson/robotis_ws/src/YAREN2/yaren_paint/lineart"
 _la_raw, _la_cache = {}, {}
 
 

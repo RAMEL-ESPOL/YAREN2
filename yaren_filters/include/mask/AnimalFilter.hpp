@@ -10,11 +10,12 @@ class AnimalFilter {
 public:
     AnimalFilter() = default;
     AnimalFilter(const std::string& animal_name);
-    cv::Mat apply_filter(cv::Mat frame, const std::vector<cv::Point2f>& landmarks);
+    cv::Mat apply_filter(cv::Mat frame, const std::vector<cv::Point2f>& landmarks, float px_scale = 1.0f);
 
 private:
     void load_masks(const std::string& animal_name);
     cv::Mat rotate_image(const cv::Mat& image, double angle);
+    cv::Mat warp_mask(const cv::Mat& mask, int w, int h, double angle);
     void optimized_overlay(cv::Mat& bg, const cv::Mat& overlay, int x, int y);
     float smooth_value(std::deque<float>& history, float new_value, size_t max_size = 5);
 

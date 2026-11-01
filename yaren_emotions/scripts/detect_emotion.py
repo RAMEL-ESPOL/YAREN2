@@ -15,6 +15,15 @@ import time
 import random
 import math
 from ament_index_python.packages import get_package_share_directory
+from rclpy.qos import qos_profile_sensor_data
+from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
+from lifecycle_msgs.srv import ChangeState
+from lifecycle_msgs.msg import Transition
+
+CAM_NODE = '/csi_cam_node'
+CAM_HI = (1280, 720, 854, 480)    # igual que CAM_LO: todos los modos usan 854x480
+CAM_LO = (1280, 720, 854, 480)    # normal
 
 EMOTIONS_EN = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
 EMOTIONS_ES = ["Enojado", "Disgusto", "Miedo", "Feliz", "Triste", "Sorpresa", "Neutral"]
@@ -442,12 +451,8 @@ class ImageParticle:
         emoji_crop = self.img[img_y1:img_y2, img_x1:img_x2]
         frame_crop = frame[y1:y2, x1:x2]
         if emoji_crop.shape[2] == 4:
-            alpha_mask = emoji_crop[:, :, 3] / 255.0
-            alpha_inv  = 1.0 - alpha_mask
-            for c in range(3):
-                frame_crop[:, :, c] = (alpha_mask * emoji_crop[:, :, c] +
-                                       alpha_inv  * frame_crop[:, :, c])
-            frame[y1:y2, x1:x2] = frame_crop
+            a = emoji_crop[:, :, 3:4].astype(np.float32) * (1.0 / 255.0)
+            frame_crop[:] = (emoji_crop[:, :, :3] * a + frame_crop * (1.0 - a)).astype(np.uint8)
 
 
 # =============================================================================
@@ -455,7 +460,7 @@ class ImageParticle:
 # =============================================================================
 class EmotionDetectionNode(LifecycleNode):
 
-    PARTICLE_COUNT = 30
+    PARTICLE_COUNT = 10
     INFER_EVERY_UI       = 3   # con interfaz (modo EMOCIONES)
     INFER_EVERY_HEADLESS = 6   # segundo plano (modo sesion): menos carga de CPU
 
@@ -487,6 +492,8 @@ class EmotionDetectionNode(LifecycleNode):
         self._ui_active        = False   # ventana + musica + emojis
         self._mode_sub         = None
         self._mode_pub         = None
+        self._cam_res          = CAM_LO
+        self._cam_lock         = threading.Lock()
 
     # -------------------------------------------------------------------------
     #  Lifecycle
@@ -553,7 +560,7 @@ class EmotionDetectionNode(LifecycleNode):
         self._latest_frame = None
 
         self.subscription = self.create_subscription(
-            Image, '/csi_camera/image_raw', self.image_callback, 10)
+            Image, '/csi_camera/image_raw', self.image_callback, qos_profile_sensor_data)
 
         self._infer_thread = threading.Thread(target=self._infer_loop, daemon=True)
         self._infer_thread.start()
@@ -631,13 +638,56 @@ class EmotionDetectionNode(LifecycleNode):
     # -------------------------------------------------------------------------
     #  Interfaz (ventana + musica + emojis) — solo modo EMOCIONES
     # -------------------------------------------------------------------------
+    def _set_camera_res(self, res):
+        if self._cam_res == res:
+            return
+        self._cam_res = res
+        threading.Thread(target=self._cam_res_worker, args=(res,), daemon=True).start()
+
+    def _cam_res_worker(self, res):
+        cw, ch, dw, dh = res
+        with self._cam_lock:
+            helper = rclpy.create_node('emotion_cam_cfg')
+            try:
+                def call(cli, req):
+                    if not cli.wait_for_service(timeout_sec=2.0):
+                        return None
+                    fut = cli.call_async(req)
+                    rclpy.spin_until_future_complete(helper, fut, timeout_sec=5.0)
+                    return fut.result() if fut.done() else None
+
+                st  = helper.create_client(ChangeState,   f'{CAM_NODE}/change_state')
+                par = helper.create_client(SetParameters, f'{CAM_NODE}/set_parameters')
+
+                def transition(tid):
+                    r = ChangeState.Request(); r.transition.id = tid
+                    return call(st, r)
+
+                def ival(n, v):
+                    return Parameter(name=n, value=ParameterValue(
+                        type=ParameterType.PARAMETER_INTEGER, integer_value=v))
+
+                transition(Transition.TRANSITION_DEACTIVATE)
+                r = SetParameters.Request()
+                r.parameters = [ival('capture_width', cw), ival('capture_height', ch),
+                                ival('display_width', dw), ival('display_height', dh)]
+                call(par, r)
+                transition(Transition.TRANSITION_ACTIVATE)
+                self.get_logger().info(f'Camara -> {dw}x{dh}')
+            except Exception as e:
+                self.get_logger().warn(f'No se pudo cambiar la camara: {e}')
+            finally:
+                helper.destroy_node()
+
     def _start_ui(self) -> bool:
         if self._ui_active:
             return True
         self.get_logger().info('EmotionDetector: mostrando intro...')
+        self._set_camera_res(CAM_HI)
 
         if not show_intro_screen(self.window_name, self.is_english):
             self.get_logger().info('Intro cancelada.')
+            self._set_camera_res(CAM_LO)
             self._publish_idle()
             return False
 
@@ -667,6 +717,7 @@ class EmotionDetectionNode(LifecycleNode):
             return
         self._ui_active   = False
         self._INFER_EVERY = self.INFER_EVERY_HEADLESS
+        self._set_camera_res(CAM_LO)
         if self._music:
             self._music.stop()
         cv2.destroyAllWindows()
@@ -706,21 +757,23 @@ class EmotionDetectionNode(LifecycleNode):
             self.get_logger().error(f'Error cv_bridge: {e}'); return
 
         frame = cv2.flip(frame, 0)
+        fh, fw = frame.shape[:2]
         if self._frame_count % self._INFER_EVERY == 0:
             with self._lock:
-                self._latest_frame = frame.copy()
+                self._latest_frame = frame
 
         # Modo segundo plano (sesion): solo inferencia, sin dibujar ni mostrar ventana
         if not self._ui_active:
             return
 
-        vis = frame.copy()
+        vis = cv2.resize(frame, (800, 480), interpolation=cv2.INTER_AREA if fw > 1000 else cv2.INTER_LINEAR)
         with self._lock:
             label = self._result_label
             box   = self._result_box
 
         if box is not None:
-            x_min, y_min, x_max, y_max = box
+            x_min = int(box[0] * 800); y_min = int(box[1] * 480)
+            x_max = int(box[2] * 800); y_max = int(box[3] * 480)
             accent     = EMOTION_COLORS.get(label, (0, 255, 0))
             corner_len = 20
             cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), accent, 2)
@@ -754,7 +807,6 @@ class EmotionDetectionNode(LifecycleNode):
             cv2.putText(vis, big_text, (bx, by),
                         cv2.FONT_HERSHEY_DUPLEX, 1.6, accent, 3, cv2.LINE_AA)
 
-        vis = cv2.resize(vis, (800, 480))
         if self._active and self._ui_active and rclpy.ok():
             try:
                 _now = time.time()
@@ -796,7 +848,7 @@ class EmotionDetectionNode(LifecycleNode):
                 for face_landmarks in results.multi_face_landmarks:
                     x_coords = [lm.x * w for lm in face_landmarks.landmark]
                     y_coords = [lm.y * h for lm in face_landmarks.landmark]
-                    expand = 40
+                    expand = int(h * 0.083)
                     x_min  = max(0, int(min(x_coords)) - expand)
                     y_min  = max(0, int(min(y_coords)) - expand)
                     x_max  = min(w, int(max(x_coords)) + expand)
@@ -813,7 +865,7 @@ class EmotionDetectionNode(LifecycleNode):
                     idx = int(np.argmax(preds_array))
                     with self._lock:
                         self._result_label = emotion_list[idx]
-                        self._result_box   = (x_min, y_min, x_max, y_max)
+                        self._result_box   = (x_min / w, y_min / h, x_max / w, y_max / h)
                     self.publisher.publish(Int16(data=idx))
             else:
                 with self._lock:

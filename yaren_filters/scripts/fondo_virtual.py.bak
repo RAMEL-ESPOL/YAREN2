@@ -20,6 +20,7 @@ import numpy as np
 import os
 import glob
 import math
+import random
 import threading
 import time
 
@@ -35,6 +36,10 @@ class VirtualBackgroundNode(LifecycleNode):
         self._segmentator  = None
         self._bg_images    = []
         self._thumbnails   = []
+        self._bg_names     = []
+        self._pressed      = None
+        self._btn_rects    = {}
+        self._menu_cache   = {}
         self._is_english   = False
         self._lang_sub     = None
 
@@ -158,6 +163,7 @@ class VirtualBackgroundNode(LifecycleNode):
 
         self._bg_images.clear()
         self._thumbnails.clear()
+        self._bg_names.clear()
         self._cached_bg = None
         self._cached_bg_index = -1
         self._configured_ready = False
@@ -296,6 +302,7 @@ class VirtualBackgroundNode(LifecycleNode):
             img = cv2.imread(f)
             if img is not None:
                 self._bg_images.append(img)
+                self._bg_names.append(os.path.splitext(os.path.basename(f))[0])
                 thumb = cv2.resize(img, (self._thumb_w, self._thumb_h))
                 self._thumbnails.append(thumb)
 
@@ -336,151 +343,237 @@ class VirtualBackgroundNode(LifecycleNode):
 
     # ── Menú de selección ──────────────────────────────────────────────
 
+    # ── Menú de selección (estilo videojuego infantil) ─────────────────
+
+    HEADER_H = 106
+
+    # Paletas BGR: (base, brillo, borde)
+    _PAL_EXIT   = ((30, 120, 235), (90, 175, 255), (70, 215, 255))
+    _PAL_RANDOM = ((225, 110, 40), (255, 175, 105), (255, 215, 160))
+    _PAL_DONE   = ((50, 170, 30), (115, 220, 95), (160, 245, 140))
+
+    @staticmethod
+    def _rrect(img, x1, y1, x2, y2, r, color):
+        """Rectángulo redondeado relleno."""
+        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+        if x2 <= x1 or y2 <= y1:
+            return
+        r = int(max(0, min(r, (x2 - x1) // 2, (y2 - y1) // 2)))
+        cv2.rectangle(img, (x1 + r, y1), (x2 - r, y2), color, -1)
+        cv2.rectangle(img, (x1, y1 + r), (x2, y2 - r), color, -1)
+        for cx, cy in ((x1 + r, y1 + r), (x2 - r, y1 + r),
+                       (x1 + r, y2 - r), (x2 - r, y2 - r)):
+            cv2.circle(img, (cx, cy), r, color, -1, cv2.LINE_AA)
+
+    @staticmethod
+    def _text_c(img, text, cx, cy, scale, color, outline, thick=1):
+        """Texto centrado con contorno grueso (look de caricatura)."""
+        font = cv2.FONT_HERSHEY_DUPLEX
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+        org = (int(cx - tw / 2), int(cy + th / 2))
+        cv2.putText(img, text, org, font, scale, outline, thick + 3, cv2.LINE_AA)
+        cv2.putText(img, text, org, font, scale, color, thick, cv2.LINE_AA)
+
+    @staticmethod
+    def _sparkle(img, cx, cy, r, color):
+        k = max(1, r // 4)
+        pts = np.array([(cx, cy - r), (cx + k, cy - k), (cx + r, cy),
+                        (cx + k, cy + k), (cx, cy + r), (cx - k, cy + k),
+                        (cx - r, cy), (cx - k, cy - k)], np.int32)
+        cv2.fillPoly(img, [pts], color, cv2.LINE_AA)
+
+    @staticmethod
+    def _blit(dst, src, x, y):
+        """Copia src en dst recortando lo que se salga de la pantalla."""
+        dh, dw = dst.shape[:2]
+        sh, sw = src.shape[:2]
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(dw, x + sw), min(dh, y + sh)
+        if x2 > x1 and y2 > y1:
+            dst[y1:y2, x1:x2] = src[y1 - y:y2 - y, x1 - x:x2 - x]
+
+    def _button(self, img, rect, label, pal, pressed=False, scale=0.75):
+        """Botón gordito con sombra, borde, brillo y efecto de presionado."""
+        x, y, w, h = rect
+        base, light, border = pal
+        dy = 3 if pressed else 0
+        dark = tuple(int(c * 0.40) for c in base)
+        self._rrect(img, x, y + 6, x + w, y + h + 6, 15, (25, 12, 6))
+        self._rrect(img, x, y + dy, x + w, y + h + dy, 15, border)
+        self._rrect(img, x + 3, y + 3 + dy, x + w - 3, y + h - 3 + dy, 13, base)
+        self._rrect(img, x + 7, y + 5 + dy, x + w - 7, y + h // 2 + dy, 10, light)
+        self._text_c(img, label, x + w / 2, y + h / 2 + dy,
+                     scale, (255, 255, 255), dark)
+
+    def _layout_buttons(self, w):
+        by, bh = 10, 44
+        return {
+            'exit':   (14, by, 118, bh),
+            'random': ((w - 190) // 2, by, 190, bh),
+            'done':   (w - 14 - 150, by, 150, bh),
+        }
+
+    def _menu_bg(self, w, h):
+        """Fondo degradado + cabecera. Se genera una sola vez (caché)."""
+        key = (w, h, self._is_english)
+        c = self._menu_cache
+        if c.get('key') == key:
+            return c['bg'], c['header']
+
+        top = np.array((72, 34, 14), np.float32)
+        bot = np.array((36, 14, 6), np.float32)
+        t = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+        bg = np.repeat(top * (1 - t) + bot * t, w, axis=1).astype(np.uint8)
+
+        hd = self.HEADER_H
+        header = np.zeros((hd, w, 3), np.uint8)
+        header[:] = (125, 62, 24)
+        header[64:hd] = (104, 50, 18)
+        cv2.line(header, (0, 63), (w, 63), (150, 80, 30), 2)
+        cv2.rectangle(header, (0, hd - 4), (w, hd), (232, 200, 79), -1)
+        cv2.rectangle(header, (0, hd - 1), (w, hd), (60, 25, 8), -1)
+
+        title = 'CHOOSE YOUR BACKGROUND!' if self._is_english else 'ELIGE TU FONDO!'
+        scale = 0.85
+        (tw, _), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_DUPLEX, scale, 2)
+        self._text_c(header, title, w // 2, 83, scale,
+                     (240, 215, 100), (60, 25, 8), 2)
+        for sx, sy, sr in ((w // 2 - tw // 2 - 28, 80, 11),
+                           (w // 2 + tw // 2 + 28, 80, 11),
+                           (w // 2 - tw // 2 - 50, 90, 6),
+                           (w // 2 + tw // 2 + 50, 90, 6)):
+            self._sparkle(header, sx, sy, sr, (110, 230, 255))
+        for x in range(w // 2 - 170, w // 2 + 171, 9):
+            cv2.circle(header, (x, 99), 1, (170, 120, 70), -1, cv2.LINE_AA)
+
+        self._menu_cache = {'key': key, 'bg': bg, 'header': header}
+        return bg, header
+
     def _draw_menu(self, w: int, h: int) -> np.ndarray:
-        menu = np.zeros((h, w, 3), dtype=np.uint8)
-        menu[:] = (22, 15, 30)
+        bg, header = self._menu_bg(w, h)
+        menu = bg.copy()
+        hd = self.HEADER_H
+        en = self._is_english
+        btns = self._layout_buttons(w)
 
-        # Gradiente sutil de fondo
-        for y in range(h):
-            alpha = y / h * 0.3
-            menu[y] = np.clip(
-                menu[y].astype(np.float32) + alpha * np.array([10, 5, 20]),
-                0, 255).astype(np.uint8)
-
-        # Aviso si MediaPipe aún está cargando
+        # ── Pantalla de carga (solo botón salir) ──
         if not self._configured_ready:
-            cv2.putText(menu,
-                        'Cargando...' if not self._is_english else 'Loading...',
-                        (w // 2 - 60, h // 2),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.0,
-                        (0, 200, 255), 1, cv2.LINE_AA)
+            menu[:hd] = header
+            self._btn_rects = {'exit': btns['exit']}
+            self._exit_btn_rect = btns['exit']
+            self._button(menu, btns['exit'], 'EXIT' if en else 'SALIR',
+                         self._PAL_EXIT, self._pressed == 'exit')
+            self._text_c(menu, 'Loading...' if en else 'Cargando...',
+                         w // 2, (h + hd) // 2, 1.1,
+                         (255, 230, 120), (60, 20, 5), 2)
             return menu
 
-        # Título
-        title = ('SELECT A BACKGROUND' if self._is_english
-                 else 'SELECCIONA UN FONDO')
-        hint  = ('(Click to select, drag to scroll)'
-                 if self._is_english
-                 else '(Click para seleccionar, arrastra para ver mas)')
-        cv2.putText(menu, title,
-                    (w // 2 - 230, 42),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.1,
-                    (220, 60, 255), 2, cv2.LINE_AA)
-        cv2.line(menu, (w // 2 - 230, 52), (w // 2 + 230, 52),
-                 (80, 20, 100), 1, cv2.LINE_AA)
-        cv2.putText(menu, hint,
-                    (w // 2 - 230, 72),
-                    cv2.FONT_HERSHEY_PLAIN, 1.0,
-                    (130, 100, 150), 1, cv2.LINE_AA)
+        # ── Geometría de la grilla ──
+        cols, pad, gap, frame, label_h = 3, 14, 14, 6, 22
+        panel_x1, panel_x2 = 10, w - 24
+        card_w = (panel_x2 - panel_x1 - 2 * pad - gap * (cols - 1)) // cols
+        thumb_w = card_w - 2 * frame
+        thumb_h = int(thumb_w * 0.52)
+        card_h = thumb_h + frame + label_h
+        panel_h = card_h + 20
+        stride = panel_h + 12
 
-        # Botón SALIR
-        ex, ey, ew, eh = 15, 10, 125, 45
-        self._exit_btn_rect = (ex, ey, ew, eh)
-        cv2.rectangle(menu, (ex, ey), (ex + ew, ey + eh),
-                      (30, 30, 60), -1)
-        cv2.rectangle(menu, (ex, ey), (ex + ew, ey + eh),
-                      (80, 80, 160), 1, cv2.LINE_AA)
-        lbl_exit = 'EXIT' if self._is_english else 'SALIR'
-        cv2.putText(menu, lbl_exit,
-                    (ex + 22, ey + 30),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.80,
-                    (180, 180, 220), 1, cv2.LINE_AA)
+        if self._bg_images and (thumb_w != self._thumb_w or thumb_h != self._thumb_h):
+            self._thumb_w, self._thumb_h = thumb_w, thumb_h
+            self._thumbnails = [cv2.resize(im, (thumb_w, thumb_h))
+                                for im in self._bg_images]
 
-        # Grid de miniaturas
+        n = len(self._thumbnails)
+        rows = math.ceil(n / cols) if n else 0
+        total_h = hd + 10 + rows * stride
+        self._max_scroll = max(0, total_h - h + 6)
+        self._scroll_y = max(0, min(self._max_scroll, self._scroll_y))
+
+        # Paneles azules (una "bandeja" por fila)
+        for r in range(rows):
+            py1 = hd + 10 + r * stride - self._scroll_y
+            if py1 + panel_h < hd or py1 > h:
+                continue
+            self._rrect(menu, panel_x1, py1 + 4, panel_x2, py1 + panel_h + 4, 18, (110, 55, 15))
+            self._rrect(menu, panel_x1, py1, panel_x2, py1 + panel_h, 18, (205, 125, 40))
+            self._rrect(menu, panel_x1 + 3, py1 + 3, panel_x2 - 3, py1 + panel_h - 3, 15, (245, 200, 90))
+
+        # Tarjetas
         self._thumbnail_rects = []
-        cols    = 3
-        pad_x   = 25
-        pad_top = 90
-        gap_x   = 18
-        gap_y   = 18
-
-        thumb_w = (w - pad_x * 2 - gap_x * (cols - 1)) // cols
-        thumb_h = int(thumb_w * 0.60)
-
-        rows    = math.ceil(max(1, len(self._thumbnails)) / cols)
-        total_h = pad_top + rows * (thumb_h + gap_y)
-        self._max_scroll = max(0, total_h - h + 20)
-
-        # Regenerar thumbs si el tamaño cambió
-        if (self._bg_images and
-                (thumb_w != self._thumb_w or thumb_h != self._thumb_h)):
-            self._thumb_w = thumb_w
-            self._thumb_h = thumb_h
-            self._thumbnails = [
-                cv2.resize(img, (thumb_w, thumb_h))
-                for img in self._bg_images
-            ]
-
-        # Obtener lista de archivos para nombres
-        try:
-            pkg_dir     = get_package_share_directory('yaren_filters')
-            folder_path = os.path.join(pkg_dir, 'fondos')
-            exts = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
-            all_files = []
-            for ext in exts:
-                all_files += glob.glob(os.path.join(folder_path, ext))
-            all_files = sorted(set(all_files))
-        except Exception:
-            all_files = []
-
+        pulse = 0.5 + 0.5 * math.sin(time.time() * 5.0)
         for i, thumb in enumerate(self._thumbnails):
-            row = i // cols
-            col = i % cols
-            x   = pad_x + col * (thumb_w + gap_x)
-            y   = pad_top + row * (thumb_h + gap_y) - self._scroll_y
+            r, c = divmod(i, cols)
+            cx = panel_x1 + pad + c * (card_w + gap)
+            cy = hd + 10 + r * stride + 10 - self._scroll_y
+            self._thumbnail_rects.append((cx, cy, card_w, card_h))
+            if cy + card_h < hd or cy > h:
+                continue
 
-            y1  = max(0, int(y))
-            y2  = min(h, int(y + thumb_h))
-            ty1 = y1 - int(y)
-            ty2 = ty1 + (y2 - y1)
+            sel = (i == self._bg_index)
+            pressed = (self._pressed == ('card', i))
+            self._rrect(menu, cx, cy + 4, cx + card_w, cy + card_h + 4, 10, (170, 95, 25))
+            if sel:
+                self._rrect(menu, cx, cy, cx + card_w, cy + card_h, 10,
+                            (int(70 * pulse), 225, 255))
+                self._rrect(menu, cx + 3, cy + 3, cx + card_w - 3, cy + card_h - 3, 8,
+                            (255, 255, 255))
+            else:
+                col = (255, 225, 110) if pressed else (255, 255, 255)
+                self._rrect(menu, cx, cy, cx + card_w, cy + card_h, 10, col)
+            self._blit(menu, thumb, cx + frame, cy + frame)
 
-            if y2 > y1 and 0 <= ty1 < ty2 <= thumb_h:
-                region = menu[y1:y2, x:x + thumb_w]
-                src    = thumb[ty1:ty2, :]
-                if region.shape == src.shape:
-                    menu[y1:y2, x:x + thumb_w] = src
+            name = self._bg_names[i] if i < len(self._bg_names) else str(i + 1)
+            cv2.putText(menu, name.replace('_', ' ')[:24],
+                        (cx + frame + 2, cy + frame + thumb_h + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (150, 70, 0) if sel else (90, 45, 15), 1, cv2.LINE_AA)
 
-                is_selected = (i == self._bg_index)
-                color = (0, 229, 255) if is_selected else (160, 160, 160)
-                thick = 3 if is_selected else 1
-                cv2.rectangle(menu,
-                              (x - 1, int(y) - 1),
-                              (x + thumb_w + 1, int(y + thumb_h) + 1),
-                              color, thick, cv2.LINE_AA)
+            if sel:  # insignia verde con palomita
+                bx, by = cx + 4, cy + 4
+                cv2.circle(menu, (bx, by), 14, (255, 255, 255), -1, cv2.LINE_AA)
+                cv2.circle(menu, (bx, by), 11, (50, 175, 35), -1, cv2.LINE_AA)
+                cv2.polylines(menu, [np.array([(bx - 6, by), (bx - 2, by + 5), (bx + 6, by - 5)], np.int32)],
+                              False, (255, 255, 255), 3, cv2.LINE_AA)
 
-                # Nombre del archivo debajo de la miniatura
-                if i < len(all_files):
-                    name = os.path.splitext(
-                        os.path.basename(all_files[i]))[0]
-                else:
-                    name = str(i)
-                cv2.putText(menu, name[:18],
-                            (x + 4, min(h - 4, int(y + thumb_h) + 14)),
-                            cv2.FONT_HERSHEY_PLAIN, 0.85,
-                            (180, 180, 200) if not is_selected
-                            else (0, 229, 255),
-                            1, cv2.LINE_AA)
+        if n == 0:
+            self._text_c(menu, 'No backgrounds found' if en else 'No hay fondos',
+                         w // 2, (h + hd) // 2, 0.9, (200, 200, 230), (60, 20, 5), 1)
 
-            self._thumbnail_rects.append((x, y, thumb_w, thumb_h))
+        # Cabecera y botones por encima de todo
+        menu[:hd] = header
+        self._btn_rects = btns
+        self._exit_btn_rect = btns['exit']
+        for key, pal, lbl in (('exit', self._PAL_EXIT, 'EXIT' if en else 'SALIR'),
+                              ('random', self._PAL_RANDOM, 'RANDOM' if en else 'ALEATORIO'),
+                              ('done', self._PAL_DONE, 'GO!' if en else 'LISTO!')):
+            self._button(menu, btns[key], lbl, pal, self._pressed == key)
 
-        # Scrollbar lateral
+        # Scrollbar redondeada
         if self._max_scroll > 0:
-            sb_x  = w - 10
-            sb_y0 = pad_top
-            sb_h  = h - pad_top - 20
-            fill  = max(20, int(sb_h * h / total_h))
-            fill_y = sb_y0 + int(
-                (sb_h - fill) * self._scroll_y / self._max_scroll)
-            cv2.rectangle(menu,
-                          (sb_x, sb_y0), (sb_x + 6, sb_y0 + sb_h),
-                          (40, 40, 55), -1)
-            cv2.rectangle(menu,
-                          (sb_x, fill_y), (sb_x + 6, fill_y + fill),
-                          (120, 60, 200), -1, cv2.LINE_AA)
+            sx, sy0, sh = w - 17, hd + 8, h - hd - 16
+            knob = max(30, int(sh * (h - hd) / max(1, total_h - hd)))
+            ky = sy0 + int((sh - knob) * self._scroll_y / self._max_scroll)
+            self._rrect(menu, sx, sy0, sx + 9, sy0 + sh, 4, (70, 35, 12))
+            self._rrect(menu, sx, ky, sx + 9, ky + knob, 4, (255, 190, 70))
 
         return menu
 
     # ── Mouse callback ─────────────────────────────────────────────────
+
+    def _hit(self, x, y):
+        for key, (bx, by, bw, bh) in self._btn_rects.items():
+            if bx <= x <= bx + bw and by <= y <= by + bh:
+                return key
+        if y >= self.HEADER_H and self._configured_ready:
+            for i, (rx, ry, rw, rh) in enumerate(self._thumbnail_rects):
+                if rx <= x <= rx + rw and ry <= y <= ry + rh:
+                    return ('card', i)
+        return None
+
+    def _start_immersive(self, idx):
+        self._bg_index = idx
+        self._state = 'INMERSIVO'
+        self.get_logger().info(f'Fondo #{idx} seleccionado → INMERSIVO')
 
     def _mouse_callback(self, event, x, y, flags, param):
         # Scroll con rueda
@@ -495,8 +588,12 @@ class VirtualBackgroundNode(LifecycleNode):
                 self._is_dragging     = True
                 self._drag_start_y    = y
                 self._click_start_pos = (x, y)
+                self._pressed         = self._hit(x, y)
 
             elif event == cv2.EVENT_MOUSEMOVE and self._is_dragging:
+                if (abs(x - self._click_start_pos[0]) +
+                        abs(y - self._click_start_pos[1])) >= 12:
+                    self._pressed = None  # es un arrastre, no un clic
                 dy = self._drag_start_y - y
                 self._scroll_y = min(
                     self._max_scroll, max(0, self._scroll_y + dy))
@@ -504,27 +601,27 @@ class VirtualBackgroundNode(LifecycleNode):
 
             elif event == cv2.EVENT_LBUTTONUP:
                 self._is_dragging = False
+                self._pressed = None
                 dist = (abs(x - self._click_start_pos[0]) +
                         abs(y - self._click_start_pos[1]))
-                if dist < 12:
-                    # Botón SALIR
-                    ex, ey, ew, eh = self._exit_btn_rect
-                    if ex <= x <= ex + ew and ey <= y <= ey + eh:
-                        self._go_idle()
-                        return
-                    # Miniaturas — solo si MediaPipe ya cargó
-                    if self._configured_ready:
-                        for i, (rx, ry, rw, rh) in enumerate(
-                                self._thumbnail_rects):
-                            if rx <= x <= rx + rw and ry <= y <= ry + rh:
-                                self._bg_index = i
-                                self._state    = 'INMERSIVO'
-                                self.get_logger().info(
-                                    f'Fondo #{i} seleccionado → INMERSIVO')
-                                return
+                if dist >= 12:
+                    return
+                target = self._hit(x, y)
+                if target == 'exit':
+                    self._go_idle()
+                elif not self._configured_ready or not self._bg_images:
+                    return
+                elif target == 'random':
+                    pool = [i for i in range(len(self._bg_images))
+                            if i != self._bg_index] or [self._bg_index]
+                    self._start_immersive(random.choice(pool))
+                elif target == 'done':
+                    self._start_immersive(self._bg_index)
+                elif isinstance(target, tuple):
+                    self._start_immersive(target[1])
 
         elif self._state == 'INMERSIVO':
-            # Ya no hay botón, cualquier clic primario regresa al menú
+            # Cualquier clic primario regresa al menú
             if event == cv2.EVENT_LBUTTONDOWN:
                 self._state = 'MENU'
                 self.get_logger().info('Volviendo al menú de fondos.')

@@ -69,6 +69,9 @@ class VirtualBackgroundNode(LifecycleNode):
         self._latest_frame = None
         self._frame_lock   = threading.Lock()
         self._window_name  = 'YAREN - Fondos Virtuales'
+        self._window_created = False
+        self._vis_ok         = False   # el backend ya reportó la ventana visible
+        self._vis_miss       = 0
 
         self._render_timer = None
 
@@ -127,7 +130,9 @@ class VirtualBackgroundNode(LifecycleNode):
 
         # Timer a ~30 Hz para no asfixiar el ejecutor de ROS 2
         self._render_timer = self.create_timer(0.033, self._spin_render)
-        self._window_created = False  # <-- NUEVO: Reiniciar bandera al activar
+        self._window_created = False
+        self._vis_ok         = False
+        self._vis_miss       = 0
 
         self.get_logger().info('ACTIVADO — mostrando menú de fondos.')
         return TransitionCallbackReturn.SUCCESS
@@ -209,32 +214,45 @@ class VirtualBackgroundNode(LifecycleNode):
     # ── Render principal (llamado desde el Timer) ──────────────────────
 
     def _spin_render(self):
+        try:
+            self._spin_render_inner()
+        except Exception as e:
+            self.get_logger().error(f'_spin_render: {e}', throttle_duration_sec=2.0)
+
+    def _spin_render_inner(self):
         """Llamado automáticamente por el Timer a ~30Hz."""
         if not self._active:
             return
 
         # Crear/verificar ventana
-        try:
-            visible = cv2.getWindowProperty(self._window_name, cv2.WND_PROP_VISIBLE)
-            window_exists = visible >= 1
-        except cv2.error:
-            window_exists = False
-
-        if not window_exists:
-            # Si no existe la ventana, evaluamos por qué:
-            if not getattr(self, '_window_created', False):
-                # 1. Es la primera vez que arranca, la creamos normalmente
+        if not self._window_created:
+            try:
                 cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
-                cv2.setWindowProperty(self._window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                cv2.setWindowProperty(self._window_name, cv2.WND_PROP_FULLSCREEN,
+                                      cv2.WINDOW_FULLSCREEN)
                 cv2.setMouseCallback(self._window_name, self._mouse_callback)
-                self.get_logger().info('Ventana creada.')
-                self._window_created = True
-            else:
-                # 2. Ya había sido creada, significa que el usuario pulsó la X
-                self.get_logger().info('Ventana cerrada con X. Publicando idle...')
-                self._window_created = False
+            except cv2.error as e:
+                self.get_logger().error(
+                    f'No se pudo crear la ventana (¿DISPLAY? ¿opencv headless?): {e}')
                 self._go_idle()
                 return
+            self._window_created = True
+            self.get_logger().info('Ventana creada.')
+        else:
+            try:
+                vis = cv2.getWindowProperty(self._window_name, cv2.WND_PROP_VISIBLE)
+            except cv2.error:
+                vis = -1
+            if vis >= 1:
+                self._vis_ok = True
+                self._vis_miss = 0
+            elif self._vis_ok:                # solo si antes se vio visible
+                self._vis_miss += 1
+                if self._vis_miss >= 5:       # ~150 ms seguidos sin ventana
+                    self.get_logger().info('Ventana cerrada con X. Publicando idle...')
+                    self._window_created = False
+                    self._go_idle()
+                    return
 
         # Renderizar según estado
         if self._state == 'MENU':
