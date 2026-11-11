@@ -27,7 +27,6 @@ try:
 except ImportError:
     SignalHandlerOptions = None
 
-from robot_parts import RobotFilter
 
 mp_pose = mp.solutions.pose
 
@@ -35,11 +34,7 @@ WIN = "YAREN Mimic"   # UNA sola ventana: intro y mimic se dibujan aqui
 
 # --- Ajustes del filtro YAREN ---
 MIRROR_VIEW = False   # False = camara normal (NO espejo)
-SWAP_ARMS   = False   # pon True si los brazos quedan cambiados
-ARM_THICK   = 0.75    # grosor de los brazos (1.0 = original)
-CHEST_SCALE = 0.80    # tamano del pecho (1.0 = original)
 
-ASSETS_DIR = "/home/roberto/robotis_ws/src/YAREN2/yaren_arm_mimic/filtro/assets"
 
 C_BG     = (8,  14, 26)
 C_BLUE   = (255, 120,  40)
@@ -178,68 +173,114 @@ def _gear(img, cx, cy, r, color):
 class IntroScreen:
     def __init__(self, W=800, H=480):
         self.W, self.H = W, H
-        self.BTN = (280, 400, 240, 62)          # START (x, y, w, h)
+        self.BTN = (290, 410, 220, 58)      # START (x, y, w, h)
+        self.BACK = (8, 8, 124, 46)         # boton MENU
+        rng = np.random.RandomState(7)
+        self._parts = [(rng.uniform(0, W), rng.uniform(0, H), rng.uniform(1.2, 3.0),
+                        rng.uniform(8, 26), rng.uniform(0, 6.28)) for _ in range(36)]
         self._bg = self._make_bg()
 
-    # ── interacción ──────────────────────────────────────────────────────
+    # ── interaccion ──────────────────────────────────────────────────────
     def hit(self, x, y):
         bx, by, bw, bh = self.BTN
         if bx <= x <= bx + bw and by <= y <= by + bh:
             return "start"
-        if (x - 18) ** 2 + (y - 18) ** 2 <= 52 ** 2:
+        kx, ky, kw, kh = self.BACK
+        if kx <= x <= kx + kw and ky <= y <= ky + kh:
             return "back"
         return None
 
-    # ── fondo estático ───────────────────────────────────────────────────
+    # ── fondo estatico ───────────────────────────────────────────────────
     def _make_bg(self):
         W, H = self.W, self.H
-        half = W // 2
-        bg = np.empty((H, W, 3), np.uint8)
-        bg[:, :half] = _vgrad(H, half, (255, 205, 100), (235, 150, 25))
-        bg[:, half:] = _vgrad(H, W - half, (240, 170, 40), (205, 105, 10))
+        bg = _vgrad(H, W, (40, 18, 12), (96, 42, 58))
 
-        ov = bg.copy()
-        for (x, y, r) in [(225, 62, 20), (58, 118, 15), (330, 205, 12),
-                          (570, 70, 16), (520, 215, 13), (742, 100, 17)]:
-            _star(ov, x, y, r, (255, 235, 200))
-        for (x, y, r) in [(95, 265, 20), (700, 60, 16), (748, 165, 20), (655, 330, 14)]:
-            _gear(ov, x, y, r, (255, 235, 200))
-        bg = cv2.addWeighted(ov, 0.28, bg, 0.72, 0)
+        # resplandor central
+        yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+        d = np.sqrt(((xx - W / 2) / (W * 0.6)) ** 2 + ((yy - H * 0.42) / (H * 0.65)) ** 2)
+        glow = (np.clip(1.0 - d, 0, 1) ** 2)[..., None]
+        bg = np.clip(bg.astype(np.float32) + glow * np.array((110, 70, 10), np.float32),
+                     0, 255).astype(np.uint8)
 
+        # rejilla de hexagonos
         ov = bg.copy()
-        cv2.ellipse(ov, (165, 418), (92, 13), 0, 0, 360, (150, 80, 5), -1, cv2.LINE_AA)
-        cv2.ellipse(ov, (600, 432), (96, 13), 0, 0, 360, (140, 70, 0), -1, cv2.LINE_AA)
+        R = 28
+        dx, dy = R * 1.5, R * np.sqrt(3) / 2
+        for col in range(-1, int(W / dx) + 2):
+            for row in range(-1, int(H / (2 * dy)) + 2):
+                cx = col * dx
+                cy = row * 2 * dy + (dy if col % 2 else 0)
+                pts = np.array([[cx + R * np.cos(k * np.pi / 3), cy + R * np.sin(k * np.pi / 3)]
+                                for k in range(6)], np.int32)
+                cv2.polylines(ov, [pts], True, (170, 120, 70), 1, cv2.LINE_AA)
+        bg = cv2.addWeighted(ov, 0.16, bg, 0.84, 0)
+
+        # sombra bajo el robot
+        ov = bg.copy()
+        cv2.ellipse(ov, (190, 357), (86, 10), 0, 0, 360, (10, 6, 4), -1, cv2.LINE_AA)
         bg = cv2.addWeighted(ov, 0.45, bg, 0.55, 0)
 
-        for y in range(-6, H, 24):
-            cv2.line(bg, (half, y), (half, y + 14), (255, 235, 190), 9, cv2.LINE_AA)
-        for y in range(-6, H, 24):
-            cv2.line(bg, (half, y), (half, y + 14), I_WHITE, 4, cv2.LINE_AA)
+        # titulo
+        _txt(bg, "YAREN MIMIC", W // 2, 46, 1.9, (255, 235, 120), (60, 25, 10),
+             thick=4, edge_t=8, depth=5, side=(150, 90, 20))
+        cv2.line(bg, (W // 2 - 150, 82), (W // 2 - 14, 82), (40, 170, 255), 3, cv2.LINE_AA)
+        cv2.line(bg, (W // 2 + 14, 82), (W // 2 + 150, 82), (40, 170, 255), 3, cv2.LINE_AA)
+        cv2.circle(bg, (W // 2, 82), 5, (255, 235, 120), -1, cv2.LINE_AA)
+        _txt(bg, "IMITA MIS MOVIMIENTOS", W // 2, 100, 0.55, (230, 215, 200), (230, 215, 200),
+             thick=1, edge_t=0)
 
-        _txt(bg, "MIMIC", half, 64, 2.1, (40, 215, 255), (20, 90, 200),
-             thick=4, edge_t=8, depth=6, side=(20, 125, 240))
-        _txt(bg, "MODE", half, 122, 1.7, I_WHITE, (190, 100, 15),
-             thick=4, edge_t=8, depth=6, side=(235, 215, 190))
+        # 3 pasos
+        labels = ["Di: ACTIVAR MODO", "Mueve tus brazos", "YAREN te imita"]
+        pw, ph, gap, py = 220, 28, 12, 368
+        x0 = (W - (3 * pw + 2 * gap)) // 2
+        for i, s in enumerate(labels):
+            x = x0 + i * (pw + gap)
+            rrect(bg, x, py, pw, ph, 14, (60, 36, 40))
+            rrect(bg, x, py, pw, ph, 14, (255, 200, 90), fill=False, t=1)
+            cv2.circle(bg, (x + 16, py + ph // 2), 10, (40, 170, 255), -1, cv2.LINE_AA)
+            cv2.putText(bg, str(i + 1), (x + 12, py + ph // 2 + 5),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.45, (30, 20, 20), 1, cv2.LINE_AA)
+            cv2.putText(bg, s, (x + 34, py + ph // 2 + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (240, 235, 225), 1, cv2.LINE_AA)
 
-        rrect(bg, 5, 5, W - 11, H - 11, 24, I_BUBBLE, fill=False, t=5)
-        corners_ = [(18, 18, 58, 50), (0, H, 70, 61), (62, H - 4, 34, 25),
-                    (W, H, 70, 61), (W - 62, H - 4, 34, 25), (W, 0, 58, 49)]
-        for (cx, cy, r, _) in corners_:
-            cv2.circle(bg, (cx, cy), r, I_BUBBLE, -1, cv2.LINE_AA)
-        for (cx, cy, _, r) in corners_:
-            cv2.circle(bg, (cx, cy), r, I_BUBBLE_I, -1, cv2.LINE_AA)
-        cv2.polylines(bg, [np.array([[34, 14], [22, 28], [34, 42]], np.int32)],
-                      False, (230, 150, 40), 6, cv2.LINE_AA)
+        # boton MENU
+        rrect(bg, 10, 10, 112, 40, 20, (60, 36, 40))
+        rrect(bg, 10, 10, 112, 40, 20, (255, 200, 90), fill=False, t=2)
+        cv2.putText(bg, "< MENU", (26, 37), cv2.FONT_HERSHEY_DUPLEX, 0.55,
+                    (240, 235, 225), 1, cv2.LINE_AA)
+
+        # marco
+        rrect(bg, 4, 4, W - 9, H - 9, 22, (255, 200, 90), fill=False, t=2)
         return bg
 
-    # ── frame dinámico ───────────────────────────────────────────────────
+    # ── frame dinamico ───────────────────────────────────────────────────
     def render(self, t):
         img = self._bg.copy()
+        self._particles(img, t)
         self._silhouette(img, t)
         self._robot(img, t)
-        self._banner(img, t)
+        self._link(img, t)
         self._start(img, t)
         return img
+
+    def _particles(self, img, t):
+        for (x, y, r, sp, ph) in self._parts:
+            py = int((y - t * sp) % self.H)
+            px = int(x + 8 * np.sin(t * 0.8 + ph))
+            a = 0.5 + 0.5 * np.sin(t * 2.0 + ph)
+            col = (int(120 + 90 * a), int(150 + 70 * a), int(200 + 50 * a))
+            cv2.circle(img, (px, py), max(1, int(r)), col, -1, cv2.LINE_AA)
+
+    def _link(self, img, t):
+        cy = 205
+        for k in range(4):
+            u = (t * 0.5 + k * 0.25) % 1.0
+            px = int(300 + u * 200)
+            a = float(np.sin(u * np.pi))
+            col = (int(40 + 215 * a), int(50 + 170 * a), int(70 - 10 * a))
+            s = 11
+            pts = np.array([[px - s, cy - s - 2], [px + s - 4, cy], [px - s, cy + s + 2]], np.int32)
+            cv2.polylines(img, [pts], False, col, 4, cv2.LINE_AA)
 
     @staticmethod
     def _limb(img, pts):
@@ -259,29 +300,23 @@ class IntroScreen:
             cv2.circle(img, p, 5, I_BLACK, -1, cv2.LINE_AA)
 
     def _robot(self, img, t):
-        cx = 165
-        b = int(4 * np.sin(t * 2.0))
-        # base
+        cx = 190
+        b = int(4 * np.sin(t * 2.0)) - 35
         rrect(img, cx - 40, 362 + b, 80, 26, 10, I_BLACK)
         cv2.ellipse(img, (cx, 364 + b), (30, 6), 0, 0, 360, I_GRAY, -1, cv2.LINE_AA)
-        # cuerpo
         rrect(img, cx - 50, 268 + b, 100, 100, 30, I_YEL_LO)
         rrect(img, cx - 50, 262 + b, 100, 100, 30, I_YEL)
         rrect(img, cx - 40, 268 + b, 40, 18, 8, I_YEL_HI)
         _txt(img, "YAREN", cx, 314 + b, 0.5, (25, 90, 150), (25, 90, 150),
              thick=1, edge_t=0)
-        # cuello
         rrect(img, cx - 15, 246 + b, 30, 24, 6, I_BLACK)
-        # brazo izquierdo (colgando)
         sw = int(3 * np.sin(t * 2.0))
         self._limb(img, [(cx - 52, 292 + b), (cx - 72, 322 + b), (cx - 66 + sw, 352 + b)])
-        # brazo derecho (saludando)
         th = np.deg2rad(-90 + 24 * np.sin(t * 6.0))
         S = (cx + 52, 292 + b)
         E = (cx + 86, 268 + b)
-        W = (int(E[0] + 46 * np.cos(th)), int(E[1] + 46 * np.sin(th)))
-        self._limb(img, [S, E, W])
-        # cabeza
+        Wr = (int(E[0] + 46 * np.cos(th)), int(E[1] + 46 * np.sin(th)))
+        self._limb(img, [S, E, Wr])
         rrect(img, cx - 70, 144 + b, 140, 110, 34, I_YEL_LO)
         rrect(img, cx - 70, 140 + b, 140, 110, 34, I_YEL)
         rrect(img, cx - 58, 146 + b, 50, 14, 7, I_YEL_HI)
@@ -289,7 +324,6 @@ class IntroScreen:
         rrect(img, cx + 66, 182 + b, 18, 44, 8, I_BLACK)
         rrect(img, cx - 56, 158 + b, 112, 78, 26, I_BLACK)
         cv2.circle(img, (cx, 148 + b), 4, I_BLACK, -1, cv2.LINE_AA)
-        # ojos
         op = 0.12 if (t % 3.4) < 0.14 else 1.0
         ey = 194 + b
         for ex in (cx - 24, cx + 24):
@@ -302,66 +336,57 @@ class IntroScreen:
         cv2.ellipse(img, (cx, 214 + b), (9, 6), 0, 20, 160, I_WHITE, 2, cv2.LINE_AA)
 
     def _silhouette(self, img, t):
-        x0, y0, w, h = 450, 110, 300, 340
+        x0, y0, w, h = 470, 75, 280, 290
         m = np.zeros((h, w), np.uint8)
-        cx = 150
+        cx = 140
         bob = int(3 * np.sin(t * 2.0 + 1.0))
-        wave = int(14 * np.sin(t * 6.0))
-        # nube
-        cv2.ellipse(m, (cx, 305), (100, 20), 0, 0, 360, 200, -1, cv2.LINE_AA)
-        cv2.ellipse(m, (cx - 45, 298), (40, 18), 0, 0, 360, 200, -1, cv2.LINE_AA)
-        cv2.ellipse(m, (cx + 50, 298), (38, 16), 0, 0, 360, 200, -1, cv2.LINE_AA)
-        # cabeza y pelo
-        cv2.circle(m, (cx, 72 + bob), 40, 255, -1, cv2.LINE_AA)
-        cv2.ellipse(m, (cx - 14, 40 + bob), (28, 14), -20, 0, 360, 255, -1, cv2.LINE_AA)
-        # torso
-        body = np.array([[cx - 48, 122 + bob], [cx + 48, 122 + bob],
-                         [cx + 62, 292], [cx - 62, 292]], np.int32)
+        wave = int(12 * np.sin(t * 6.0))
+        cv2.ellipse(m, (cx, 268), (92, 16), 0, 0, 360, 200, -1, cv2.LINE_AA)
+        cv2.ellipse(m, (cx - 42, 262), (36, 15), 0, 0, 360, 200, -1, cv2.LINE_AA)
+        cv2.ellipse(m, (cx + 46, 262), (34, 14), 0, 0, 360, 200, -1, cv2.LINE_AA)
+        cv2.circle(m, (cx, 58 + bob), 34, 255, -1, cv2.LINE_AA)
+        cv2.ellipse(m, (cx - 12, 32 + bob), (24, 12), -20, 0, 360, 255, -1, cv2.LINE_AA)
+        body = np.array([[cx - 42, 100 + bob], [cx + 42, 100 + bob],
+                         [cx + 54, 250], [cx - 54, 250]], np.int32)
         cv2.fillPoly(m, [body], 255, cv2.LINE_AA)
-        # brazo levantado
-        sh, el = (cx - 44, 140 + bob), (cx - 92, 112 + bob)
-        wr = (cx - 100 + wave, 62 + bob)
-        cv2.line(m, sh, el, 255, 28, cv2.LINE_AA)
-        cv2.line(m, el, wr, 255, 26, cv2.LINE_AA)
-        cv2.circle(m, wr, 17, 255, -1, cv2.LINE_AA)
-        # brazo colgando
-        sh2, el2, wr2 = (cx + 46, 142 + bob), (cx + 78, 204), (cx + 84, 262)
-        cv2.line(m, sh2, el2, 255, 26, cv2.LINE_AA)
-        cv2.line(m, el2, wr2, 255, 24, cv2.LINE_AA)
-        cv2.circle(m, wr2, 14, 255, -1, cv2.LINE_AA)
+        sh, el = (cx - 38, 116 + bob), (cx - 80, 92 + bob)
+        wr = (cx - 88 + wave, 48 + bob)
+        cv2.line(m, sh, el, 255, 24, cv2.LINE_AA)
+        cv2.line(m, el, wr, 255, 22, cv2.LINE_AA)
+        cv2.circle(m, wr, 15, 255, -1, cv2.LINE_AA)
+        sh2, el2, wr2 = (cx + 40, 118 + bob), (cx + 68, 172), (cx + 73, 224)
+        cv2.line(m, sh2, el2, 255, 22, cv2.LINE_AA)
+        cv2.line(m, el2, wr2, 255, 20, cv2.LINE_AA)
+        cv2.circle(m, wr2, 12, 255, -1, cv2.LINE_AA)
 
         mf = m.astype(np.float32) / 255.0
-        g = cv2.GaussianBlur(mf, (31, 31), 0)
+        g = cv2.GaussianBlur(mf, (21, 21), 0)
         roi = img[y0:y0 + h, x0:x0 + w].astype(np.float32)
         ag = np.clip(g * 0.9, 0, 1)[..., None]
-        roi = roi * (1 - ag) + np.array((255, 240, 120), np.float32) * ag
+        roi = roi * (1 - ag) + np.array((255, 200, 90), np.float32) * ag
         asil = (mf * 0.92)[..., None]
-        roi = roi * (1 - asil) + np.array((255, 255, 225), np.float32) * asil
+        roi = roi * (1 - asil) + np.array((255, 250, 235), np.float32) * asil
         img[y0:y0 + h, x0:x0 + w] = roi.astype(np.uint8)
-
-    def _banner(self, img, t):
-        cx = self.W // 2
-        cy = 312 + int(3 * np.sin(t * 3.0))
-        w, h = 270, 96
-        x, y = cx - w // 2, cy - h // 2
-        rrect(img, x, y + 5, w, h, 26, (190, 110, 20))
-        rrect(img, x, y, w, h, 26, (255, 248, 235))
-        rrect(img, x, y, w, h, 26, (235, 190, 120), fill=False, t=3)
-        _txt(img, "CONVIERTETE EN", cx, y + 30, 0.62, (200, 90, 30), (200, 90, 30),
-             thick=2, edge_t=0)
-        _txt(img, "YAREN!", cx, y + 66, 1.35, (40, 215, 255), (20, 100, 215),
-             thick=3, edge_t=6, depth=3, side=(20, 125, 240))
 
     def _start(self, img, t):
         x, y, w, h = self.BTN
         k = int(3 * np.sin(t * 4.0))
-        x, y, w, h = x - k, y - k, w + 2 * k, h + 2 * k
-        r = h // 2
-        rrect(img, x, y + 6, w, h, r, I_GREEN_LO)
-        rrect(img, x, y, w, h, r, I_GREEN)
-        rrect(img, x + 16, y + 5, w - 32, 14, 7, I_GREEN_HI)
-        rrect(img, x, y, w, h, r, I_WHITE, fill=False, t=3)
-        _txt(img, "START", x + w // 2, y + h // 2, 1.4, I_WHITE, (35, 110, 30),
+        gx, gy, gw, gh = x - k, y - k, w + 2 * k, h + 2 * k
+        r = gh // 2
+        # halo pulsante
+        ov = img.copy()
+        rrect(ov, gx - 8, gy - 8, gw + 16, gh + 16, r + 8, I_GREEN_HI)
+        al = float(np.clip(0.22 + 0.12 * np.sin(t * 4.0), 0.05, 0.5))
+        cv2.addWeighted(ov, al, img, 1 - al, 0, img)
+        # boton
+        rrect(img, gx, gy + 6, gw, gh, r, I_GREEN_LO)
+        rrect(img, gx, gy, gw, gh, r, I_GREEN)
+        rrect(img, gx + 16, gy + 5, gw - 32, 14, 7, I_GREEN_HI)
+        rrect(img, gx, gy, gw, gh, r, I_WHITE, fill=False, t=3)
+        cy = gy + gh // 2
+        tri = np.array([[gx + 34, cy - 13], [gx + 34, cy + 13], [gx + 56, cy]], np.int32)
+        cv2.fillPoly(img, [tri], I_WHITE, cv2.LINE_AA)
+        _txt(img, "START", gx + gw // 2 + 24, cy, 1.2, I_WHITE, (35, 110, 30),
              thick=3, edge_t=6, depth=2, side=(35, 140, 45))
 
 
@@ -381,7 +406,6 @@ class BodyPointsDetectorNode(LifecycleNode):
         self.pub_mode    = None
         self.intro       = None
         self.ui_timer    = None      # UN solo timer dibuja la ventana (intro y mimic)
-        self.robot_filter = None
         self.pub_pts  = None
         self.pub_dbg  = None
         self.sub_img  = None
@@ -403,14 +427,6 @@ class BodyPointsDetectorNode(LifecycleNode):
             smooth_landmarks=True)
         self.pub_pts = self.create_lifecycle_publisher(BodyPoints, 'body_points',     10)
         self.pub_dbg = self.create_lifecycle_publisher(Image,      'arm_debug/image', 10)
-
-        try:
-            self.robot_filter = RobotFilter(ASSETS_DIR, arm_thick=ARM_THICK,
-                                            chest_scale=CHEST_SCALE)
-            self.get_logger().info("Filtro YAREN (pecho y brazos) cargado exitosamente.")
-        except Exception as e:
-            self.get_logger().error(f"No se pudo cargar RobotFilter: {e}")
-            self.robot_filter = None
 
         if self.pub_mode is None:
             self.pub_mode = self.create_publisher(String, '/yaren_mode', 10)
@@ -640,17 +656,7 @@ class BodyPointsDetectorNode(LifecycleNode):
                 cam = cv2.flip(cam, 1)
 
         if lm_img is not None:
-            if self.mimic_enabled and self.robot_filter is not None:
-                # Landmarks normalizados -> pixeles de la imagen que se muestra
-                pose_px, vis = [], []
-                for lm in lm_img:
-                    x = (1.0 - lm.x) if MIRROR_VIEW else lm.x
-                    pose_px.append([x * CAM_W, lm.y * CAM_H])
-                    vis.append(lm.visibility)
-                cam = self.robot_filter.apply(cam, pose_px, vis, swap_arms=SWAP_ARMS)
-            else:
-                # Esqueleto de lineas si el modo Mimic esta en espera (o no cargo el filtro)
-                skeleton(cam, lm_img, CAM_W, CAM_H, self.mimic_enabled)
+            skeleton(cam, lm_img, CAM_W, CAM_H, self.mimic_enabled)
 
         c[CAM_Y:CAM_Y+CAM_H, CAM_X:CAM_X+CAM_W] = cam
 

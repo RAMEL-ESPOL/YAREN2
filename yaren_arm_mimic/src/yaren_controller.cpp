@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "yaren_controller.hpp"
 #include <cmath>
 
@@ -6,6 +7,11 @@ static float mapRange(float value, float in_min, float in_max,
     float clamped = std::max(in_min, std::min(in_max, value));
     return out_min + (clamped - in_min) / (in_max - in_min) * (out_max - out_min);
 }
+
+// ── Movimiento suave y lento (como yaren_dance_radio) ────────────────────────
+static constexpr float ARM_VMAX      = 1.0f;   // rad/s maximo (baja para ir mas lento)
+static constexpr float MIN_DURATION  = 0.6f;   // s minimos por movimiento
+static constexpr float SMOOTH_ALPHA  = 0.25f;  // 0..1, menor = objetivo mas suave
 
 DualArmTrajectoryController::DualArmTrajectoryController()
 : rclcpp_lifecycle::LifecycleNode("body_trajectory_controller") {}
@@ -59,8 +65,19 @@ DualArmTrajectoryController::on_activate(const rclcpp_lifecycle::State& state)
     mimic_enable_sub_ = this->create_subscription<std_msgs::msg::Bool>(
         "/mimic/enabled", 10,
         [this](const std_msgs::msg::Bool::SharedPtr msg) {
+            const bool was_enabled = mimic_enabled_;
             mimic_enabled_ = msg->data;
             RCLCPP_INFO(get_logger(), "Mimic %s", mimic_enabled_ ? "ACTIVADO" : "DESACTIVADO");
+            if (was_enabled && !mimic_enabled_) {
+                // "apagar modo": regresar lentamente a la posicion base
+                last_right_pos_ = {{"joint_5", 0.0f}, {"joint_6", 0.0f},
+                                   {"joint_7", 0.0f}, {"joint_8", 0.5f}};
+                last_left_pos_  = {{"joint_9", 0.0f}, {"joint_10", 0.0f},
+                                   {"joint_11", 0.0f}, {"joint_12", 0.5f}};
+                torso_tilt_ = 0.0f;
+                new_data_available_ = true;
+                RCLCPP_INFO(get_logger(), "Regresando a posicion base...");
+            }
         });
 
     timer_ = this->create_wall_timer(
@@ -167,14 +184,19 @@ void DualArmTrajectoryController::armTrackerCallback(
 {
     if (!msg->is_valid || !mimic_enabled_) return;
     torso_tilt_ = 0.0f;
-    last_right_pos_ = processArmData(
+    auto new_right = processArmData(
         {msg->right_shoulder_elbow_zy, msg->right_shoulder_elbow_yx,
          msg->right_elbow_wrist_zy,    msg->right_elbow_wrist_yx},
         right_joints_, true);
-    last_left_pos_ = processArmData(
+    auto new_left = processArmData(
         {msg->left_shoulder_elbow_zy, msg->left_shoulder_elbow_yx,
          msg->left_elbow_wrist_zy,    msg->left_elbow_wrist_yx},
         left_joints_, false);
+    // Filtro pasa-bajos: el objetivo se acerca poco a poco (sin saltos ni temblor)
+    for (const auto& kv : new_right)
+        last_right_pos_[kv.first] += SMOOTH_ALPHA * (kv.second - last_right_pos_[kv.first]);
+    for (const auto& kv : new_left)
+        last_left_pos_[kv.first]  += SMOOTH_ALPHA * (kv.second - last_left_pos_[kv.first]);
     new_data_available_ = true;
 }
 
@@ -198,31 +220,40 @@ void DualArmTrajectoryController::result_callback(
 
 void DualArmTrajectoryController::sendTrajectoryGoal() {
     if (!new_data_available_ || goal_sent_) return;
+
+    // Duracion segun el joint que mas tiene que moverse (limite de velocidad)
+    float max_delta = 0.0f;
+    for (const auto& j : right_joints_)
+        max_delta = std::max(max_delta, std::fabs(last_right_pos_[j] - current_right_pos_[j]));
+    for (const auto& j : left_joints_)
+        max_delta = std::max(max_delta, std::fabs(last_left_pos_[j] - current_left_pos_[j]));
+    const float total_duration = std::max(MIN_DURATION, max_delta / ARM_VMAX);
+
     auto goal_msg = FollowJointTrajectory::Goal();
     goal_msg.trajectory.joint_names = all_joints_;
     const int steps = 10;
-    const float total_duration = 0.4f;
     for (int i = 1; i <= steps; ++i) {
         float t      = static_cast<float>(i) / steps;
         float ease_t = t * t * (3.0f - 2.0f * t);
+        float dease  = 6.0f * t * (1.0f - t) / total_duration;   // derivada de la curva
+
         trajectory_msgs::msg::JointTrajectoryPoint point;
-        auto interp = [&](const std::map<std::string,float>& cur,
-                          const std::map<std::string,float>& tgt,
-                          const std::string& j) {
-            return cur.at(j) + (tgt.at(j) - cur.at(j)) * ease_t;
+        point.positions.assign(12, 0.0);
+        point.velocities.assign(12, 0.0);
+        point.positions[1] = torso_tilt_;
+
+        auto fill = [&](size_t idx0, const std::vector<std::string>& joints,
+                        std::map<std::string, float>& cur,
+                        std::map<std::string, float>& tgt) {
+            for (size_t k = 0; k < joints.size(); ++k) {
+                float d = tgt.at(joints[k]) - cur.at(joints[k]);
+                point.positions[idx0 + k]  = cur.at(joints[k]) + d * ease_t;
+                point.velocities[idx0 + k] = d * dease;
+            }
         };
-        point.positions = {
-            0.0f, torso_tilt_, 0.0f, 0.0f,
-            interp(current_right_pos_, last_right_pos_, "joint_5"),
-            interp(current_right_pos_, last_right_pos_, "joint_6"),
-            interp(current_right_pos_, last_right_pos_, "joint_7"),
-            interp(current_right_pos_, last_right_pos_, "joint_8"),
-            interp(current_left_pos_,  last_left_pos_,  "joint_9"),
-            interp(current_left_pos_,  last_left_pos_,  "joint_10"),
-            interp(current_left_pos_,  last_left_pos_,  "joint_11"),
-            interp(current_left_pos_,  last_left_pos_,  "joint_12"),
-        };
-        point.velocities.resize(point.positions.size(), 0.0);
+        fill(4, right_joints_, current_right_pos_, last_right_pos_);
+        fill(8, left_joints_,  current_left_pos_,  last_left_pos_);
+
         point.time_from_start = rclcpp::Duration(
             std::chrono::nanoseconds(static_cast<long long>(total_duration * t * 1e9)));
         goal_msg.trajectory.points.push_back(point);

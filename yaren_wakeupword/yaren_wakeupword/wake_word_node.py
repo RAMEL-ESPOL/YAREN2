@@ -1,216 +1,98 @@
 #!/usr/bin/env python3
-"""
-wake_word_node.py
-=================
-Detecta la wake word por voz y publica el evento + idioma detectado.
-
-Wake words:
-  Español : "hola yaren", "hola amigo", "oye yaren"
-  Inglés  : "hey yaren", "hello yaren", "wake up"
-
-Topics ROS2:
-  SUB  /yaren/face_idle      (std_msgs/Bool)   - pantalla libre o en menú
-  PUB  /yaren/wake_event     (std_msgs/Bool)   - wake word detectada
-  PUB  /yaren/is_english     (std_msgs/Bool)   - True=inglés, False=español
-"""
-
-import os
-import json
-import pyaudio
-from vosk import Model, KaldiRecognizer
-import time
-from std_msgs.msg import Bool, String
+"""wake_word_node.py (unificado): wake words + comandos con un solo micrófono."""
+import json, time
+from vosk import KaldiRecognizer
 import rclpy
-from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.executors import MultiThreadedExecutor
+from std_msgs.msg import Bool
+from voice_commands_node import VoiceCommandsNode, parse
 
-# Wake words por idioma
 WAKE_WORDS_ES = [
-    # Frases exactas
     "hola yaren", "hola amigo", "oye yaren",
-    # Variantes reales confirmadas por logs
-    "hola hallaren",   # "hola yaren" ✅ confirmado
-    "o llegaren",      # "oye yaren" ✅ confirmado
-    "o llegaron",      # "oye yaren" ✅ confirmado
-    "ya harén",        # "yaren" solo ✅ confirmado antes
-    "y ya harén",      # "hey yaren" ✅ confirmado antes
-    "oye ya haré",     # "oye yaren" ✅ confirmado antes
-    "hola jardín",     # "hola yaren" ✅ confirmado antes
-    "hola clarín",     # "hola yaren" ✅ confirmado antes
-    "hola harén",      # variante probable
-    "oye harén",       # variante probable
-    "hola llaren", "oye llaren",
-    "hola jaren",  "oye jaren",
-    "hola laren",  "oye laren",
-    "hola robot",  "oye robot",
+    "hola hallaren", "o llegaren", "o llegaron", "ya harén", "y ya harén",
+    "oye ya haré", "hola jardín", "hola clarín", "hola harén", "oye harén",
+    "hola llaren", "oye llaren", "hola jaren", "oye jaren",
+    "hola laren", "oye laren", "hola robot", "oye robot",
 ]
-
-# Para inglés: Vosk español transcribe "hey" como "ey", "el", "hay"
-# y "hello" como "elo", "ello", "helo" — cubrimos todas
 WAKE_WORDS_EN = [
-    # Confirmadas por logs de sesión inglés
-    "hola inglés",     # "hey yaren" ✅
-    "jay llevaren",    # "hey yaren" ✅
-    "y yo harén",      # "hey yaren" ✅
-    "jay robots",      # "hey robot" ✅
-    "llevaren",        # "yaren" solo ✅
-    "jay harén",       # "hey yaren" probable
-    "jay laren",       # "hey yaren" probable
-    "jay jardín",      # "hey yaren" probable
-    # Por si Vosk transcribe bien
+    "hola inglés", "jay llevaren", "y yo harén", "jay robots", "llevaren",
+    "jay harén", "jay laren", "jay jardín",
     "hey yaren", "hello yaren", "hey friend", "hey robot",
-    # Variantes fonéticas anteriores
-    "ey yaren",  "ey harén",  "hay yaren", "hay harén",
+    "ey yaren", "ey harén", "hay yaren", "hay harén",
 ]
 
-class YarenWakeWordNode(Node):
-    def __init__(self):
-        super().__init__('yaren_wake_word_node')
 
+class WakeAndCommandsNode(VoiceCommandsNode):
+    def __init__(self):
+        super().__init__()
+        tl = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.is_face_idle = False
+        self.wake_rec = KaldiRecognizer(self.model, 16000)
+        self.wake_pub = self.create_publisher(Bool, '/yaren/wake_event', 10)
+        self.lang_pub = self.create_publisher(Bool, '/yaren/is_english', tl)
+        self.create_subscription(Bool, '/yaren/face_idle', self._cb_idle, tl)
+        self._wake_ready = True
+        self.get_logger().info('wake_word_node unificado listo (wake words + comandos + caras)')
+
+    def _cb_idle(self, m):
+        if m.data and not self.is_face_idle:
+            self.wake_rec = KaldiRecognizer(self.model, 16000)
+        self.is_face_idle = m.data
+
+    def _reset_recs(self):
+        self.rec.Reset()
+        self.wake_rec = KaldiRecognizer(self.model, 16000)
+
+    def _check_wake(self, text):
+        text = text.lower().strip()
+        if not text:
+            return
+        self.get_logger().info(f'👂 oído: "{text}"')
+        es = max((w for w in WAKE_WORDS_ES if w in text), key=len, default=None)
+        en = max((w for w in WAKE_WORDS_EN if w in text), key=len, default=None)
+        if not (es or en):
+            return
+        is_en = en is not None and es is None
+        self.get_logger().info(f"✨ Wake word: '{en if is_en else es}' → {'EN' if is_en else 'ES'}")
+        self.lang_pub.publish(Bool(data=is_en))
+        time.sleep(0.05)
+        self.wake_pub.publish(Bool(data=True))
         self.is_face_idle = False
 
-        # QoS Transient Local para leer el último estado al conectarse
-        qos_tl = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.mic_owner = "none"
-        self.create_subscription(String, '/yaren/mic_owner', self._cb_mic_owner, qos_tl)
-        self.idle_sub = self.create_subscription(
-            Bool, '/yaren/face_idle', self.idle_callback, qos_tl)            
-        self.wake_pub = self.create_publisher(Bool, '/yaren/wake_event', 10)
-        self.lang_pub = self.create_publisher(Bool, '/yaren/is_english',  qos_tl)
-
-        # Modelo Vosk
-        workspace_dir = os.getcwd()
-        model_path = os.path.join(
-            workspace_dir, 'src', 'YAREN2', 'yaren_chat', 'models', 'STT',
-            'vosk-model-small-es-0.42'
-        )
-
-        if not os.path.exists(model_path):
-            self.get_logger().error(f"Modelo no encontrado: {model_path}")
-            self.get_logger().error(f"Directorio actual: {workspace_dir}")
+    def _on_audio(self, data):
+        if not getattr(self, '_wake_ready', False):
             return
-
-        self.model      = Model(model_path)
-        self.recognizer = KaldiRecognizer(self.model, 16000)
-
-        # Micrófono
-        self.mic    = pyaudio.PyAudio()
-        self.stream = None  # empieza cerrado, se abre cuando face_idle=true
-
-        self.create_timer(0.1, self.audio_loop_callback)
-        self.get_logger().info("🤖 wake_word_node listo. Esperando wake word...")
-
-    def _open_stream(self):
-        try:
-            if self.stream is not None:
-                return
-            self.stream = self.mic.open(
-                format=pyaudio.paInt16, channels=1, rate=16000,
-                input=True, frames_per_buffer=8000
-            )
-            self.stream.start_stream()
-            self.get_logger().info("🎤 Stream abierto.")
-        except Exception as e:
-            self.get_logger().error(f"Error abriendo stream: {e}")
-            self.stream = None
-
-    def _cb_mic_owner(self, msg: String):
-        self.mic_owner = msg.data
-        if self.mic_owner not in ("none", "wake_word"):
-            self.get_logger().info(f"🔒 Mic cedido a: {self.mic_owner}. Cerrando stream.")
-            self._close_stream()
-        else:
-            if self.is_face_idle:
-                self._open_stream()
-
-    def _close_stream(self):
-        try:
-            if self.stream is None:
-                return
-            self.stream.stop_stream()
-            self.stream.close()
-            self.stream = None
-            self.get_logger().info("🔇 Stream cerrado.")
-        except Exception as e:
-            self.get_logger().error(f"Error cerrando stream: {e}")
-            self.stream = None
-
-    def idle_callback(self, msg: Bool):
-        self.is_face_idle = msg.data
-        if self.is_face_idle:
-            self.get_logger().info("✅ Pantalla libre. Escuchando wake word...")
-            self.recognizer = KaldiRecognizer(self.model, 16000)
-            self._open_stream()
-        else:
-            self.get_logger().info("🛑 Menú activo. Cerrando stream.")
-            self._close_stream()
+        if self._capture is not None:                  # capturando nombre: nada más escucha
+            return super()._on_audio(data)
+        cmd_done = self.rec.AcceptWaveform(data)
+        wake_done = self.wake_rec.AcceptWaveform(data)
+        cmd = None
+        if cmd_done:
+            text = json.loads(self.rec.Result()).get('text', '')
+            cmd = parse(text, self.require_robot)
+            if text:
+                self.get_logger().info(f'heard: "{text}" -> {cmd}')
+            if cmd:
+                self._dispatch(cmd)
+        if wake_done:
+            wtext = json.loads(self.wake_rec.Result()).get('text', '')
+            if not cmd and self.is_face_idle:
+                self._check_wake(wtext)
 
 
-    def audio_loop_callback(self):
-        if not self.is_face_idle or self.mic_owner not in ("none", "wake_word"):
-            return
-
-        if self.stream is None:
-            self._open_stream()
-            return
-
-        try:
-            # 1600 frames = 0.1 segundos a 16000Hz (Coincide con el timer)
-            data = self.stream.read(1600, exception_on_overflow=False)
-            if not data:
-                return
-
-            # Los resultados parciales se descartan: solo importa el texto final
-            if not self.recognizer.AcceptWaveform(data):
-                return
-
-            result = json.loads(self.recognizer.Result())
-            text   = result.get("text", "").lower().strip()
-            if not text:
-                return
-
-            matched_es = max((w for w in WAKE_WORDS_ES if w in text), key=len, default=None)
-            matched_en = max((w for w in WAKE_WORDS_EN if w in text), key=len, default=None)
-
-            if matched_es or matched_en:
-                is_english = matched_en is not None and matched_es is None
-                matched    = matched_en if is_english else matched_es
-
-                self.get_logger().info(f"✨ Wake word: '{matched}' → {'EN' if is_english else 'ES'}")
-
-                lang_msg      = Bool()
-                lang_msg.data = is_english
-                self.lang_pub.publish(lang_msg)
-                time.sleep(0.05)
-
-                wake_msg      = Bool()
-                wake_msg.data = True
-                self.wake_pub.publish(wake_msg)
-
-                self.is_face_idle = False
-                self._mic_test_active = False
-
-        except Exception:
-            pass
-
-    def destroy_node(self):
-        try:
-            self._close_stream()
-            self.mic.terminate()
-        except Exception:
-            pass
-        super().destroy_node()
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = YarenWakeWordNode()
+def main():
+    rclpy.init()
+    node = WakeAndCommandsNode()
+    ex = MultiThreadedExecutor(num_threads=4)
+    ex.add_node(node)
     try:
-        rclpy.spin(node)
+        ex.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        node.shutdown(); node.destroy_node(); rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

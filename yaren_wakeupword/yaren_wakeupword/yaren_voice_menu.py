@@ -307,6 +307,9 @@ SONG_NAMES = {
            "Libre Soy", "Sa Sa", "Si Tienes Ganas"],
 }
 
+# Ara Ram Sam Sam, Gorila, Barney, Chopi Chopi, Libre Soy, Sa Sa, Si Tienes Ganas
+RADIO_IDX = [0, 1, 18, 19, 2, 20, 21]
+
 FALLBACK_RESPONSES = {
     "es": ["Lo siento, no entendí bien. ¿Puedes repetirlo?",
            "Hmm, no estoy seguro de qué quieres. ¿Puedes decirlo de otra forma?",
@@ -365,7 +368,11 @@ def _is_no(text: str) -> bool:
                             "cancelar", "adios", "nope", "cancel", "exit", "nevermind"])
 
 def _is_stop(text: str) -> bool:
-    return _matches(text, ["detener", "para", "parar", "stop", "detente", "suficiente", "enough"])
+    words = _normalize(text).split()
+    if any(w in ("detener", "detente", "parar", "stop", "suficiente", "enough", "basta") for w in words):
+        return True
+    # "para" solo cuenta como orden si la frase es corta ("para", "robot para", "para ya")
+    return "para" in words and len(words) <= 2
 
 def _is_help(text: str) -> bool:
     norm = _normalize(text)
@@ -374,7 +381,7 @@ def _is_help(text: str) -> bool:
     if ("menu" in norm or "help" in norm) and not any(p in norm for p in specific):
         return True
     return _matches(text, ["ayuda", "que puedo hacer", "opciones", "que haces",
-                            "que puedes hacer", "menu principal", "volver al inicio",
+                            "que puedes hacer", "que puede hacer", "que pueden hacer", "que sabes hacer", "menu principal", "volver al inicio",
                             "what can you do", "what can i do", "options", "main menu"])
 
 def _is_goodbye(text: str) -> bool:
@@ -400,6 +407,7 @@ class YarenVoiceMenuNode(Node):
         self.first_greeting_done = False
         self._start_lock         = threading.Lock()
         self._conversation_start_time = 0.0
+        self._last_tts_end = 0.0
 
         workspace_dir = os.getcwd()
         pkg_share     = get_package_share_directory("yaren_chat")
@@ -522,7 +530,7 @@ class YarenVoiceMenuNode(Node):
             # (detectado porque is_active lleva más de 1 segundo activo)
             if self.is_active:
                 elapsed = time.time() - self._conversation_start_time
-                if elapsed > 2.0:
+                if elapsed > 2.0 and not self.tts_busy and time.time() - self._last_tts_end > 2.0:
                     # El usuario tocó el menú — sí terminar
                     self._reset_conversation()
                     self.recognizer.Reset()
@@ -704,7 +712,7 @@ class YarenVoiceMenuNode(Node):
         self._stop_active_mode()
 
         msg      = String()
-        msg.data = f"play_radio_song:{idx}"
+        msg.data = f"play_radio_song:{RADIO_IDX[idx]}"
         self.mode_pub.publish(msg)
 
         self.active_mode  = "radio_musica"
@@ -720,6 +728,15 @@ class YarenVoiceMenuNode(Node):
     def _reset_to_main(self):
         self.waiting_for  = "main"
         self.current_menu = self._menu_tree["items"]
+
+    def _check_menu_after_tts(self, mark):
+        """Si tras hablar la pantalla NO vuelve a LIBRE, el menu tactil esta abierto: cierra."""
+        time.sleep(2.0)
+        if (self.is_active and self._last_tts_end == mark
+                and not self.tts_busy and not self.is_face_idle):
+            self.get_logger().info("Menú abierto mientras hablaba: cierro la conversación.")
+            self._reset_conversation()
+            self.recognizer.Reset()
 
     def _reset_conversation(self):
         self.is_active           = False
@@ -847,7 +864,10 @@ class YarenVoiceMenuNode(Node):
         finally:
             audio_msg.data = False
             self.audio_pub.publish(audio_msg)
+            self._last_tts_end = time.time()
             self.tts_busy = False
+            threading.Thread(target=self._check_menu_after_tts,
+                             args=(self._last_tts_end,), daemon=True).start()
     # ── Cleanup ───────────────────────────────────────────────────────────────
     def destroy_node(self):
         try:

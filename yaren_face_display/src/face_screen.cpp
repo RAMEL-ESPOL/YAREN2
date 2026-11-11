@@ -3368,7 +3368,7 @@ public:
         std::string pkgDir = ament_index_cpp::get_package_share_directory("yaren_face_display");
         {
             const std::string dir = pkgDir + "/faces/nuevas_caras";
-            std::string openP, closedP, talkP;
+            std::string openP, closedP, talkP, sleepP;
             if (fs::exists(dir)) {
                 for (const auto& e : fs::directory_iterator(dir)) {
                     std::string ext = e.path().extension().string();
@@ -3379,11 +3379,13 @@ public:
                     if (n.find("cerr") != std::string::npos)       closedP = e.path().string();
                     else if (n.find("abier") != std::string::npos) openP   = e.path().string();
                     else if (n.find("habl") != std::string::npos)  talkP   = e.path().string();
+                    else if (n.find("dorm") != std::string::npos || n.find("sleep") != std::string::npos) sleepP = e.path().string();
                 }
             }
             if (!openP.empty())   faceOpenImg_   = cv::imread(openP,   cv::IMREAD_UNCHANGED);
             if (!closedP.empty()) faceClosedImg_ = cv::imread(closedP, cv::IMREAD_UNCHANGED);
             if (!talkP.empty())   faceTalkImg_   = cv::imread(talkP,   cv::IMREAD_UNCHANGED);
+            if (!sleepP.empty())  faceSleepImg_  = cv::imread(sleepP,  cv::IMREAD_UNCHANGED);
         }
         lastInteractionTime = std::chrono::system_clock::now();
         auto checkImg = [&](const cv::Mat& m, const std::string& name) {
@@ -3575,6 +3577,21 @@ public:
         rclcpp::QoS uiQos(1);
         uiQos.transient_local();   // la app recibe el último estado apenas se conecta
         uiStatePub_ = this->create_publisher<std_msgs::msg::String>(kUiStateTopic, uiQos);
+        rclcpp::QoS vsQos(1); vsQos.transient_local();
+        voiceStateSub_ = this->create_subscription<std_msgs::msg::String>(
+            "/yaren/voice_state", vsQos, [this](const std_msgs::msg::String::SharedPtr m) {
+                const int prevVs = voiceState_.load();
+                voiceState_ = (m->data == "sleep") ? 1 : (m->data == "busy" ? 2 : (m->data == "video" ? 3 : 0));
+                if (voiceState_.load() == 3 && prevVs != 3) vidDismissed_ = false;
+                resetIdleTimer();
+            });
+        videoDonePub_ = this->create_publisher<std_msgs::msg::Bool>("/yaren/video_done", 10);
+        rclcpp::QoS pvQos(1); pvQos.transient_local();
+        videoPathSub_ = this->create_subscription<std_msgs::msg::String>(
+            "/yaren/play_video", pvQos, [this](const std_msgs::msg::String::SharedPtr m) {
+                std::lock_guard<std::mutex> lk(vidMutex_);
+                vidPath_ = m->data;
+            });
         commandSub_ = this->create_subscription<std_msgs::msg::String>(
             kCommandTopic, 10,
             std::bind(&VideoSynchronizer::onRemoteCommand, this, std::placeholders::_1));
@@ -3907,9 +3924,10 @@ public:
         stopIntroDecoder();
         if (introThread_.joinable()) introThread_.join();
         // FIX-F: verificar joinable antes de join en testThread
+        stopPresentVideo();
         cv::destroyAllWindows();
         if (!activeStopCmd.empty()) std::system(activeStopCmd.c_str());
-            std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|paint_node|palabras_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+            std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_arm_mimic|yaren_mimic|memoria_node|dance_game_node|paint_node|palabras_node|voice_commands_node|csi_cam_pub' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
         }
 
     void drawWindow() {
@@ -4523,6 +4541,10 @@ private:
             sRadio     = showRadio_;
             sRoutines  = showRoutines_;
             sWifi      = showWifiSetup_;
+        }
+        if (voiceState_.load() == 3 && !vidDismissed_.load()) {   // video de presentacion: un click lo cierra
+            if (event == cv::EVENT_LBUTTONDOWN) dismissPresentVideo();
+            return;
         }
         if (sSettings) {
             settingsMenu.handleMouse(event, x, y);
@@ -5956,8 +5978,10 @@ private:
         if (isBlinking && std::chrono::duration<double>(now - blinkStartTime).count() > 0.3) isBlinking = false;
 
         const cv::Mat* src = &faceOpenImg_;
-        if (ttsActive.load() && !faceTalkImg_.empty())            src = &faceTalkImg_;
-        else if (isBlinking.load() && !faceClosedImg_.empty())    src = &faceClosedImg_;
+        if (voiceState_.load() == 1)
+            src = !faceSleepImg_.empty() ? &faceSleepImg_ : (!faceClosedImg_.empty() ? &faceClosedImg_ : src);
+        else if (ttsActive.load() && !faceTalkImg_.empty())         src = &faceTalkImg_;
+        else if (isBlinking.load() && !faceClosedImg_.empty())      src = &faceClosedImg_;
 
         if (src->empty()) {
             txu::put(res, isEnglish ? "WARNING: face images not found" : "ADVERTENCIA: imágenes de cara no encontradas",
@@ -5983,6 +6007,15 @@ private:
             rs.copyTo(roi);
         } else {
             cv::cvtColor(rs, roi, cv::COLOR_GRAY2BGR);
+        }
+        if (voiceState_.load() == 1 && faceSleepImg_.empty()) {
+            double tz = kd::now();
+            for (int k = 0; k < 3; ++k) {
+                double ph = std::fmod(tz * 0.5 + k * 0.33, 1.0);
+                double v = 255.0 * (1.0 - ph);
+                cv::putText(res, "Z", cv::Point(int(CW * 0.66 + ph * 60), int(CH * 0.34 - ph * 90)),
+                            cv::FONT_HERSHEY_DUPLEX, 0.6 + 0.8 * ph, cv::Scalar(v, v, v), 2, cv::LINE_AA);
+            }
         }
         return res;
     }
@@ -7182,6 +7215,7 @@ private:
                 if (showTalk) renderTalkButton(frame);
                 else { talkBtnRect_ = cv::Rect(); releasePtt(); }
             }
+            renderPresentVideo(frame);
             // 4. DETERMINAR SI YAREN ESTÁ INACTIVO
             // Solo se activa el screensaver si Yaren está en la cara pura:
             // sin menú, sin modo activo, sin settings, sin radio, sin rutinas,
@@ -7210,7 +7244,7 @@ private:
 
             // Si Yaren NO está inactivo (está en un menú, cámara, configuración, IA, etc.)
             // mantenemos el reloj de inactividad congelado en el momento actual.
-            if (!currentIdle || configuring.load() || sWifi) {
+            if (!currentIdle || configuring.load() || sWifi || voiceState_.load() != 0) {
                 lastInteractionTime = now;
                 if (isIdleScreenActive) {
                     stopIdleScreen();
@@ -7383,6 +7417,9 @@ private:
     cv::Mat yarenSplashImg;
     cv::Mat menuBg_;
     cv::Mat faceOpenImg_, faceClosedImg_, faceTalkImg_;
+    cv::Mat faceSleepImg_;
+    std::atomic<int> voiceState_ { 0 };   // 0 none, 1 sleep, 2 busy
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr voiceStateSub_;
     std::vector<cv::Mat> eyesFrames, mouthFrames;
     std::map<std::string, cv::Mat> iconMap;
     std::atomic<bool> ttsActive  { false };
@@ -7543,7 +7580,7 @@ private:
             "body_points_mimic_detector_node", "body_tracker_node", "body_trajectory_controller", "mimic_gate_node"};
         for (const char* n : kLc) { lcChangeClient(n); lcStateClient(n); }
 
-        std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_mimic|memoria_node|dance_game_node|paint_node|palabras_node' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
+        std::system("for pid in $(ps aux | grep -E 'ws_bridge|wake_word_node|yaren_voice_menu|gestor_idioma|yaren_chat|lifecycle_node|yaren_emotions|yaren_radio|yaren_filters|yaren_dice|yaren_arm_mimic|yaren_mimic|memoria_node|dance_game_node|paint_node|palabras_node|voice_commands_node|csi_cam_pub' | grep -v grep | awk '{print $2}'); do kill -15 $pid; done");
 
         const std::string py     = bootEnv_.python;
         const std::string wake   = bootEnv_.ws + "/src/YAREN2/yaren_wakeupword/yaren_wakeupword/wake_word_node.py";
@@ -7661,6 +7698,87 @@ private:
             if (introMusic) { Mix_HaltMusic(); Mix_FreeMusic(introMusic); introMusic = nullptr; }
         }
         configuring = false;
+    }
+
+    // ===== Video de presentacion (/yaren/play_video -> click -> /yaren/video_done) =====
+    cv::VideoCapture vidCap_;
+    cv::Mat vidFrame_;
+    std::string vidPath_;
+    std::mutex vidMutex_;
+    std::atomic<bool> vidDismissed_ { false };
+    bool vidAudio_ { false };
+    double vidFps_ { 30.0 };
+    std::chrono::steady_clock::time_point vidNext_ {}, vidStart_ {};
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr videoPathSub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr      videoDonePub_;
+
+    void dismissPresentVideo() {
+        if (vidDismissed_.exchange(true)) return;
+        if (videoDonePub_) { std_msgs::msg::Bool m; m.data = true; videoDonePub_->publish(m); }
+    }
+    void stopPresentVideo() {
+        if (vidCap_.isOpened()) vidCap_.release();
+        vidFrame_.release();
+        if (vidAudio_) {
+            std::system("pkill -f '[f]fplay.*yaren_presentacion' > /dev/null 2>&1");
+            vidAudio_ = false;
+        }
+    }
+    bool renderPresentVideo(cv::Mat& frame) {
+        if (voiceState_.load() != 3 || vidDismissed_.load()) {
+            if (vidCap_.isOpened() || vidAudio_) stopPresentVideo();
+            return false;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (!vidCap_.isOpened()) {
+            std::string p;
+            { std::lock_guard<std::mutex> lk(vidMutex_); p = vidPath_; }
+            if (p.empty()) p = fs::current_path().string() + "/src/YAREN2/yaren_radio/videos/presentacion.mp4";
+            if (!fs::exists(p) || !vidCap_.open(p)) {
+                RCLCPP_WARN(get_logger(), "Video de presentacion no disponible: %s", p.c_str());
+                dismissPresentVideo();
+                return false;
+            }
+            double fps = vidCap_.get(cv::CAP_PROP_FPS);
+            vidFps_ = (fps > 1.0 && fps < 130.0) ? fps : 30.0;
+            vidNext_ = now; vidStart_ = now;
+            vidFrame_.release();
+            std::system(("ffplay -nodisp -autoexit -loglevel quiet -window_title yaren_presentacion \"" + p +
+                         "\" > /dev/null 2>&1 &").c_str());
+            vidAudio_ = true;
+        }
+        const auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                              std::chrono::duration<double>(1.0 / vidFps_));
+        if (vidFrame_.empty() || now >= vidNext_) {
+            while (!vidFrame_.empty() && now - vidNext_ > 2 * step) { vidCap_.grab(); vidNext_ += step; }
+            cv::Mat f;
+            if (vidCap_.read(f) && !f.empty()) {
+                vidFrame_ = f;
+                if (now - vidNext_ > 5 * step) vidNext_ = now;
+                vidNext_ += step;
+            } else {                     // el video termino: vuelve a la cara
+                dismissPresentVideo();
+                return false;
+            }
+        }
+        frame.setTo(cv::Scalar(0, 0, 0));
+        cv::Mat bgr = vidFrame_;
+        if (bgr.channels() == 4)      cv::cvtColor(bgr, bgr, cv::COLOR_BGRA2BGR);
+        else if (bgr.channels() == 1) cv::cvtColor(bgr, bgr, cv::COLOR_GRAY2BGR);
+        const double k = std::min(frame.cols / (double)bgr.cols, frame.rows / (double)bgr.rows);
+        cv::Mat rs;
+        cv::resize(bgr, rs, cv::Size(std::max(1, (int)(bgr.cols * k)), std::max(1, (int)(bgr.rows * k))), 0, 0, cv::INTER_AREA);
+        rs.copyTo(frame(cv::Rect((frame.cols - rs.cols) / 2, (frame.rows - rs.rows) / 2, rs.cols, rs.rows)));
+        if (std::chrono::duration<double>(now - vidStart_).count() < 4.0) {   // pista inicial
+            const std::string h = isEnglish ? "TAP TO RETURN" : "TOCA PARA VOLVER";
+            int bl = 0;
+            cv::Size ts = txu::size(h, cv::FONT_HERSHEY_DUPLEX, 0.6, 1, &bl);
+            cv::Rect pill((frame.cols - ts.width) / 2 - 18, frame.rows - 52, ts.width + 36, 36);
+            kd::fillRound(frame, pill, 18, cv::Scalar(0, 0, 0), 0.55);
+            kd::text(frame, h, cv::Point(pill.x + 18, pill.y + 25), cv::FONT_HERSHEY_DUPLEX, 0.6,
+                     cv::Scalar(255, 255, 255), cv::Scalar(0, 0, 0), 1);
+        }
+        return true;
     }
 
     cv::Rect stopButtonRect {0,0,0,0};
